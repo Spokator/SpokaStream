@@ -21,7 +21,7 @@ Un logiciel installé, pas une page web : il capte le son d'une application pré
 
 ## Pourquoi un logiciel et pas une page web
 
-La watch party de PinoyBot a montré sa limite : un navigateur sait capter un onglet ou tout le PC, jamais une application. Partager un jeu envoyait donc aussi Discord, et les voix revenaient en écho. Seul un logiciel installé a accès à l'API Windows de capture par processus. SpokaStream l'utilise, et récupère au passage tout ce que la party avait appris sur la qualité.
+Un navigateur sait capter un onglet ou tout le PC, jamais une application. Partager un jeu envoyait donc aussi Discord, et les voix revenaient en écho. Seul un logiciel installé a accès à l'API Windows de capture par processus. SpokaStream l'utilise, et récupère au passage tout ce que la party avait appris sur la qualité.
 
 ## Ce que ça fait
 
