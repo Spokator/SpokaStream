@@ -88,6 +88,13 @@ try {
     Boolean,
     10_000,
   );
+  // Le lecteur YouTube vit sur le vrai serveur : c'est ici que son origine compte.
+  await a.page.evaluate(() => (window as any).__core.togetherAdd("https://www.youtube.com/watch?v=aqz-KE-bpKQ"));
+  await b.page.locator(".tile-together").waitFor({ timeout: 15_000 });
+  const position = (peer: typeof a) => peer.page.locator(".together-seek").evaluate((i: HTMLInputElement) => Number(i.value));
+  await poll("lecture YouTube", () => position(b), t => t > 3, 40_000);
+  console.log(`YouTube ensemble : positions ${await position(a)} et ${await position(b)}`);
+
   await a.page.evaluate(() => (window as any).__core.deleteRoom());
   await wait(500);
   console.log("salon d'essai supprimé");
