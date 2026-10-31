@@ -1,5 +1,9 @@
 # Journal des versions
 
+## 1.6.2
+
+- **Avertissement sur la capture compatible** : chez un utilisateur, elle ramène bien la souris dans Project Zomboid, mais l'image clignote fortement, dans le jeu comme dans le stream. Le réglage le dit maintenant clairement, et reste désactivé par défaut.
+
 ## 1.6.1
 
 - **La souris ne disparaît plus dans certains jeux pendant un direct.** Nouveau réglage dans Paramètres, Diffusion : **Capture compatible avec les jeux**. La capture habituelle force Windows à dessiner le curseur en logiciel, et dans des jeux OpenGL ou Vulkan comme Project Zomboid, ce curseur ne s'affiche plus. Le mode compatible passe par la duplication du bureau, garde le vrai curseur et le pose lui-même sur l'image pour les spectateurs. Une fenêtre partagée montre alors aussi ce qui passe devant elle.
