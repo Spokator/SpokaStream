@@ -212,6 +212,7 @@ Si une connexion vidéo tombe vraiment, le spectateur en redemande une après 6 
 | --- | --- |
 | `npm test` | 54 tests : serveur, SDP, choix du codec, tampon audio, découpe MP4 |
 | `npm run test:party` | Deux diffuseurs, dispositions, Watch Party d'une URL, page web diffusée, film du PC, paramètres, gestes du téléphone |
+| `CHROMIUM_CAPTURE=1 npm run test:e2e` | Le même parcours sans capture native. À préférer sur un PC chargé : chaque trame native passe par DevTools, et ce canal sature même sur la 1.3.0, alors que la page reste à 144 i/s. Une étape s'arrête seule au bout de 4 minutes |
 | `npm run test:e2e` | 42 étapes avec deux instances et un téléphone émulé : WebRTC, son, YouTube, gestes reçus par une vraie fenêtre, sortie WHIP de ffmpeg, formats de 320 à 1280 px, fenêtre de régie détachée |
 | `npm run test:obs` | Le vrai OBS, dans une copie isolée, jusqu'à l'image reçue par un spectateur |
 | `node --experimental-strip-types tests/e2e/run.ts --packaged` | La même chose sur l'application empaquetée |
