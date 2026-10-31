@@ -9,13 +9,25 @@ export interface MixSource {
   icon: string | null;
   volume: number;
   muted: boolean;
+  /** Retard ajouté, pour recaler un son en avance sur l'image. */
+  offsetMs: number;
+  /** Ce son baisse tout seul quand tu parles. */
+  duck: boolean;
 }
 
 interface LiveSource extends MixSource {
   gain: GainNode;
+  delay: DelayNode;
+  ducker: GainNode;
   analyser: AnalyserNode;
   dispose(): void;
 }
+
+const MAX_OFFSET_SECONDS = 2;
+const DUCK_GAIN = 0.25;
+const DUCK_INTERVAL_MS = 50;
+const DUCK_HOLD_MS = 500;
+const TALK_LEVEL = 0.02;
 
 const ports = new Map<number, MessagePort>();
 const waiters = new Map<number, (port: MessagePort) => void>();
@@ -47,6 +59,13 @@ export const levelOf = (analyser: AnalyserNode, buffer: Float32Array<ArrayBuffer
   return Math.max(0, Math.min(1, (db + 60) / 60));
 };
 
+function rmsOf(analyser: AnalyserNode, buffer: Float32Array<ArrayBuffer>) {
+  analyser.getFloatTimeDomainData(buffer);
+  let sum = 0;
+  for (const x of buffer) sum += x * x;
+  return Math.sqrt(sum / buffer.length);
+}
+
 /** Table de mixage du stream : applications, entrées et fichier, avec un volume chacun, puis un limiteur. */
 export class StreamMixer {
   readonly context = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
@@ -62,6 +81,10 @@ export class StreamMixer {
   private nextId = 1;
   private normalizeTimer: ReturnType<typeof setInterval> | null = null;
   private pausedGain = 1;
+  private duckTimer: ReturnType<typeof setInterval> | null = null;
+  private duckUntil = 0;
+  /** Le niveau de la voix hors de cette table : le vocal du salon. */
+  talkLevel: () => number = () => 0;
 
   constructor() {
     this.destination.channelCount = 2;
@@ -84,17 +107,19 @@ export class StreamMixer {
   }
 
   get list(): MixSource[] {
-    return [...this.sources.values()].map(({ id, kind, label, icon, volume, muted }) => ({ id, kind, label, icon, volume, muted }));
+    return [...this.sources.values()].map(({ id, kind, label, icon, volume, muted, offsetMs, duck }) => ({ id, kind, label, icon, volume, muted, offsetMs, duck }));
   }
 
   private register(kind: MixSourceKind, label: string, icon: string | null, input: AudioNode, dispose: () => void) {
     const gain = this.context.createGain();
+    const delay = this.context.createDelay(MAX_OFFSET_SECONDS);
+    const ducker = this.context.createGain();
     const analyser = this.context.createAnalyser();
     analyser.fftSize = 1024;
-    input.connect(gain);
-    gain.connect(analyser);
-    gain.connect(this.bus);
-    const source: LiveSource = { id: `m${this.nextId++}`, kind, label, icon, volume: 1, muted: false, gain, analyser, dispose };
+    input.connect(delay).connect(gain).connect(ducker);
+    ducker.connect(analyser);
+    ducker.connect(this.bus);
+    const source: LiveSource = { id: `m${this.nextId++}`, kind, label, icon, volume: 1, muted: false, offsetMs: 0, duck: false, gain, delay, ducker, analyser, dispose };
     this.sources.set(source.id, source);
     return source.id;
   }
@@ -134,7 +159,7 @@ export class StreamMixer {
     const source = this.sources.get(id);
     if (!source) return;
     source.dispose();
-    source.gain.disconnect();
+    source.ducker.disconnect();
     this.sources.delete(id);
   }
 
@@ -154,6 +179,34 @@ export class StreamMixer {
     if (!source) return;
     source.muted = muted;
     source.gain.gain.setTargetAtTime(muted ? 0 : source.volume, this.context.currentTime, 0.02);
+  }
+
+  setOffset(id: string, offsetMs: number) {
+    const source = this.sources.get(id);
+    if (!source) return;
+    source.offsetMs = offsetMs;
+    source.delay.delayTime.setTargetAtTime(offsetMs / 1000, this.context.currentTime, 0.02);
+  }
+
+  /** Le jeu s'efface sous la voix, comme à la radio, et revient en douceur après. */
+  setDuck(id: string, duck: boolean) {
+    const source = this.sources.get(id);
+    if (!source) return;
+    source.duck = duck;
+    if (!duck) source.ducker.gain.setTargetAtTime(1, this.context.currentTime, 0.1);
+    if (this.duckTimer || !duck) return;
+    this.duckTimer = setInterval(() => this.followVoice(), DUCK_INTERVAL_MS);
+  }
+
+  private followVoice() {
+    const inputs = [...this.sources.values()].filter(s => s.kind === "device" && !s.muted);
+    const level = Math.max(this.talkLevel(), ...inputs.map(s => rmsOf(s.analyser, this.buffer)));
+    const now = performance.now();
+    if (level > TALK_LEVEL) this.duckUntil = now + DUCK_HOLD_MS;
+    const talking = this.duckUntil > now;
+    for (const source of this.sources.values()) {
+      if (source.duck) source.ducker.gain.setTargetAtTime(talking ? DUCK_GAIN : 1, this.context.currentTime, talking ? 0.05 : 0.4);
+    }
   }
 
   /** Pause du stream : plus aucun son ne sort, pas seulement une image figée. */
@@ -191,6 +244,7 @@ export class StreamMixer {
 
   dispose() {
     if (this.normalizeTimer) clearInterval(this.normalizeTimer);
+    if (this.duckTimer) clearInterval(this.duckTimer);
     this.clear();
     void this.context.close();
   }

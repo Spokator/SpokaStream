@@ -37,6 +37,7 @@ const api: SpokaApi = {
   controlInput: events => ipcRenderer.send("control:input", events),
   controlDisarm: () => ipcRenderer.send("control:disarm"),
   onControlBlocked: cb => subscribe("control:blocked", cb),
+  regieOnTop: onTop => ipcRenderer.send("regie:on-top", onTop),
   obsInfo: () => ipcRenderer.invoke("obs:info"),
   obsAnswer: (id, sdp) => ipcRenderer.send("obs:answer", id, sdp),
   onObsOffer: cb => subscribe("obs:offer", cb),

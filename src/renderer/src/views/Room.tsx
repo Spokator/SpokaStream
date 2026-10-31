@@ -5,6 +5,7 @@ import { get, set, useApp } from "../state/store.ts";
 import { Avatar, Button, Field, IconButton, isTyping, Modal, Segmented, Select, Toggle } from "../ui/kit.tsx";
 import { Chat } from "./Chat.tsx";
 import { Members } from "./Members.tsx";
+import { LiveBar, RegieBoard } from "./Regie.tsx";
 import { Stage } from "./Stage.tsx";
 import { Studio } from "./Studio.tsx";
 
@@ -16,6 +17,7 @@ export function Room() {
   const publish = useApp(s => s.publish);
   const unread = useApp(s => s.unread);
   const cinema = useApp(s => s.cinema);
+  const regie = useApp(s => s.regie && !!s.publish && !s.cinema);
   const [layout, setLayout] = useState<"focus" | "grid">("focus");
   const [copied, setCopied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -29,6 +31,7 @@ export function Room() {
       if (key === "t") set({ cinema: !get().cinema });
       else if (key === "c") void core.saveClip();
       else if (key === "r") void core.replay();
+      else if (key === "g" && get().publish) get().regie ? set({ regie: false }) : core.openRegie();
       else if (e.key === "Enter" && !document.querySelector(".floating-chat")) document.querySelector<HTMLTextAreaElement>(".chat-input textarea")?.focus();
       else return;
       e.preventDefault();
@@ -48,7 +51,7 @@ export function Room() {
   };
 
   return (
-    <div className={`room ${panelOpen && !cinema ? "" : "no-panel"} ${cinema ? "is-cinema" : ""}`}>
+    <div className={`room ${panelOpen && !cinema && !regie ? "" : "no-panel"} ${cinema ? "is-cinema" : ""} ${regie ? "is-regie" : ""}`}>
       <div className="room-main">
         <header className="room-head">
           <h1>{room.name}</h1>
@@ -80,7 +83,8 @@ export function Room() {
           </IconButton>
         </header>
 
-        <Stage layout={layout} />
+        {publish && !cinema && <LiveBar />}
+        {regie ? <RegieBoard stage={<Stage layout="focus" />} /> : <Stage layout={layout} />}
         <Dock />
         {cinema && (
           <button type="button" className="cinema-exit" onClick={() => set({ cinema: false })}>
@@ -89,7 +93,7 @@ export function Room() {
         )}
       </div>
 
-      {panelOpen && !cinema && (
+      {panelOpen && !cinema && !regie && (
         <aside className="panel">
           <div className="panel-tabs" role="tablist">
             <button type="button" role="tab" aria-selected={panelTab === "chat"} className={panelTab === "chat" ? "is-on" : ""} onClick={() => openTab("chat")}>

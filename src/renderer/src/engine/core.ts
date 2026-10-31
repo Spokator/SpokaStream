@@ -1,8 +1,10 @@
-import type { ControlTarget, HotkeyMap, Resolution, Scene, SceneSource, Settings } from "@shared/ipc.ts";
+import { DEFAULT_REGIE } from "@shared/ipc.ts";
+import type { ActionId, AudioChoice, ControlTarget, PanelId, RegieLayout, Resolution, Scene, SceneSource, Settings, WaitScreen } from "@shared/ipc.ts";
 import { DEFAULT_VIEWER_QUALITY, youtubeId } from "@shared/protocol.ts";
 import type { AudioKind, CameraLayout, ChatMessage, ControlInput, ControlToHost, ControlToViewer, ErrorCode, Poll, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
 import { get, memberOf, patchPublish, patchRoom, patchSub, set, toast, TOGETHER, useApp } from "../state/store.ts";
-import { mentionsName } from "../ui/format.ts";
+import type { ActivityItem } from "../state/store.ts";
+import { duration, mentionsName } from "../ui/format.ts";
 import { clipThumb, frameForChat } from "../ui/image.ts";
 import { StreamMixer } from "./audio/mixer.ts";
 import { Playback } from "./audio/playback.ts";
@@ -25,10 +27,7 @@ import { VOICE_SESSION, Voice } from "./voice.ts";
 
 const api = window.spoka;
 
-export type AudioChoice =
-  | { type: "system" }
-  | { type: "app"; pid: number; name: string; icon: string | null }
-  | { type: "device"; deviceId: string; label: string };
+export type { AudioChoice };
 
 export interface GoLiveConfig {
   source: VideoSource;
@@ -60,6 +59,9 @@ const ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
 };
 
 const LAYOUT_SEND_MS = 80;
+const HEALTH_POINTS = 120;
+const ACTIVITY_ITEMS = 120;
+const SAME_EVENT_MS = 3000;
 const ASK_COOLDOWN_MS = 10_000;
 const ASK_TIMEOUT_MS = 30_000;
 
@@ -93,7 +95,13 @@ class Core {
   private readonly clipShares = new ClipShare(() => get().iceServers, (to, session, data) => this.signal.send({ t: "rtc", to, session, data }));
   private lastTyping = 0;
   private readonly obs = new ObsIngest();
+  /** Les deux dernières minutes de cadence et de débit, pour le graphique de la régie. */
+  readonly healthHistory: { fps: number; kbps: number }[] = [];
+  private lastViewers = new Set<string>();
+  private nextActivity = 1;
   private currentSource: VideoSource | null = null;
+  /** Ce qui a été ajouté à la table, pour qu'une scène puisse le retrouver. */
+  private readonly mixChoices = new Map<string, AudioChoice>();
   private layoutSentAt = 0;
   private controlTarget: ControlTarget | null = null;
   private readonly askedAt = new Map<string, number>();
@@ -217,6 +225,7 @@ class Core {
       case "room.status":
         return this.onStatus(m.rooms);
       case "member.join":
+        this.log("people", `${m.member.name} a rejoint le salon`);
         playSound("join", !!get().settings?.soundEffects && !!get().voiceJoined);
         patchRoom(r => ({ members: [...r.members.filter(x => x.id !== m.member.id), m.member] }));
         return;
@@ -224,6 +233,7 @@ class Core {
         patchRoom(r => ({ members: r.members.map(x => (x.id === m.member.id ? m.member : x)) }));
         return this.syncVoice();
       case "member.leave":
+        this.log("people", `${memberOf(m.userId)?.name ?? "Quelqu'un"} a quitté le salon`);
         patchRoom(r => ({ members: r.members.filter(x => x.id !== m.userId) }));
         return this.syncVoice();
       case "chat":
@@ -349,6 +359,8 @@ class Core {
     if (message.kind !== "user" || message.authorId === get().userId) return;
     const s = get().settings!;
     const mentioned = mentionsName(message.text, s.profile.name);
+    if (message.clip) this.log("clip", `${message.authorName} a partagé un clip de ${message.clip.seconds} s`);
+    else if (mentioned) this.log("people", `${message.authorName} t'a mentionné : ${message.text.slice(0, 60)}`);
     if (get().panelTab !== "chat" || !s.chatPanelOpen) set(state => ({ unread: state.unread + 1 }));
     playSound(mentioned ? "live" : "message", s.soundEffects && (mentioned || !document.hasFocus()));
     if ((s.notifyMessages || mentioned) && !document.hasFocus()) api.notify({ title: mentioned ? `${message.authorName} t'a mentionné` : message.authorName, body: message.text.slice(0, 140), roomId: get().room?.id });
@@ -364,6 +376,7 @@ class Core {
   }
 
   private onPoll(poll: Poll | null) {
+    if (poll && poll.id !== get().room?.poll?.id) this.log("poll", `${poll.authorName} a lancé un sondage : ${poll.question}`);
     patchRoom(() => ({ poll }));
     if (!this.publisher) return;
     api.overlaySend({ type: "poll", poll: poll && { question: poll.question, closed: poll.closed, options: poll.options.map(o => ({ text: o.text, votes: o.voters.length })) } });
@@ -379,7 +392,9 @@ class Core {
 
   private onReaction(streamId: string | null, emoji: string, from: string) {
     for (const listener of this.reactionListeners) listener({ streamId, emoji, from });
-    if (streamId === get().publish?.streamId) api.overlaySend({ type: "reaction", emoji, name: memberOf(from)?.name ?? "" });
+    if (streamId !== get().publish?.streamId) return;
+    api.overlaySend({ type: "reaction", emoji, name: memberOf(from)?.name ?? "" });
+    this.log("reaction", `${memberOf(from)?.name ?? "Quelqu'un"} ${emoji}`);
   }
 
   private onDraw(streamId: string, from: string, stroke: Stroke) {
@@ -729,9 +744,8 @@ class Core {
     const mixer = this.mixer;
     if (!mixer) return;
     try {
-      if (choice.type === "system") await mixer.addCapture("exclude", api.selfPid, "Tout le PC", null);
-      else if (choice.type === "app") await mixer.addCapture("include", choice.pid, choice.name, choice.icon);
-      else await mixer.addDevice(choice.deviceId, choice.label);
+      const id = choice.type === "system" ? await mixer.addCapture("exclude", api.selfPid, "Tout le PC", null) : choice.type === "app" ? await mixer.addCapture("include", choice.pid, choice.name, choice.icon) : await mixer.addDevice(choice.deviceId, choice.label);
+      this.mixChoices.set(id, choice);
     } catch (e) {
       toast(`Son : ${(e as Error).message}`, "error");
     }
@@ -753,6 +767,7 @@ class Core {
 
   removeMix(id: string) {
     this.mixer?.remove(id);
+    this.mixChoices.delete(id);
     this.afterMixChange();
   }
 
@@ -803,10 +818,13 @@ class Core {
       if (get().publish?.controller === id) this.endControl();
       if (get().publish?.controlAsk === id) patchPublish({ controlAsk: null });
     };
+    mixer.talkLevel = () => this.voice?.level ?? 0;
     this.currentSource = config.source;
     this.controlTarget = this.controlTargetOf(config.source);
     const allowControl = !!this.controlTarget && get().settings!.stream.allowControl;
     const { cameraLayout } = get().settings!.stream;
+    this.healthHistory.length = 0;
+    this.lastViewers = new Set();
     const preview = new MediaStream([opened.track]);
     set({
       publish: {
@@ -828,6 +846,7 @@ class Core {
         cameraLayout,
         banner: "",
         scene: null,
+        screen: null,
         allowControl,
         controlScope: this.controlTarget?.hwnd ? "window" : this.controlTarget ? "screen" : null,
         controlAsk: null,
@@ -835,6 +854,9 @@ class Core {
         controlBlocked: false,
       },
       panelTab: "studio",
+      activity: [],
+      regie: get().settings!.regie.auto,
+      focused: get().settings!.regie.auto ? streamId : get().focused,
     });
     for (const choice of config.audio) await this.addAudio(choice);
     this.sourceMixId = opened.audio ? mixer.addMediaStream(opened.audio, opened.name) : null;
@@ -870,6 +892,7 @@ class Core {
     this.openOverlay(config.source);
     playSound("live", get().settings!.soundEffects);
     this.pushTray();
+    if (get().settings!.stream.autoRecord) void this.startRecording();
     return true;
   }
 
@@ -938,6 +961,7 @@ class Core {
     this.updateAnnounce({ kind: next.kind, sourceName: next.name, width: next.width, height: next.height });
     if (audio) {
       this.mixer?.clear();
+      this.mixChoices.clear();
       for (const choice of audio) await this.addAudio(choice);
     } else if (this.sourceMixId) {
       this.mixer?.remove(this.sourceMixId);
@@ -948,21 +972,24 @@ class Core {
     toast("Source changée", "success");
   }
 
-  async setPaused(paused: boolean) {
+  /** screen : l'écran d'attente à montrer à la place de l'image. Un autre écran peut en remplacer un déjà affiché. */
+  async setPaused(paused: boolean, screen?: WaitScreen) {
     const publish = get().publish;
-    if (!publish || !this.publisher || publish.paused === paused) return;
+    if (!publish || !this.publisher || (publish.paused === paused && !(paused && screen))) return;
     if (paused) {
       this.endControl();
-      this.pauseCard = createPauseCard();
+      const previous = this.pauseCard;
+      this.pauseCard = createPauseCard(screen);
       await this.publisher.replaceVideo(this.pauseCard.track, 720);
+      previous?.stop();
     } else {
       if (!this.opened || this.sourceGone) return toast("La source n'existe plus : choisis-en une autre pour reprendre.", "warning");
       await this.publisher.replaceVideo(this.opened.track, this.opened.height);
       this.pauseCard?.stop();
       this.pauseCard = null;
     }
-    this.mixer?.setSilenced(paused);
-    patchPublish({ paused });
+    this.mixer?.setSilenced(paused && !screen?.keepSound);
+    patchPublish({ paused, screen: paused ? (screen?.title ?? null) : null });
     this.updateAnnounce({ paused });
     this.pushTray();
   }
@@ -978,8 +1005,20 @@ class Core {
     await this.publisher.applyTarget(target, publish.bench);
   }
 
+  setMixOffset(id: string, offsetMs: number) {
+    this.mixer?.setOffset(id, offsetMs);
+    patchPublish({ mix: this.mixer?.list ?? [] });
+  }
+
+  setMixDuck(id: string, duck: boolean) {
+    this.mixer?.setDuck(id, duck);
+    patchPublish({ mix: this.mixer?.list ?? [] });
+  }
+
   updateStreamInfo(patch: { title?: string; allowDraw?: boolean; maxViewers?: number; allowControl?: boolean }) {
     if (patch.allowControl === false) this.endControl();
+    if (patch.allowDraw !== undefined) void this.updateSettings({ stream: { ...get().settings!.stream, allowDraw: patch.allowDraw } });
+    if (patch.maxViewers !== undefined) void this.updateSettings({ stream: { ...get().settings!.stream, maxViewers: patch.maxViewers } });
     patchPublish(patch);
     this.updateAnnounce(patch);
     if (patch.allowDraw === false && get().publish) this.clearDrawings(get().publish!.streamId);
@@ -997,6 +1036,7 @@ class Core {
     this.endControl();
     this.controlTarget = null;
     this.currentSource = null;
+    this.mixChoices.clear();
     this.stopClips();
     this.cameraStream?.getTracks().forEach(t => t.stop());
     this.cameraStream = null;
@@ -1221,6 +1261,67 @@ class Core {
     return track ? new MediaStream([track]) : null;
   }
 
+  // ---------------------------------------------------------------- régie
+
+  private log(kind: ActivityItem["kind"], text: string) {
+    if (!get().publish) return;
+    const at = Date.now();
+    set(s => {
+      const last = s.activity.at(-1);
+      // Une rafale de réactions identiques n'apporte rien de plus qu'une seule ligne.
+      if (last?.text === text && at - last.at < SAME_EVENT_MS) return {};
+      return { activity: [...s.activity, { id: this.nextActivity++, at, kind, text }].slice(-ACTIVITY_ITEMS) };
+    });
+  }
+
+  addMarker() {
+    const startedAt = get().room?.streams.find(s => s.id === get().publish?.streamId)?.startedAt;
+    if (!startedAt) return;
+    this.log("marker", `Marqueur à ${duration(Date.now() - startedAt)}`);
+    playSound("unmute", get().settings!.soundEffects);
+  }
+
+  copyMarkers() {
+    api.copyText(get().activity.filter(a => a.kind === "marker").map(a => a.text).join("\n"));
+    toast("Marqueurs copiés", "success");
+  }
+
+  updateRegie(patch: Partial<RegieLayout>) {
+    void this.updateSettings({ regie: { ...get().settings!.regie, ...patch } });
+  }
+
+  togglePanel(id: PanelId) {
+    const { collapsed } = get().settings!.regie;
+    this.updateRegie({ collapsed: collapsed.includes(id) ? collapsed.filter(p => p !== id) : [...collapsed, id] });
+  }
+
+  /** Dépose un panneau dans une colonne, avant un autre ou tout en bas. */
+  movePanel(id: PanelId, zone: "left" | "center" | "right", before: PanelId | null) {
+    const regie = get().settings!.regie;
+    const without = (list: PanelId[]) => list.filter(p => p !== id);
+    const next = { left: without(regie.left), center: without(regie.center), right: without(regie.right) };
+    const index = before ? next[zone].indexOf(before) : -1;
+    next[zone].splice(index < 0 ? next[zone].length : index, 0, id);
+    this.updateRegie(next);
+  }
+
+  resetRegie() {
+    const { notes, actions } = get().settings!.regie;
+    this.updateRegie({ ...DEFAULT_REGIE, notes, actions });
+  }
+
+  openRegie() {
+    set({ regie: true, focused: get().publish?.streamId ?? get().focused });
+  }
+
+  setActions(actions: ActionId[]) {
+    this.updateRegie({ actions });
+  }
+
+  saveScreens(screens: WaitScreen[]) {
+    void this.updateSettings({ stream: { ...get().settings!.stream, screens } });
+  }
+
   // ---------------------------------------------------------------- caméra et scènes
 
   /** Pendant un glissement, le salon suit sans être noyé. commit : fin du geste, on garde cette place pour la prochaine fois. */
@@ -1243,9 +1344,26 @@ class Core {
   async saveScene(name: string) {
     const publish = get().publish;
     if (!publish) return;
-    const scene: Scene = { id: crypto.randomUUID(), name, source: this.currentSource && this.sceneSourceOf(this.currentSource), camera: !!publish.camera, cameraLayout: publish.cameraLayout, banner: publish.banner };
+    const scene: Scene = { id: crypto.randomUUID(), name, hotkey: "", ...this.sceneState() };
     await this.updateSettings({ scenes: [...get().settings!.scenes, scene] });
     patchPublish({ scene: scene.id });
+  }
+
+  private sceneState() {
+    const publish = get().publish!;
+    return { source: this.currentSource && this.sceneSourceOf(this.currentSource), audio: [...this.mixChoices.values()], camera: !!publish.camera, cameraLayout: publish.cameraLayout, banner: publish.banner };
+  }
+
+  updateScene(id: string, patch: Partial<Scene>) {
+    void this.updateSettings({ scenes: get().settings!.scenes.map(s => (s.id === id ? { ...s, ...patch } : s)) });
+  }
+
+  /** Reprend l'état du direct dans une scène existante. */
+  captureScene(id: string) {
+    if (!get().publish) return;
+    this.updateScene(id, this.sceneState());
+    patchPublish({ scene: id });
+    toast("Scène mise à jour", "success");
   }
 
   deleteScene(id: string) {
@@ -1265,17 +1383,44 @@ class Core {
   async applyScene(id: string) {
     const scene = get().settings!.scenes.find(s => s.id === id);
     if (!scene || !this.publisher) return;
+    const audio = scene.audio && (await this.currentChoices(scene.audio));
+    let switched = false;
     if (scene.source) {
       const next = await this.resolveScene(scene.source);
       if (!next) return toast(`La source de « ${scene.name} » n'est plus disponible.`, "warning");
       const same = this.currentSource && JSON.stringify(this.sceneSourceOf(this.currentSource)) === JSON.stringify(this.sceneSourceOf(next));
-      if (!same) await this.switchSource(next, next.kind === "obs" ? [] : null);
+      if (!same) {
+        await this.switchSource(next, audio ?? (next.kind === "obs" ? [] : null));
+        switched = true;
+      }
     }
+    if (audio && !switched) await this.restoreAudio(audio);
     const stream = get().settings!.stream;
     if (scene.camera && !this.cameraStream) await this.setCamera(stream.cameraId);
     else if (!scene.camera && this.cameraStream) await this.setCamera(null);
     patchPublish({ cameraLayout: scene.cameraLayout, banner: scene.banner, scene: id });
     this.updateAnnounce({ cameraLayout: scene.cameraLayout, banner: scene.banner });
+  }
+
+  /** Une application relancée a changé de numéro de processus : c'est son nom qui la retrouve. */
+  private async currentChoices(choices: AudioChoice[]) {
+    if (!choices.some(c => c.type === "app")) return choices;
+    const apps = await api.audioApps().catch(() => []);
+    return choices.flatMap<AudioChoice>(choice => {
+      if (choice.type !== "app") return [choice];
+      const app = apps.find(a => a.pid === choice.pid) ?? apps.find(a => a.name === choice.name);
+      return app ? [{ ...choice, pid: app.pid }] : [];
+    });
+  }
+
+  /** La table reprend les sons de la scène. Celui qui vient de la source, comme OBS, n'y est pour rien et reste en place. */
+  private async restoreAudio(choices: AudioChoice[]) {
+    const key = (list: AudioChoice[]) => JSON.stringify(list.map(c => (c.type === "app" ? c.name : c.type === "device" ? c.deviceId : c.type)).sort());
+    if (key(choices) === key([...this.mixChoices.values()])) return;
+    for (const id of [...this.mixChoices.keys()]) this.mixer?.remove(id);
+    this.mixChoices.clear();
+    for (const choice of choices) await this.addAudio(choice);
+    this.afterMixChange();
   }
 
   private sceneSourceOf(source: VideoSource): SceneSource | null {
@@ -1316,6 +1461,7 @@ class Core {
     this.askedAt.set(from, now);
     patchPublish({ controlAsk: from });
     const name = memberOf(from)?.name ?? "Quelqu'un";
+    this.log("hand", `${name} demande la main`);
     const hotkey = get().settings!.hotkeys.control;
     playSound("live", get().settings!.soundEffects);
     // En plein jeu, le diffuseur ne voit pas la fenêtre : l'overlay et la notification le préviennent. Un écran entier se décide dans l'application.
@@ -1425,6 +1571,10 @@ class Core {
   }
 
   private onViewersChanged(viewers: string[]) {
+    const now = new Set(viewers);
+    for (const id of now) if (!this.lastViewers.has(id)) this.log("watch", `${memberOf(id)?.name ?? "Quelqu'un"} regarde`);
+    for (const id of this.lastViewers) if (!now.has(id)) this.log("watch", `${memberOf(id)?.name ?? "Quelqu'un"} ne regarde plus`);
+    this.lastViewers = now;
     const names = viewers.map(id => memberOf(id)?.name).filter((n): n is string => !!n);
     api.overlaySend({ type: "viewers", count: viewers.length, names });
     this.pushTray();
@@ -1502,7 +1652,9 @@ class Core {
     this.playback.setVolume(`voice:${userId}`, volume);
   }
 
-  private onHotkey(action: keyof HotkeyMap) {
+  private onHotkey(action: string) {
+    if (action.startsWith("scene:")) return void this.applyScene(action.slice("scene:".length));
+    if (action === "marker") return this.addMarker();
     if (action === "toggleMic") return this.toggleMute();
     if (action === "toggleDeafen") return this.toggleDeafen();
     if (action === "pauseStream") return void this.setPaused(!get().publish?.paused);
@@ -1529,6 +1681,8 @@ class Core {
   private async pollStats() {
     if (this.publisher) {
       const stats = await this.publisher.pollStats();
+      this.healthHistory.push({ fps: stats?.fps ?? 0, kbps: stats?.kbps ?? 0 });
+      if (this.healthHistory.length > HEALTH_POINTS) this.healthHistory.shift();
       // Chromium cache le nom de l'encodeur quand aucune capture à lui n'est ouverte : la mesure initiale le sait.
       if (stats && !stats.encoder) {
         const measured = get().publish?.bench.find(r => r.mime === `video/${stats.codec}`);

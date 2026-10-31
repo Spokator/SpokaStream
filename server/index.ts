@@ -1,12 +1,13 @@
 import { createHmac } from "node:crypto";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { gzipSync } from "node:zlib";
 import { WebSocketServer, type WebSocket } from "ws";
 import { LIMITS } from "../src/shared/protocol.ts";
 import type { IceServer } from "../src/shared/protocol.ts";
 import { Hub } from "./hub.ts";
 import type { Store } from "./store.ts";
-import { VIEWER_HTML, VIEWER_JS } from "./viewer.gen.ts";
+import { ICON_192, ICON_512, VIEWER_HTML, VIEWER_JS } from "./viewer.gen.ts";
 
 export interface ServerOptions {
   port: number;
@@ -45,17 +46,43 @@ export function iceServersFor(userId: string, options: Pick<ServerOptions, "turn
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 
 /** Le lecteur web ne parle qu'à ce serveur. Les seules images extérieures sont les miniatures YouTube. */
-const VIEWER_CSP = ["default-src 'self'", "script-src 'self'", "style-src 'unsafe-inline'", "img-src 'self' data: https://i.ytimg.com", "media-src 'self' blob:", "connect-src 'self' ws: wss:", "frame-src 'self'", "base-uri 'none'", "form-action 'none'"].join("; ");
+const VIEWER_CSP = ["default-src 'self'", "script-src 'self'", "style-src 'unsafe-inline'", "img-src 'self' data: blob: https://i.ytimg.com", "media-src 'self' blob:", "connect-src 'self' ws: wss:", "frame-src 'self'", "worker-src 'self'", "manifest-src 'self'", "base-uri 'none'", "form-action 'none'"].join("; ");
+
+const VIEWER_JS_GZIP = gzipSync(VIEWER_JS);
+
+/** De quoi ajouter SpokaStream à l'écran d'accueil d'un téléphone : il s'ouvre alors comme une application, sans barre de navigateur. */
+const MANIFEST = JSON.stringify({
+  name: "SpokaStream",
+  short_name: "SpokaStream",
+  description: "Regarde tes amis en direct et parle avec eux.",
+  lang: "fr",
+  start_url: "/",
+  scope: "/",
+  display: "standalone",
+  background_color: "#0b0d14",
+  theme_color: "#0b0d14",
+  icons: [
+    { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+    { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+  ],
+});
+
+/** Rien n'est gardé hors ligne : un salon n'a de sens que connecté. Le fichier existe pour que l'installation soit proposée. */
+const SERVICE_WORKER = `self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
+self.addEventListener("fetch", () => {});
+`;
+
+/** Le titre d'une vidéo : YouTube ne le donne pas à une page web, le serveur le demande à sa place. */
+async function youtubeTitle(id: string) {
+  const url = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}`;
+  const response = await fetch(url, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+  if (!response?.ok) return null;
+  const data = (await response.json().catch(() => null)) as { title?: string } | null;
+  return data?.title ?? null;
+}
 
 const PAGE_STYLE = `body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1117;color:#f1f3f9;font:16px/1.5 system-ui,"Segoe UI",sans-serif}main{width:100%;max-width:420px;box-sizing:border-box;padding:32px;text-align:center}h1{font-size:24px;margin:0 0 8px}p{color:#9aa3b8;margin:0 0 24px}a,button{display:block;box-sizing:border-box;width:100%;padding:13px 18px;border:0;border-radius:12px;font:inherit;font-weight:600;text-decoration:none;margin-top:10px;cursor:pointer}.p{background:linear-gradient(135deg,#7c5cff,#22d3ee);color:#fff}.s{background:#1a1e2b;color:#f1f3f9;border:1px solid #2a3042}code{display:inline-block;margin-top:18px;padding:6px 12px;border-radius:8px;background:#1a1e2b;letter-spacing:.14em}input{box-sizing:border-box;width:100%;padding:13px 14px;border:1px solid #2a3042;border-radius:12px;background:#1a1e2b;color:#f1f3f9;font:inherit;font-size:20px;font-weight:600;letter-spacing:.14em;text-align:center;text-transform:uppercase}input::placeholder{color:#6c758a;font-size:16px;font-weight:400;letter-spacing:normal;text-transform:none}`;
-
-/** L'adresse du site : sur un téléphone il n'y a pas d'application, c'est ici qu'un code reçu devient un salon. Sans script, pour marcher partout. */
-function homePage(downloadUrl: string) {
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SpokaStream</title>
-<meta property="og:title" content="SpokaStream"><meta property="og:description" content="Entre le code d'un salon et regarde le stream dans ton navigateur.">
-<style>${PAGE_STYLE}</style></head>
-<body><main><h1>Rejoindre un salon</h1><p>Entre le code du salon : le stream démarre ici, sans rien installer.</p><form action="/w" method="get"><input name="code" required maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Code du salon" aria-label="Code du salon"><button class="p" type="submit">Regarder</button></form><a class="s" href="${escapeHtml(downloadUrl)}">Installer l'application pour diffuser</a></main></body></html>`;
-}
 
 /**
  * Discord et les navigateurs ne rendent pas spokastream:// cliquable : l'invitation est donc une page web.
@@ -123,24 +150,38 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return res.end(invitePage(invite[1]!, downloadUrl));
     }
-    if (url.pathname === "/") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      return res.end(homePage(downloadUrl));
-    }
-    // Le formulaire de l'accueil : un code tapé à la main peut contenir des espaces ou des tirets.
-    if (url.pathname === "/w") {
-      const code = (url.searchParams.get("code") ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-      res.writeHead(302, { location: /^[A-Z0-9]{4,16}$/.test(code) ? `/w/${code}` : "/" });
-      return res.end();
-    }
-    const watch = url.pathname.match(/^\/w\/([A-Za-z0-9]{4,16})$/);
-    if (watch) {
+    if (url.pathname === "/" || /^\/w\/[A-Za-z0-9]{4,16}$/.test(url.pathname)) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": VIEWER_CSP, "cache-control": "no-cache", "referrer-policy": "no-referrer" });
       return res.end(VIEWER_HTML);
     }
     if (url.pathname === "/w/app.js") {
+      const gzip = /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""));
+      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", vary: "accept-encoding", ...(gzip ? { "content-encoding": "gzip" } : {}) });
+      return res.end(gzip ? VIEWER_JS_GZIP : VIEWER_JS);
+    }
+    if (url.pathname === "/manifest.webmanifest") {
+      res.writeHead(200, { "content-type": "application/manifest+json" });
+      return res.end(MANIFEST);
+    }
+    if (url.pathname === "/sw.js") {
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" });
-      return res.end(VIEWER_JS);
+      return res.end(SERVICE_WORKER);
+    }
+    if (url.pathname === "/icon-192.png" || url.pathname === "/icon-512.png") {
+      res.writeHead(200, { "content-type": "image/png", "cache-control": "public, max-age=86400" });
+      return res.end(Buffer.from(url.pathname.includes("192") ? ICON_192 : ICON_512, "base64"));
+    }
+    if (url.pathname === "/oembed") {
+      const id = url.searchParams.get("id") ?? "";
+      if (!/^[\w-]{11}$/.test(id)) {
+        res.writeHead(400);
+        return res.end();
+      }
+      void youtubeTitle(id).then(title => {
+        res.writeHead(title ? 200 : 404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ title }));
+      });
+      return;
     }
     if (url.pathname === "/player") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

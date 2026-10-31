@@ -3,7 +3,7 @@ import { appendFileSync, createWriteStream, mkdirSync, statSync, writeFileSync }
 import type { WriteStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AudioApp, CaptureSource, ControlTarget, HotkeyMap, NativeVideoRequest, NotifyRequest, OverlayEvent, OverlayTarget, Settings, TrayState, YoutubeInfo } from "../shared/ipc.ts";
+import type { AudioApp, CaptureSource, ControlTarget, NativeVideoRequest, NotifyRequest, OverlayEvent, OverlayTarget, Settings, TrayState, YoutubeInfo } from "../shared/ipc.ts";
 import { AudioEngine } from "./audioEngine.ts";
 import { LocalHost } from "./host.ts";
 import { SettingsStore } from "./settings.ts";
@@ -55,6 +55,7 @@ for (const level of ["error", "warn"] as const) {
 
 let settings: SettingsStore;
 let mainWindow: BrowserWindow | null = null;
+let regieWindow: BrowserWindow | null = null;
 let tray: AppTray | null = null;
 let quitting = false;
 let pendingDeepLink: string | null = null;
@@ -100,9 +101,10 @@ function applyLoginItem(s: Settings) {
   app.setLoginItemSettings({ openAtLogin: s.startWithWindows, args: s.startMinimized ? ["--hidden"] : [] });
 }
 
-function registerHotkeys(map: HotkeyMap) {
+function registerHotkeys(s: Settings) {
   globalShortcut.unregisterAll();
-  for (const [action, accelerator] of Object.entries(map)) {
+  const entries = [...Object.entries(s.hotkeys), ...s.scenes.map(scene => [`scene:${scene.id}`, scene.hotkey] as const)];
+  for (const [action, accelerator] of entries) {
     if (!accelerator) continue;
     try {
       globalShortcut.register(accelerator, () => toRenderer("hotkey", action));
@@ -188,7 +190,7 @@ function wireIpc() {
   ipcMain.handle("settings:set", (_e, patch: Partial<Settings>) => {
     const before = settings.current;
     const next = settings.update(patch);
-    if (patch.hotkeys) registerHotkeys(next.hotkeys);
+    if (patch.hotkeys || patch.scenes) registerHotkeys(next);
     if (patch.startWithWindows !== undefined || patch.startMinimized !== undefined) applyLoginItem(next);
     if (patch.uiScale !== undefined) applyScale();
     if (next !== before) for (const w of BrowserWindow.getAllWindows()) w.webContents.send("settings:changed", next);
@@ -222,6 +224,7 @@ function wireIpc() {
   ipcMain.on("control:input", (_e, events: unknown) => {
     if (Array.isArray(events)) engine.input(events.slice(0, 256));
   });
+  ipcMain.on("regie:on-top", (_e, onTop: boolean) => regieWindow?.setAlwaysOnTop(onTop, "screen-saver"));
   ipcMain.on("control:disarm", () => void engine.disarmInput().catch(() => {}));
   engine.on("inputBlocked", blocked => toRenderer("control:blocked", blocked));
   ipcMain.handle("obs:info", () => ({
@@ -328,6 +331,12 @@ app.whenReady().then(() => {
     e.preventDefault();
     mainWindow?.hide();
   });
+  mainWindow.webContents.on("did-create-window", (child, details) => {
+    if (details.frameName !== "spoka-regie") return;
+    regieWindow = child;
+    child.on("closed", () => (regieWindow = null));
+    child.setAlwaysOnTop(settings.current.regie.onTop, "screen-saver");
+  });
   mainWindow.webContents.once("did-finish-load", () => {
     applyScale();
     if (pendingDeepLink) toRenderer("deep-link", pendingDeepLink);
@@ -348,7 +357,7 @@ app.whenReady().then(() => {
     },
     action => toRenderer("tray-action", action),
   );
-  registerHotkeys(settings.current.hotkeys);
+  registerHotkeys(settings.current);
   if (!testDataDir) updater.start();
 });
 

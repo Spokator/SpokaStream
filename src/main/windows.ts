@@ -63,11 +63,20 @@ export function createMainWindow(startHidden: boolean, onCloseRequest: (e: Elect
         },
       };
     }
+    if (frameName === "spoka-regie") {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: { width: 1180, height: 760, minWidth: 360, minHeight: 300, backgroundColor: "#0b0d14", title: "Régie SpokaStream", icon: appIcon(), webPreferences: { backgroundThrottling: false } },
+      };
+    }
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
-  win.webContents.on("did-create-window", child => {
+  win.webContents.on("did-create-window", (child, details) => {
     child.removeMenu();
+    // La régie reste hors de toute capture : une liste de spectateurs ou des notes ne doivent pas se retrouver à l'image.
+    child.setContentProtection(true);
+    if (details.frameName === "spoka-regie") return;
     child.setAlwaysOnTop(true, "screen-saver");
     child.setAspectRatio(16 / 9);
   });

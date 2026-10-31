@@ -1,5 +1,37 @@
 # Journal des versions
 
+## 1.3.0
+
+La régie
+
+- **Barre de direct** : l'état, le temps, les spectateurs, la santé, la scène en cours et les gestes essentiels restent visibles, quel que soit l'onglet ouvert.
+- **Vue Régie** (G) : l'image au centre, le chat et tous les contrôles autour, en même temps. Les panneaux se déplacent, se replient et se masquent, et la disposition est gardée.
+- **Fenêtre détachée** pour un second écran, invisible dans les captures, avec l'option de rester au-dessus du jeu.
+- **Actions rapides** au choix : pause, enregistrer, clip, revoir, marqueur, caméra, micro, sondage, inviter…
+- **Santé du stream** : la cause, le conseil et la correction en un clic, avec deux minutes de cadence et de débit en graphique.
+- **Écrans d'attente** personnalisables avec compte à rebours, en gardant le son si tu veux.
+- **Table de mixage** : micro dans le stream en un clic, décalage du son par source, baisse automatique du son quand tu parles, niveau total.
+- **Raccourci par scène**, même en plein jeu, et mise à jour d'une scène depuis l'état du direct.
+- **Fil d'activité** et **marqueurs** horodatés, à copier après le direct.
+- **Profils de qualité** applicables en direct, enregistrement automatique au lancement, bloc-notes.
+
+Le site, sur téléphone et partout
+
+- **Entièrement refait** pour s'adapter à tous les écrans : petit téléphone, grand téléphone, paysage, tablette, ordinateur.
+- **S'installe sur l'écran d'accueil** et s'ouvre alors comme une application.
+- **Mes salons** : l'accueil retient tes salons et montre qui est en direct.
+- **Plein écran** de toute la page : le chat vient en volet par-dessus l'image, et la lecture ne s'interrompt plus.
+- **Gestes** : pincer pour zoomer, double tap, pointeur laser au doigt.
+- **Qualité automatique** selon le réseau, data consommée, son seul, petite fenêtre.
+- **Chat complet** : réponses, réactions sur les messages, mentions, images, capture du stream, sondages à créer.
+- **Vocal** : qui parle, sourdine, mode talkie.
+- **YouTube ensemble** pilotable depuis le téléphone, et l'écran reste allumé pendant qu'on regarde.
+- **Profil** : nom, couleur et photo.
+
+Corrections
+
+- Reprise du lecteur web quand le serveur redémarre.
+
 ## 1.2.0
 
 Regarder et jouer ensemble

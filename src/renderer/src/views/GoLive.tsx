@@ -40,7 +40,7 @@ interface Preset {
   priority: VideoPriority;
 }
 
-const PRESETS: Preset[] = [
+export const PRESETS: Preset[] = [
   { id: "smooth", label: "Fluide", hint: "Jeux : 1080p, 60 i/s", resolution: "1080", fps: 60, kbps: 12000, priority: "motion" },
   { id: "sharp", label: "Net", hint: "Texte, code : native, 30 i/s", resolution: "source", fps: 30, kbps: 12000, priority: "detail" },
   { id: "cinema", label: "Film", hint: "Vidéo : 1080p, 30 i/s", resolution: "1080", fps: 30, kbps: 8000, priority: "motion" },

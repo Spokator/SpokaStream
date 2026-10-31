@@ -1,4 +1,4 @@
-import { Bell, Clapperboard, Eye, Gamepad2, Keyboard, Link2, LogOut, Mic, Monitor, Palette as PaletteIcon, Phone, Radio, Rewind, Scissors, Search, Settings as SettingsIcon, TvMinimalPlay, Users, Volume2, Vote } from "lucide-react";
+import { Bell, Clapperboard, Eye, Gamepad2, Keyboard, LayoutDashboard, Tag, Link2, LogOut, Mic, Monitor, Palette as PaletteIcon, Phone, Radio, Rewind, Scissors, Search, Settings as SettingsIcon, TvMinimalPlay, Users, Volume2, Vote } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { core } from "../engine/core.ts";
@@ -43,6 +43,7 @@ function commands(): Command[] {
       { id: "poll", group: "Actions", label: "Lancer un sondage", icon: <Vote size={16} />, run: () => set({ dialog: "poll", view: "room" }) },
       { id: "clip", group: "Actions", label: "Garder un clip", hint: settings!.hotkeys.saveClip, icon: <Scissors size={16} />, run: () => void core.saveClip() },
       { id: "replay", group: "Actions", label: "Revoir les dernières secondes", hint: "R", icon: <Rewind size={16} />, run: () => void core.replay() },
+      ...(publish ? [{ id: "regie", group: "Actions", label: get().regie ? "Fermer la régie" : "Ouvrir la régie", hint: "G", icon: <LayoutDashboard size={16} />, run: () => (get().regie ? set({ regie: false }) : core.openRegie()) }, { id: "marker", group: "Actions", label: "Poser un marqueur", hint: settings!.hotkeys.marker, icon: <Tag size={16} />, run: () => core.addMarker() }] : []),
       ...(publish ? settings!.scenes.map(scene => ({ id: `scene:${scene.id}`, group: "Scènes", label: scene.name, icon: <Clapperboard size={16} />, run: () => void core.applyScene(scene.id) })) : []),
       ...(publish?.controller ? [{ id: "hand", group: "Actions", label: "Reprendre la main", hint: settings!.hotkeys.control, icon: <Gamepad2 size={16} />, run: () => core.endControl() }] : []),
       { id: "cinema", group: "Actions", label: cinema ? "Quitter le mode cinéma" : "Mode cinéma", hint: "T", icon: <Clapperboard size={16} />, run: () => set({ cinema: !cinema, view: "room" }) },
@@ -145,6 +146,7 @@ const SHORTCUTS: [string, string][] = [
   ["Flèches haut et bas", "Volume du stream"],
   ["R", "Revoir les dernières secondes, les couper, les envoyer"],
   ["C", "Garder un clip"],
+  ["G", "Ouvrir ou fermer la régie, pendant un direct"],
   ["I", "Statistiques"],
   ["Ctrl + molette, + ou -", "Zoomer dans l'image"],
   ["0", "Enlever le zoom"],
@@ -173,6 +175,7 @@ export function ShortcutsModal() {
           [hotkeys.pauseStream, "Mettre le stream en pause"],
           [hotkeys.saveClip, "Garder un clip"],
           [hotkeys.control, "Accepter une demande de main, ou la reprendre"],
+          [hotkeys.marker, "Poser un marqueur dans le direct"],
         ]
           .filter(([keys]) => keys)
           .map(([keys, label]) => (

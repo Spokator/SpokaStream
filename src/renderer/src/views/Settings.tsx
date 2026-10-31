@@ -130,7 +130,7 @@ function acceleratorOf(e: KeyboardEvent) {
   return [...parts, key].join("+");
 }
 
-function HotkeyInput({ value, onChange }: { value: string; onChange: (accelerator: string) => void }) {
+export function HotkeyInput({ value, onChange }: { value: string; onChange: (accelerator: string) => void }) {
   const [listening, setListening] = useState(false);
   useEffect(() => {
     if (!listening) return;
@@ -418,6 +418,7 @@ const HOTKEY_LABELS: Record<keyof HotkeyMap, string> = {
   pauseStream: "Mettre le stream en pause",
   saveClip: "Garder un clip des dernières secondes",
   control: "Accepter une demande de main, ou la reprendre",
+  marker: "Poser un marqueur dans le direct",
 };
 
 function HotkeysSection({ s }: { s: Settings }) {

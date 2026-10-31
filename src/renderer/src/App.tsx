@@ -5,6 +5,7 @@ import { isTyping } from "./ui/kit.tsx";
 import { ClipPlayer } from "./views/ClipPlayer.tsx";
 import { GoLiveModal } from "./views/GoLive.tsx";
 import { ControlRequest } from "./views/Hand.tsx";
+import { RegieWindow } from "./views/Regie.tsx";
 import { Home } from "./views/Home.tsx";
 import { Onboarding } from "./views/Onboarding.tsx";
 import { OverlayView } from "./views/Overlay.tsx";
@@ -27,6 +28,7 @@ function MainApp() {
   const goLiveOpen = useApp(s => s.goLiveOpen);
   const dialog = useApp(s => s.dialog);
   const cinema = useApp(s => s.cinema && s.view === "room");
+  const regieWindow = useApp(s => s.regieWindow && !!s.publish);
   const accent = settings?.accent;
 
   useEffect(() => {
@@ -70,6 +72,7 @@ function MainApp() {
       {dialog === "palette" && <Palette />}
       <ClipPlayer />
       <ControlRequest />
+      {regieWindow && <RegieWindow />}
       <Lightbox />
       <Toasts />
     </div>

@@ -56,6 +56,8 @@ export interface PublishView {
   banner: string;
   /** La scène en cours, jusqu'à ce qu'on en change quelque chose. */
   scene: string | null;
+  /** Titre de l'écran d'attente affiché, s'il y en a un. */
+  screen: string | null;
   allowControl: boolean;
   /** Ce que la main donnerait : rien pour une caméra ou un fichier. */
   controlScope: ControlScope | null;
@@ -78,6 +80,13 @@ export interface ClipView {
   seconds: number;
   times: number[] | null;
   path: string | null;
+}
+
+export interface ActivityItem {
+  id: number;
+  at: number;
+  kind: "people" | "watch" | "reaction" | "clip" | "poll" | "hand" | "marker";
+  text: string;
 }
 
 export type View = "home" | "room" | "settings";
@@ -128,6 +137,11 @@ interface AppState {
   clipLoading: { id: string; share: number } | null;
   hand: HandView | null;
   obs: ObsState;
+  /** La vue Régie, à la place de la scène et du panneau habituels. */
+  regie: boolean;
+  /** La régie est détachée dans sa propre fenêtre. */
+  regieWindow: boolean;
+  activity: ActivityItem[];
 }
 
 export const useApp = create<AppState>(() => ({
@@ -169,6 +183,9 @@ export const useApp = create<AppState>(() => ({
   clipLoading: null,
   hand: null,
   obs: { connected: false, width: 0, height: 0 },
+  regie: false,
+  regieWindow: false,
+  activity: [],
 }));
 
 export const set = useApp.setState;

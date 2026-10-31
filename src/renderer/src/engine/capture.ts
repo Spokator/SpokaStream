@@ -1,4 +1,4 @@
-import type { CaptureSource } from "@shared/ipc.ts";
+import type { CaptureSource, WaitScreen } from "@shared/ipc.ts";
 import NativeVideoWorker from "./nativeVideo.worker.ts?worker&inline";
 import type { ObsIngest } from "./obs.ts";
 
@@ -189,8 +189,14 @@ function fromTrack(track: MediaStreamTrack, name: string, kind: VideoSource["kin
   };
 }
 
+const countdown = (until: number) => {
+  const left = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+  return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+};
+
 /** Image envoyée pendant une pause : l'écran réel cesse d'être capturé pour les spectateurs. */
-export function createPauseCard() {
+export function createPauseCard(screen: Pick<WaitScreen, "title" | "subtitle" | "minutes"> = { title: "Stream en pause", subtitle: "Ça reprend dans un instant", minutes: 0 }) {
+  const until = screen.minutes ? Date.now() + screen.minutes * 60_000 : 0;
   const canvas = document.createElement("canvas");
   canvas.width = 1280;
   canvas.height = 720;
@@ -204,10 +210,14 @@ export function createPauseCard() {
     ctx.fillStyle = "#f1f3f9";
     ctx.textAlign = "center";
     ctx.font = "600 48px 'Inter Variable', 'Segoe UI', sans-serif";
-    ctx.fillText("Stream en pause", 640, 350);
+    ctx.fillText(screen.title, 640, until ? 300 : 350);
     ctx.fillStyle = "#9aa3b8";
     ctx.font = "400 26px 'Inter Variable', 'Segoe UI', sans-serif";
-    ctx.fillText("Ça reprend dans un instant", 640, 400);
+    ctx.fillText(screen.subtitle, 640, until ? 350 : 400);
+    if (!until) return;
+    ctx.fillStyle = "#f1f3f9";
+    ctx.font = "700 72px 'Inter Variable', 'Segoe UI', sans-serif";
+    ctx.fillText(countdown(until), 640, 460);
   };
   paint();
   const stream = canvas.captureStream(4);

@@ -184,24 +184,27 @@ export function Popover({ trigger, children, align = "left", up = false }: { tri
       const anchor = root.current?.getBoundingClientRect();
       if (!anchor) return;
       const wanted = Math.min(element.scrollHeight + 2, POPOVER_MAX_HEIGHT);
-      const below = window.innerHeight - anchor.bottom - POPOVER_GAP - POPOVER_MARGIN;
+      const view = element.ownerDocument.defaultView ?? window;
+      const below = view.innerHeight - anchor.bottom - POPOVER_GAP - POPOVER_MARGIN;
       const above = anchor.top - POPOVER_GAP - POPOVER_MARGIN;
       const goUp = up ? above >= wanted || above > below : below < wanted && above > below;
       const maxHeight = Math.min(wanted, goUp ? above : below);
       const width = element.offsetWidth;
-      const left = Math.max(POPOVER_MARGIN, Math.min(align === "right" ? anchor.right - width : anchor.left, window.innerWidth - width - POPOVER_MARGIN));
+      const left = Math.max(POPOVER_MARGIN, Math.min(align === "right" ? anchor.right - width : anchor.left, view.innerWidth - width - POPOVER_MARGIN));
       setStyle({ left, maxHeight, top: goUp ? anchor.top - POPOVER_GAP - maxHeight : anchor.bottom + POPOVER_GAP });
     };
     place();
     const observer = new ResizeObserver(place);
     observer.observe(element);
     if (element.firstElementChild) observer.observe(element.firstElementChild);
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
+    // Le menu peut vivre dans la fenêtre détachée de la régie : tout se mesure dans son propre document.
+    const view = element.ownerDocument.defaultView ?? window;
+    view.addEventListener("resize", place);
+    view.addEventListener("scroll", place, true);
     return () => {
       observer.disconnect();
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
+      view.removeEventListener("resize", place);
+      view.removeEventListener("scroll", place, true);
     };
   }, [open, up, align]);
 
@@ -218,13 +221,15 @@ export function Popover({ trigger, children, align = "left", up = false }: { tri
       e.stopPropagation();
       close();
     };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey, true);
-    document.addEventListener("fullscreenchange", close);
+    const home = root.current?.ownerDocument ?? document;
+    const view = home.defaultView ?? window;
+    view.addEventListener("mousedown", onDown);
+    view.addEventListener("keydown", onKey, true);
+    home.addEventListener("fullscreenchange", close);
     return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey, true);
-      document.removeEventListener("fullscreenchange", close);
+      view.removeEventListener("mousedown", onDown);
+      view.removeEventListener("keydown", onKey, true);
+      home.removeEventListener("fullscreenchange", close);
     };
   }, [open]);
 
@@ -241,7 +246,7 @@ export function Popover({ trigger, children, align = "left", up = false }: { tri
           <div className="popover" ref={panel} style={style}>
             {children(() => setOpen(false))}
           </div>,
-          document.fullscreenElement ?? document.body,
+          (root.current?.ownerDocument ?? document).fullscreenElement ?? (root.current?.ownerDocument ?? document).body,
         )}
     </div>
   );

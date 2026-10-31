@@ -2,7 +2,7 @@ import { app } from "electron";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { DEFAULT_HOTKEYS } from "../shared/ipc.ts";
+import { DEFAULT_HOTKEYS, DEFAULT_REGIE, DEFAULT_SCREENS } from "../shared/ipc.ts";
 import { DEFAULT_CAMERA_LAYOUT } from "../shared/protocol.ts";
 import type { Settings } from "../shared/ipc.ts";
 
@@ -45,6 +45,8 @@ function defaults(): Settings {
       cameraId: "",
       cameraLayout: DEFAULT_CAMERA_LAYOUT,
       allowControl: true,
+      autoRecord: false,
+      screens: DEFAULT_SCREENS,
     },
     hotkeys: DEFAULT_HOTKEYS,
     overlay: { enabled: true, reactions: true, chat: true, viewers: true, corner: "top-right" },
@@ -56,6 +58,7 @@ function defaults(): Settings {
     ambient: true,
     scenes: [],
     obsKey: randomBytes(16).toString("hex"),
+    regie: DEFAULT_REGIE,
   };
 }
 
@@ -76,6 +79,7 @@ export class SettingsStore {
         stream: { ...base.stream, ...saved.stream },
         hotkeys: { ...base.hotkeys, ...saved.hotkeys },
         overlay: { ...base.overlay, ...saved.overlay },
+        regie: { ...base.regie, ...saved.regie },
       };
       if (process.env.SPOKASTREAM_SERVER) this.value.serverUrl = process.env.SPOKASTREAM_SERVER;
     } catch {

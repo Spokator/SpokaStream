@@ -93,10 +93,9 @@ try {
   const phone = await (await edge.newContext(devices["Pixel 7"])).newPage();
   await phone.goto(`${serverUrl.replace(/^ws/, "http").replace(/\/ws$/, "")}/`);
   await phone.getByLabel("Code du salon").fill(code.toLowerCase());
-  await phone.getByRole("button", { name: "Regarder" }).click();
-  await phone.waitForURL(/\/w\//);
   await phone.getByLabel("Ton nom").fill("Essai téléphone");
   await phone.getByRole("button", { name: "Regarder" }).click();
+  await phone.waitForURL(/\/w\//);
   const height = await poll("image sur le téléphone", () => phone.evaluate(() => (document.getElementById("video") as HTMLVideoElement).videoHeight), h => h > 0, 30_000);
   await phone.getByRole("textbox", { name: "Message" }).fill("Reçu sur le téléphone");
   await phone.keyboard.press("Enter");

@@ -88,9 +88,17 @@ La caméra est un second flux vidéo dans la connexion de chaque spectateur, ré
 
 Sa place voyage avec le stream (`cameraLayout`), en fractions de l'image : chaque spectateur dessine la bulle lui-même. Rien n'est incrusté, donc rien n'est réencodé, et un téléphone la place aussi bien qu'un PC. Le prix : elle n'est pas dans les clips ni les enregistrements.
 
+### Régie
+
+La barre de direct reste visible partout. Le Studio et la vue Régie affichent les mêmes panneaux, définis une seule fois dans `RegiePanels.tsx` : l'un dans une colonne, l'autre sur trois zones. La disposition vit dans les réglages. Les modèles sont connus : le Stream Manager de Twitch pour les panneaux déplaçables et les actions rapides, le Live Control Room de YouTube pour la santé qui dit quoi faire, OBS pour les réglages par source et les raccourcis de scène.
+
+La fenêtre détachée n'est pas une seconde application : c'est la même arborescence React rendue dans une autre fenêtre par un portail, donc rien à synchroniser. Conséquences : les styles sont recopiés dans son document, et tout ce qui mesure ou écoute doit passer par `ownerDocument`, sinon les menus s'ouvrent dans la fenêtre principale. `setContentProtection` la retire des captures.
+
+Le décalage et la baisse automatique sont deux nœuds de plus par source dans le mixeur. Le décalage ne fait que retarder : on ne peut pas avancer un son. La voix mesurée pour la baisse automatique est celle du vocal et des entrées du mixeur.
+
 ### Scènes
 
-Une scène retient la source, la caméra, sa place et le bandeau, dans les réglages du diffuseur. Les passages utilisent `switchSource`, qui remplace la piste sans renégocier. Une fenêtre change d'identifiant quand le jeu redémarre : la scène la retrouve alors par son nom. Le mix audio n'en fait pas partie, et un fichier non plus, car une page ne peut pas rouvrir un fichier seule.
+Une scène retient la source, les sons de la table, la caméra, sa place et le bandeau, dans les réglages du diffuseur. Les passages utilisent `switchSource`, qui remplace la piste sans renégocier. Une fenêtre change d'identifiant et une application de numéro de processus quand le jeu redémarre : la scène les retrouve alors par leur nom. Les volumes ne sont pas retenus, et un fichier non plus, car une page ne peut pas rouvrir un fichier seule.
 
 ### OBS
 
@@ -108,7 +116,7 @@ Trois détails, mesurés sur OBS 31 :
 
 **Ne jamais redimensionner la fenêtre de l'overlay.** Elle couvre un écran entier et c'est son contenu qui se place sur la fenêtre capturée. La version qui suivait la fenêtre par `setBounds` figeait la page principale du diffuseur, avec le fil bloqué hors de JavaScript. Le mécanisme exact dans Chromium n'est pas élucidé, mais la bissection est nette : overlay coupé, plus de gel. Le parcours de bout en bout garde ce cas.
 
-Quand une fenêtre capturée change de taille, l'encodeur matériel se réinitialise et la page du diffuseur marque 2 à 4 s d'arrêt. Le spectateur n'en voit rien. C'est mesuré à l'identique en 1.0.1, sans overlay en cause ; une temporisation de `setSourceHeight` n'y change rien.
+Quand une fenêtre capturée change de taille, l'encodeur matériel se réinitialise et la page du diffuseur s'arrête. Le spectateur n'en voit rien. C'est présent depuis la 1.0.1, sans overlay en cause, et une temporisation de `setSourceHeight` n'y change rien. La durée dépend de ce qui occupe la carte graphique : 1 à 2 s sur une machine au calme, plus de 25 s avec une vidéo, Discord et Docker à côté. Comparaison alternée sur la même machine chargée : 10,6 et 11,7 s sans la régie, 8,5 et 5,8 s avec. Ce gel n'est pas résolu.
 
 ## Regarder ensemble
 
@@ -124,7 +132,14 @@ Le clip reste découpé en fragments tant qu'il est ouvert : couper revient à c
 
 ## Lecteur web
 
-Une page servie par le serveur (`/w/CODE`), construite par `scripts/build-viewer.mjs` et embarquée dans `server/viewer.gen.ts` : il n'y a toujours qu'un fichier à déployer. Elle réutilise `Signal`, `Subscription`, `Voice` et `ClipShare`, sans React : 26 ko de script. L'invitation `/j/CODE` y mène directement sur un téléphone, et l'accueil `/` y mène depuis un code tapé à la main.
+Une application servie par le serveur (`/` et `/w/CODE`), construite par `scripts/build-viewer.mjs` et embarquée dans `server/viewer.gen.ts` : il n'y a toujours qu'un fichier à déployer. Elle réutilise `Signal`, `Subscription`, `Voice`, `ClipShare` et `StrokeCanvas`, avec Preact plutôt que React : un téléphone sur son forfait ne doit pas télécharger 190 ko de bibliothèque. Tout tient en 90 ko, 30 ko compressés. L'invitation `/j/CODE` y mène directement sur un téléphone.
+
+- **Le plein écran porte sur toute la page, jamais sur la vidéo.** Le lecteur natif d'un téléphone met la vidéo en pause en sortant, et le chat ne pourrait pas rester à portée. Un iPhone n'a que ce lecteur natif : la page y occupe tout ce qu'elle peut, et l'ajout à l'écran d'accueil retire les barres de Safari.
+- **Un seul élément vidéo pour toute la séance**, créé hors de l'arbre de composants : le geste qui autorise le son reste valable quand l'écran se reconstruit.
+- **La qualité automatique descend vite et remonte lentement** : mieux vaut 480p fluide que 1080p figé. Elle part de 720p sur un écran tactile, et reste basse si le navigateur signale une connexion lente ou l'économie de données.
+- **Preact 11 n'ajoute plus `px` aux nombres dans les styles** : une largeur numérique est ignorée sans erreur. Les calques posés sur l'image ont perdu leur taille comme ça.
+- **Installable** : un manifeste et un service worker sans cache. Un salon n'a de sens que connecté, rien n'est gardé hors ligne.
+- **Le titre d'une vidéo YouTube** passe par `/oembed` : YouTube ne le donne pas à une page web.
 
 La politique de sécurité n'autorise que ce serveur. Le chat y est écrit en `textContent`, jamais en HTML. Un téléphone demande 720p par défaut, avec un encodage dédié chez le diffuseur comme tout spectateur.
 
@@ -176,7 +191,7 @@ Si une connexion vidéo tombe vraiment, le spectateur en redemande une après 6 
 | Commande | Ce qu'elle prouve |
 | --- | --- |
 | `npm test` | 54 tests : serveur, SDP, choix du codec, tampon audio, découpe MP4 |
-| `npm run test:e2e` | 40 étapes avec deux instances et un téléphone émulé : WebRTC, son, YouTube, gestes reçus par une vraie fenêtre, sortie WHIP de ffmpeg |
+| `npm run test:e2e` | 42 étapes avec deux instances et un téléphone émulé : WebRTC, son, YouTube, gestes reçus par une vraie fenêtre, sortie WHIP de ffmpeg, formats de 320 à 1280 px, fenêtre de régie détachée |
 | `npm run test:obs` | Le vrai OBS, dans une copie isolée, jusqu'à l'image reçue par un spectateur |
 | `node --experimental-strip-types tests/e2e/run.ts --packaged` | La même chose sur l'application empaquetée |
 | `npm run test:production` | Le vrai serveur, avec la vidéo forcée par le relais TURN : PC → VPS → PC |

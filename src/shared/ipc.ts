@@ -21,19 +21,76 @@ export interface StreamDefaults {
   cameraLayout: CameraLayout;
   /** Les spectateurs peuvent demander la main. Chaque demande attend l'accord du diffuseur. */
   allowControl: boolean;
+  /** L'enregistrement démarre avec le stream. */
+  autoRecord: boolean;
+  screens: WaitScreen[];
 }
+
+/** Ce que voient les spectateurs pendant une pause. Le son reste coupé, sauf si l'écran dit le contraire. */
+export interface WaitScreen {
+  title: string;
+  subtitle: string;
+  /** Compte à rebours affiché sur l'image. 0 : aucun. */
+  minutes: number;
+  keepSound: boolean;
+}
+
+export type PanelId = "actions" | "health" | "info" | "scenes" | "sources" | "screens" | "mixer" | "quality" | "audience" | "activity" | "chat" | "notes";
+export type ActionId = "pause" | "record" | "clip" | "replay" | "marker" | "camera" | "mic" | "deafen" | "clearDraw" | "poll" | "invite";
+
+/** Disposition de la régie : chaque personne a sa façon de travailler, elle la retrouve au prochain direct. */
+export interface RegieLayout {
+  left: PanelId[];
+  center: PanelId[];
+  right: PanelId[];
+  hidden: PanelId[];
+  collapsed: PanelId[];
+  actions: ActionId[];
+  notes: string;
+  /** La régie s'ouvre toute seule au lancement du stream. */
+  auto: boolean;
+  /** La fenêtre détachée reste au-dessus du jeu. */
+  onTop: boolean;
+}
+
+export const DEFAULT_REGIE: RegieLayout = {
+  left: ["info", "scenes", "sources", "screens", "quality"],
+  center: ["actions", "mixer"],
+  right: ["health", "chat", "audience", "activity", "notes"],
+  hidden: [],
+  collapsed: ["info", "screens", "quality", "audience", "activity", "notes"],
+  actions: ["pause", "record", "clip", "replay", "marker", "clearDraw"],
+  notes: "",
+  auto: false,
+  onTop: false,
+};
+
+export const DEFAULT_SCREENS: WaitScreen[] = [
+  { title: "Ça commence bientôt", subtitle: "Installe-toi, on arrive", minutes: 5, keepSound: true },
+  { title: "Je reviens", subtitle: "Ça reprend dans un instant", minutes: 0, keepSound: false },
+  { title: "Fin du stream", subtitle: "Merci d'avoir regardé", minutes: 0, keepSound: false },
+];
 
 /** Ce qu'une scène sait retrouver. Un fichier n'y figure pas : le navigateur ne peut pas le rouvrir seul. */
 export type SceneSource = { kind: "screen" | "window"; id: string; name: string } | { kind: "camera"; deviceId: string; label: string } | { kind: "obs" };
+
+export type AudioChoice =
+  | { type: "system" }
+  | { type: "app"; pid: number; name: string; icon: string | null }
+  | { type: "device"; deviceId: string; label: string };
 
 export interface Scene {
   id: string;
   name: string;
   /** null : la scène garde la source en cours. */
   source: SceneSource | null;
+  /** Les sons de la table de mixage. Absent d'une scène enregistrée en 1.2 : elle garde le son en cours. */
+  audio?: AudioChoice[];
   camera: boolean;
   cameraLayout: CameraLayout;
   banner: string;
+  /** Raccourci global : changer de plan sans quitter le jeu. */
+  hotkey: string;
 }
 
 export interface HotkeyMap {
@@ -44,6 +101,7 @@ export interface HotkeyMap {
   saveClip: string;
   /** Accepte une demande de main, ou la reprend. */
   control: string;
+  marker: string;
 }
 
 export interface OverlaySettings {
@@ -98,6 +156,7 @@ export interface Settings {
   scenes: Scene[];
   /** Clé de l'entrée OBS : elle ne quitte jamais ce PC. */
   obsKey: string;
+  regie: RegieLayout;
 }
 
 export interface CaptureSource {
@@ -231,6 +290,7 @@ export interface SpokaApi {
   controlInput(events: ControlInput[]): void;
   controlDisarm(): void;
   onControlBlocked(cb: (blocked: boolean) => void): () => void;
+  regieOnTop(onTop: boolean): void;
   obsInfo(): Promise<ObsInfo>;
   obsAnswer(id: string, sdp: string | null): void;
   onObsOffer(cb: (id: string, sdp: string) => void): () => void;
@@ -238,7 +298,8 @@ export interface SpokaApi {
 
   setTray(state: TrayState): void;
   showWindow(): void;
-  onHotkey(cb: (action: keyof HotkeyMap) => void): () => void;
+  /** Une action de HotkeyMap, ou scene:identifiant. */
+  onHotkey(cb: (action: string) => void): () => void;
   onTrayAction(cb: (action: "toggleMic" | "toggleDeafen" | "stopStream" | "pauseStream" | "leaveRoom" | "revokeControl") => void): () => void;
   onDeepLink(cb: (code: string) => void): () => void;
   onNotificationClick(cb: (roomId: string) => void): () => void;
@@ -281,4 +342,5 @@ export const DEFAULT_HOTKEYS: HotkeyMap = {
   pauseStream: "Ctrl+Alt+P",
   saveClip: "Ctrl+Alt+C",
   control: "Ctrl+Alt+A",
+  marker: "Ctrl+Alt+X",
 };
