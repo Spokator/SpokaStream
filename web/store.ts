@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef } from "preact/hooks";
-import type { RoomState, RoomStatus } from "@shared/protocol.ts";
+import type { RemoteState, RoomState, RoomStatus } from "@shared/protocol.ts";
 import type { ChatMessage } from "@shared/protocol.ts";
 
 export const TOGETHER = "together";
@@ -10,7 +10,7 @@ export interface RecentRoom {
   name: string;
 }
 
-export type Tab = "chat" | "live" | "room";
+export type Tab = "chat" | "live" | "room" | "regie";
 export type Sheet = null | "quality" | "profile" | "poll" | "together" | "share" | { message: ChatMessage };
 
 export interface Float {
@@ -33,6 +33,15 @@ export interface WebState {
   error: string;
   online: boolean;
   userId: string;
+  /** Le compte : le même que le PC une fois ce téléphone rattaché. */
+  accountId: string;
+  admin: boolean;
+  /** Vient d'être rattaché : le profil et les droits ont changé. */
+  linked: boolean;
+  /** Ce que diffuse un autre appareil du compte. */
+  remote: RemoteState | null;
+  /** Un message du serveur à montrer un moment. */
+  notice: string;
   name: string;
   color: string;
   avatar: string | null;

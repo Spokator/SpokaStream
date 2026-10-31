@@ -397,7 +397,7 @@ try {
       alice.page.on("pageerror", e => errors.push(String(e)));
       await alice.page.evaluate(() => (window as any).__store.useApp.setState({ view: "settings" }));
       const tabs = await alice.page.locator(".settings-nav button").allTextContents();
-      assert.equal(tabs.length, 10);
+      assert.equal(tabs.length, 11);
       for (const [index, tab] of tabs.entries()) {
         await alice.page.locator(".settings-nav button").nth(index).click();
         await alice.page.locator(".settings-inner h1").first().waitFor();

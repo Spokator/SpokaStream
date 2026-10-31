@@ -6,6 +6,7 @@ import { LIMITS } from "@shared/protocol.ts";
 import { boot, enter, forgetRoom, install, leaveRoom, video } from "./client.ts";
 import { Avatar, Panes, VoiceBar, VoiceButton } from "./Panes.tsx";
 import { Player } from "./Player.tsx";
+import { RemoteCard } from "./Regie.tsx";
 import { Sheets } from "./Sheets.tsx";
 import { get, set, useApp } from "./store.ts";
 
@@ -78,6 +79,7 @@ function Recents() {
 }
 
 function Entry() {
+  const notice = useApp(s => s.notice);
   const screen = useApp(s => s.screen);
   const code = useApp(s => s.code);
   const name = useApp(s => s.name);
@@ -121,6 +123,12 @@ function Entry() {
           )}
         </form>
       </div>
+      <RemoteCard />
+      {notice && (
+        <p class="notice is-card" role="status">
+          {notice}
+        </p>
+      )}
       <Recents />
       <InstallHint />
       <a class="entry-link" href={DOWNLOAD} target="_blank" rel="noopener">
@@ -139,6 +147,7 @@ function Room() {
   const immersive = useApp(s => s.immersive);
   const fullscreen = useApp(s => s.fullscreen);
   const chatOpen = useApp(s => s.chatOpen);
+  const notice = useApp(s => s.notice);
 
   // Le clavier d'un téléphone réduit la zone visible sans toujours prévenir la page : la mise en page suit la vraie hauteur.
   useEffect(() => {
@@ -167,6 +176,11 @@ function Room() {
           {userName ? <Avatar name={userName} color={color} src={avatar} size={30} /> : <UserRound size={18} />}
         </button>
       </header>
+      {notice && (
+        <p class="notice" role="status">
+          {notice}
+        </p>
+      )}
       <Player />
       <VoiceBar />
       <Panes />

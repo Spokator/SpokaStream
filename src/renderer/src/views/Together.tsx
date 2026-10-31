@@ -35,12 +35,12 @@ const savedVolume = () => {
 };
 
 export function useCanShare() {
-  return useApp(s => !!s.room && (s.room.settings.whoCanStream === "everyone" || s.room.ownerId === s.userId));
+  return useApp(s => !!s.room && (s.room.settings.whoCanStream === "everyone" || s.room.ownerId === s.accountId));
 }
 
 const mayShare = () => {
-  const { room, userId } = get();
-  return !!room && (room.settings.whoCanStream === "everyone" || room.ownerId === userId);
+  const { room, accountId } = get();
+  return !!room && (room.settings.whoCanStream === "everyone" || room.ownerId === accountId);
 };
 
 export function TogetherModal() {

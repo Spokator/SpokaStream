@@ -176,6 +176,24 @@ Les gestes passent par un canal de données dans la connexion du spectateur : le
 - Le moteur se déclare sensible à l'échelle de l'écran, sinon Windows lui donne des positions fausses dès 125 %.
 - Un moteur relancé repart désarmé.
 
+## Comptes et appareils
+
+Il n'y a toujours ni mot de passe ni e-mail. Le jeton d'un appareil donne son identifiant, et ce qui a changé, c'est qu'un appareil peut maintenant se rattacher à un compte (`server/accounts.ts`). Le PC de départ est le compte : son identifiant ne change pas, donc les salons existants lui appartiennent toujours.
+
+`userId` reste l'**appareil** : c'est lui qui est membre d'un salon et que WebRTC adresse. `accountId` est la **personne** : propriété des salons, bannissements et profil se décident là. Donner le même `userId` au téléphone aurait été plus simple, et il aurait éjecté le PC du salon à chaque connexion.
+
+La régie à distance passe par le serveur, sans WebRTC : le PC pousse `remote.state` quand quelque chose change, le téléphone envoie `remote.cmd`, et le serveur ne relaie qu'entre appareils du même compte. Ce que le téléphone affiche vient toujours du PC, jamais d'une supposition locale. Le PC n'exécute que la liste fermée de `onRemoteCommand`.
+
+## Panneau d'administration
+
+`server/admin.ts` et `admin/` : une page servie par le serveur, sous `/admin`. Les comptes autorisés sont dans `ADMIN_ACCOUNTS`, dans le `.env` du serveur. Il n'y a pas de mot de passe à voler : l'application demande un billet à usage unique valable 60 s, ou un téléphone lié présente son jeton. La session est un cookie `HttpOnly`, `SameSite=Strict`, de 12 h, et toute écriture vérifie aussi son origine.
+
+Le panneau ne montre ni le contenu du chat ni l'image : il compte, il ne lit pas. La sauvegarde contient en revanche l'historique du chat, puisque c'est son rôle. Le journal et les retours vivent en mémoire : ils repartent de zéro à chaque redémarrage, et journald garde le reste.
+
+## SpokaSoundBoard
+
+Il joue sur plusieurs sorties en même temps, câble du jeu, câble de Discord et casque. Une capture par application les additionne toutes, d'où un son doublé. Son vrai point de sortie est l'entrée `CABLE Output`, qui passe par `addDevice` sans aucun traitement. Sur le vocal, `isVirtualInput` coupe la réduction du bruit, l'annulation d'écho et le réglage automatique, comme le README de SpokaSoundBoard le demande pour Discord.
+
 ## Réseau
 
 **Maillage plutôt que serveur vidéo.** Le stream va directement de PC à PC : latence minimale (1 ms en local), aucun coût serveur, aucune limite imposée par le VPS. La contrepartie est un encodage par spectateur, donc un envoi multiplié par leur nombre. C'est le bon choix pour des groupes d'amis, avec des connexions fibre. Au-delà de 6 à 8 spectateurs, il faudrait un SFU : `Publisher` et `Subscription` sont les seuls endroits à changer.
@@ -211,6 +229,7 @@ Si une connexion vidéo tombe vraiment, le spectateur en redemande une après 6 
 | Commande | Ce qu'elle prouve |
 | --- | --- |
 | `npm test` | 54 tests : serveur, SDP, choix du codec, tampon audio, découpe MP4 |
+| `npm run test:remote` | Liaison du téléphone, régie à distance, panneau admin de bout en bout |
 | `npm run test:party` | Deux diffuseurs, dispositions, Watch Party d'une URL, page web diffusée, film du PC, paramètres, gestes du téléphone |
 | `CHROMIUM_CAPTURE=1 npm run test:e2e` | Le même parcours sans capture native. À préférer sur un PC chargé : chaque trame native passe par DevTools, et ce canal sature même sur la 1.3.0, alors que la page reste à 144 i/s. Une étape s'arrête seule au bout de 4 minutes |
 | `npm run test:e2e` | 42 étapes avec deux instances et un téléphone émulé : WebRTC, son, YouTube, gestes reçus par une vraie fenêtre, sortie WHIP de ffmpeg, formats de 320 à 1280 px, fenêtre de régie détachée |

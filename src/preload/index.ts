@@ -60,6 +60,7 @@ const api: SpokaApi = {
   videoInfo: url => ipcRenderer.invoke("video:info", url),
   webOpen: url => ipcRenderer.invoke("web:open", url),
   webClose: () => ipcRenderer.send("web:close"),
+  soundboardInfo: () => ipcRenderer.invoke("soundboard:info"),
   resetSettings: () => ipcRenderer.invoke("settings:reset"),
   openDataFolder: () => ipcRenderer.send("open-data"),
   onWebClosed: cb => subscribe("web:closed", cb),

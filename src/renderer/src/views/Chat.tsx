@@ -88,7 +88,7 @@ function ClipCard({ message }: { message: ChatMessage }) {
 
 function Message({ message, grouped, reply, canDelete }: { message: ChatMessage; grouped: boolean; reply: ChatMessage | undefined; canDelete: boolean }) {
   const name = useApp(s => s.settings!.profile.name);
-  const isOwner = useApp(s => s.room!.ownerId === s.userId);
+  const isOwner = useApp(s => s.room!.ownerId === s.accountId);
   const pinned = useApp(s => s.room!.pinned?.id === message.id);
   if (message.kind === "system") return <div className="chat-system">{message.text}</div>;
   const mentioned = message.authorId !== get().userId && mentionsName(message.text, name);
@@ -167,7 +167,7 @@ function Message({ message, grouped, reply, canDelete }: { message: ChatMessage;
 
 function PinnedBar() {
   const pinned = useApp(s => s.room!.pinned);
-  const isOwner = useApp(s => s.room!.ownerId === s.userId);
+  const isOwner = useApp(s => s.room!.ownerId === s.accountId);
   if (!pinned) return null;
   return (
     <div className="chat-pinned">
@@ -205,7 +205,7 @@ export function Chat() {
   const ownerId = useApp(s => s.room!.ownerId);
   const replyTo = useApp(s => s.replyTo);
   const members = useApp(s => s.room!.members);
-  const canShare = useApp(s => s.room!.settings.whoCanStream === "everyone" || s.room!.ownerId === s.userId);
+  const canShare = useApp(s => s.room!.settings.whoCanStream === "everyone" || s.room!.ownerId === s.accountId);
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
   const [image, setImage] = useState<string | null>(null);

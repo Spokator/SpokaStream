@@ -1,5 +1,35 @@
 # Journal des versions
 
+## 1.5.0
+
+Ton compte sur tous tes appareils
+
+- **Lie ton téléphone à ton PC** avec un QR code, dans Paramètres, Compte : même profil, mêmes salons, mêmes droits. Pas de mot de passe : le code ne sert qu'une fois et vit 5 minutes.
+- **Plusieurs appareils en même temps** : ton téléphone n'éjecte plus ton PC d'un salon.
+- **Mes appareils** : qui est lié, qui est en ligne, et détacher un appareil en un geste.
+
+Le téléphone, ta régie
+
+- **Pendant que ton PC diffuse**, ton téléphone le pilote : pause, écrans d'attente, scènes, table de mixage, micro, caméra, enregistrement, clip, marqueur, titre, bandeau, spectateurs, film du PC, demandes de main, arrêt.
+- **Dès l'accueil**, une carte te dit que ton PC est en direct.
+- **Ton propre stream ne s'ouvre pas tout seul** sur le téléphone, pour éviter l'écho. Il reste disponible dans En direct.
+
+Panneau d'administration
+
+- **Une adresse, /admin**, sur PC comme sur téléphone, réservée à ton compte.
+- **Vue d'ensemble** : qui est en ligne, streams, spectateurs, courbes sur 24 heures, services, processeur, mémoire, disque, certificat HTTPS, dernière version et téléchargements, versions connectées, alertes.
+- **Salons** : voir qui est où, arrêter un stream, retirer quelqu'un, verrouiller, supprimer.
+- **Comptes** : tous les comptes et leurs appareils, recherche, bannissement du serveur.
+- **Journal** et **Retours** : les erreurs des applications remontent toutes seules, et chacun peut signaler un problème depuis À propos, diagnostic joint.
+- **Serveur** : annonce à tout le monde, mode maintenance, sauvegarde, redémarrage.
+- Le contenu du chat et des streams ne s'affiche pas dans le panneau.
+
+SpokaSoundBoard
+
+- **Son micro virtuel est reconnu** : la réduction du bruit, l'écho et le niveau automatique se coupent dessus. Ils prenaient la musique pour du bruit.
+- **Un bouton Utiliser** dans Son et voix règle le vocal d'un coup.
+- **Dans le son du stream**, SpokaSoundBoard apparaît en tête : sa musique, ses sons et ta voix transformée, déjà mixés. Le capter comme application l'aurait doublé, parce qu'il joue sur plusieurs sorties à la fois.
+
 ## 1.4.0
 
 Plusieurs streams à la fois

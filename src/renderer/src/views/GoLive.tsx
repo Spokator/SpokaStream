@@ -1,5 +1,6 @@
 import { AppWindow, Camera, Check, Clapperboard, FileVideo, Globe, Loader2, Monitor, Plus, Radio, RefreshCw, Volume2, VolumeX, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { isVirtualInput } from "@shared/ipc.ts";
 import type { AudioApp, CaptureSource, CodecChoice, Resolution, VideoPriority } from "@shared/ipc.ts";
 import { videoUrl } from "@shared/protocol.ts";
 import type { VideoSource } from "../engine/capture.ts";
@@ -76,6 +77,9 @@ function AudioPicker({ value, onChange, engineReady }: { value: AudioChoice[]; o
     return () => clearInterval(timer);
   }, [engineReady]);
 
+  const cable = devices.find(d => isVirtualInput(d.label));
+  const isSoundboard = (a: AudioApp) => /SpokaSoundBoard/i.test(a.name);
+
   const toggle = (choice: AudioChoice) => {
     const key = choiceKey(choice);
     if (value.some(c => choiceKey(c) === key)) return onChange(value.filter(c => choiceKey(c) !== key));
@@ -122,8 +126,24 @@ function AudioPicker({ value, onChange, engineReady }: { value: AudioChoice[]; o
                 <span>Tout le PC</span>
                 <small>Sauf SpokaStream, donc sans écho</small>
               </button>
+              {cable && (
+                <>
+                  <div className="menu-title">Micro virtuel</div>
+                  <button
+                    type="button"
+                    className={`menu-item ${value.some(c => c.type === "device" && c.deviceId === cable.deviceId) ? "is-on" : ""}`}
+                    onClick={() => {
+                      toggle({ type: "device", deviceId: cable.deviceId, label: "SpokaSoundBoard" });
+                      close();
+                    }}
+                  >
+                    <span>SpokaSoundBoard</span>
+                    <small>Musique, sons et voix, déjà mixés. {cable.label}</small>
+                  </button>
+                </>
+              )}
               {apps.length > 0 && <div className="menu-title">Applications qui font du son</div>}
-              {apps.map(a => (
+              {apps.filter(a => !cable || !isSoundboard(a)).map(a => (
                 <button
                   key={a.pid}
                   type="button"
@@ -138,7 +158,7 @@ function AudioPicker({ value, onChange, engineReady }: { value: AudioChoice[]; o
                     {a.name}
                     {a.peak > 0.001 && <i className="sound-dot" />}
                   </span>
-                  {a.title && <small>{a.title}</small>}
+                  {isSoundboard(a) ? <small>Il joue sur plusieurs sorties à la fois : le son peut arriver en double. Le micro virtuel évite ça.</small> : a.title && <small>{a.title}</small>}
                 </button>
               ))}
               {devices.length > 0 && <div className="menu-title">Entrées (micro, carte d'acquisition)</div>}

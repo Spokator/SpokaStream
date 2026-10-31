@@ -50,6 +50,8 @@ export interface Member extends Profile {
   voice: VoiceState | null;
   /** Regarde depuis un navigateur : pas de diffusion ni de prise en main possible. */
   web?: boolean;
+  /** Le compte de cet appareil : un PC et un téléphone rattachés sont la même personne. */
+  account?: string;
 }
 
 export type SourceKind = "screen" | "window" | "camera" | "file" | "obs" | "web";
@@ -171,6 +173,36 @@ export interface RoomState {
   together: Together | null;
 }
 
+/** Ce qu'un PC en direct montre à ses autres appareils : de quoi tenir la régie depuis un téléphone. */
+export interface RemoteState {
+  roomId: string;
+  roomName: string;
+  roomCode: string;
+  title: string;
+  source: string;
+  startedAt: number;
+  paused: boolean;
+  /** Écran d'attente affiché, s'il y en a un. */
+  screen: string | null;
+  screens: string[];
+  scene: string | null;
+  scenes: { id: string; name: string }[];
+  mix: { id: string; label: string; volume: number; muted: boolean }[];
+  viewers: { id: string; name: string }[];
+  stats: { height: number; fps: number; kbps: number; codec: string; limit: string | null } | null;
+  muted: boolean;
+  deafened: boolean;
+  camera: boolean;
+  banner: string;
+  recording: boolean;
+  file: { playing: boolean; time: number; duration: number } | null;
+  /** Nom de qui demande la main, et de qui l'a. */
+  controlAsk: string | null;
+  controller: string | null;
+}
+
+export type RemoteCommand = "pause" | "resume" | "screen" | "scene" | "mute" | "deafen" | "camera" | "record" | "clip" | "marker" | "clear" | "title" | "banner" | "mixVolume" | "mixMute" | "kick" | "stop" | "controlAccept" | "controlRefuse" | "controlEnd" | "filePlay" | "fileSeek";
+
 export interface RoomStatus {
   id: string;
   name: string;
@@ -213,7 +245,8 @@ export type ErrorCode =
   | "rate_limited"
   | "too_many_rooms"
   | "viewer_limit"
-  | "stream_not_found";
+  | "stream_not_found"
+  | "maintenance";
 
 /** Un geste de la personne qui a la main. Les coordonnées vont de 0 à 1 dans l'image. */
 export type ControlInput =
@@ -234,7 +267,7 @@ interface Rid {
 }
 
 export type ClientMessage =
-  | ({ t: "hello"; protocol: number; token: string; profile: Profile; client?: "web" } & Rid)
+  | ({ t: "hello"; protocol: number; token: string; profile: Profile; client?: "web"; version?: string; device?: string } & Rid)
   | ({ t: "room.create"; name: string } & Rid)
   | ({ t: "room.join"; code?: string; id?: string } & Rid)
   | { t: "room.leave" }
@@ -258,6 +291,14 @@ export type ClientMessage =
   | { t: "together.next"; videoId: string }
   | { t: "together.remove"; index: number; videoId: string }
   | { t: "together.stop" }
+  | ({ t: "account.link" } & Rid)
+  | ({ t: "account.claim"; code: string } & Rid)
+  | ({ t: "account.devices" } & Rid)
+  | ({ t: "account.revoke"; deviceId: string } & Rid)
+  | ({ t: "admin.ticket" } & Rid)
+  | { t: "remote.state"; state: RemoteState | null }
+  | { t: "remote.cmd"; cmd: RemoteCommand; arg?: string | number | boolean }
+  | { t: "report"; kind: "error" | "feedback"; text: string; details?: string }
   | { t: "push.subscribe"; endpoint: string; p256dh: string; auth: string; rooms: string[] }
   | { t: "push.unsubscribe"; endpoint: string }
   | { t: "reaction"; streamId: string | null; emoji: string }
@@ -284,7 +325,11 @@ export interface ViewerQuality {
 
 export type ServerMessage =
   | { t: "ack"; rid: number; ok: boolean; error?: ErrorCode; data?: unknown }
-  | { t: "welcome"; userId: string; iceServers: IceServer[]; serverName: string }
+  | { t: "welcome"; userId: string; accountId?: string; admin?: boolean; iceServers: IceServer[]; serverName: string }
+  | { t: "account.sync"; profile: Profile }
+  | { t: "remote.state"; state: RemoteState | null }
+  | { t: "remote.cmd"; cmd: RemoteCommand; arg?: string | number | boolean }
+  | { t: "announce"; text: string; level: "info" | "warning" }
   | { t: "room.state"; room: RoomState }
   | { t: "room.updated"; name: string; settings: RoomSettings }
   | { t: "room.closed"; reason: "deleted" | "kicked" | "banned" | "replaced" }

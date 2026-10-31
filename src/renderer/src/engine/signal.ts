@@ -20,6 +20,8 @@ interface Pending {
 }
 
 export class Signal {
+  private version?: string;
+  private device?: string;
   private ws: WebSocket | null = null;
   private url = "";
   private token = "";
@@ -42,7 +44,9 @@ export class Signal {
   /** Connexion établie et authentifiée, première fois ou retour après une coupure. */
   onReady: () => void = () => {};
 
-  start(url: string, token: string, profile: Profile, client?: "web") {
+  start(url: string, token: string, profile: Profile, client?: "web", version?: string, device?: string) {
+    this.version = version;
+    this.device = device;
     this.stop();
     this.url = url;
     this.token = token;
@@ -75,7 +79,7 @@ export class Signal {
     this.ws = ws;
     ws.onopen = () => {
       if (ws !== this.ws) return;
-      this.request({ t: "hello", protocol: PROTOCOL_VERSION, token: this.token, profile: this.profile!, client: this.client })
+      this.request({ t: "hello", protocol: PROTOCOL_VERSION, token: this.token, profile: this.profile!, client: this.client, version: this.version, device: this.device })
         .then(() => {
           this.attempt = 0;
           this.onState("online");

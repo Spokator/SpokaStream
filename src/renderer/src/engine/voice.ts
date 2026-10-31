@@ -1,3 +1,4 @@
+import { isVirtualInput } from "@shared/ipc.ts";
 import type { Settings } from "@shared/ipc.ts";
 import type { IceServer } from "@shared/protocol.ts";
 import { rtcConfig } from "./rtc.ts";
@@ -43,12 +44,15 @@ export class Voice {
 
   private async openMicrophone() {
     const s = this.settings;
+    const label = (await navigator.mediaDevices.enumerateDevices()).find(d => d.kind === "audioinput" && d.deviceId === s.micId)?.label ?? "";
+    // Un micro virtuel transporte de la musique et une voix déjà traitée : ces filtres la prendraient pour du bruit et la couperaient.
+    const raw = isVirtualInput(label);
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         deviceId: s.micId === "default" ? undefined : { exact: s.micId },
-        noiseSuppression: s.noiseSuppression,
-        echoCancellation: s.echoCancellation,
-        autoGainControl: s.autoGain,
+        noiseSuppression: s.noiseSuppression && !raw,
+        echoCancellation: s.echoCancellation && !raw,
+        autoGainControl: s.autoGain && !raw,
         channelCount: 1,
         sampleRate: 48000,
       },

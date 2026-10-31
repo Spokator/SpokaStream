@@ -1,10 +1,10 @@
 import { DEFAULT_REGIE } from "@shared/ipc.ts";
 import type { ActionId, AudioChoice, ControlTarget, PanelId, RegieLayout, Resolution, Scene, SceneSource, Settings, VideoInfo, WaitScreen, WallMode, WallRect, WallSettings } from "@shared/ipc.ts";
 import { DEFAULT_VIEWER_QUALITY, isHls, videoUrl, youtubeId } from "@shared/protocol.ts";
-import type { AudioKind, CameraLayout, ChatMessage, ControlInput, ControlToHost, ControlToViewer, ErrorCode, Poll, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
+import type { AudioKind, CameraLayout, ChatMessage, RemoteCommand, RemoteState, ControlInput, ControlToHost, ControlToViewer, ErrorCode, Poll, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
 import { get, memberOf, patchPublish, patchRoom, patchSub, set, soloOf, toast, TOGETHER, useApp } from "../state/store.ts";
 import type { ActivityItem } from "../state/store.ts";
-import { duration, mentionsName } from "../ui/format.ts";
+import { duration, limitText, mentionsName } from "../ui/format.ts";
 import { clipThumb, frameForChat } from "../ui/image.ts";
 import { StreamMixer } from "./audio/mixer.ts";
 import { Playback } from "./audio/playback.ts";
@@ -29,6 +29,18 @@ import { VOICE_SESSION, Voice } from "./voice.ts";
 const api = window.spoka;
 
 export type { AudioChoice };
+
+export interface AccountDevice {
+  id: string;
+  label: string;
+  client: "app" | "web";
+  version: string;
+  addedAt: number;
+  lastSeen: number;
+  online: boolean;
+  self: boolean;
+  primary: boolean;
+}
 
 export interface GoLiveConfig {
   source: VideoSource;
@@ -66,6 +78,8 @@ const SAME_EVENT_MS = 3000;
 const ASK_COOLDOWN_MS = 10_000;
 const ASK_TIMEOUT_MS = 30_000;
 const FIT_DELAY_MS = 1500;
+const REMOTE_PUSH_MS = 1000;
+const MAX_ERROR_REPORTS = 8;
 const START_QUALITIES = [
   { maxHeight: 1080, maxKbps: 12000 },
   { maxHeight: 720, maxKbps: 5000 },
@@ -134,6 +148,7 @@ class Core {
   private readonly fitTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private lastSolo: string | null = null;
   private fileLoop = false;
+  private lastRemote = "";
   private fileSeek = false;
 
   async boot() {
@@ -180,7 +195,12 @@ class Core {
 
     this.signal.onState = connection => set({ connection, unreachable: connection === "connecting" && this.signal.failedAttempts >= 3 });
     this.signal.onMessage = message => this.onServer(message);
-    this.signal.onReady = () => this.onConnected();
+    this.signal.onReady = () => {
+      this.lastRemote = "";
+      this.onConnected();
+    };
+    setInterval(() => this.pushRemote(), REMOTE_PUSH_MS);
+    this.watchErrors();
 
     this.timers.push(setInterval(() => void this.pollStats(), 1000));
     this.timers.push(setInterval(() => this.pollSpeaking(), 120));
@@ -196,7 +216,7 @@ class Core {
 
   connect() {
     const s = get().settings!;
-    this.signal.start(s.serverUrl, s.token, s.profile);
+    this.signal.start(s.serverUrl, s.token, s.profile, undefined, api.version, "PC Windows");
   }
 
   async updateSettings(patch: Partial<Settings>) {
@@ -240,7 +260,13 @@ class Core {
   private onServer(m: ServerMessage) {
     switch (m.t) {
       case "welcome":
-        return set({ userId: m.userId, iceServers: m.iceServers, serverName: m.serverName });
+        return set({ userId: m.userId, accountId: m.accountId ?? m.userId, admin: !!m.admin, iceServers: m.iceServers, serverName: m.serverName });
+      case "account.sync":
+        return void this.applyAccountProfile(m.profile);
+      case "remote.cmd":
+        return void this.onRemoteCommand(m.cmd, m.arg);
+      case "announce":
+        return toast(m.text, m.level === "warning" ? "warning" : "info", 12_000);
       case "room.state":
         return this.onRoomState(m.room);
       case "room.updated":
@@ -451,6 +477,147 @@ class Core {
     const others = get().room?.streams.filter(s => s.ownerId !== get().userId) ?? [];
     if (settings.wall.watchAll) return others.forEach(s => void this.watch(s.id));
     if (!this.subs.size && others[0] && !get().room?.together) void this.watch(others[0].id);
+  }
+
+  /** Un autre appareil du compte a changé le profil, ou celui-ci vient d'être rattaché. */
+  private async applyAccountProfile(profile: Profile) {
+    const settings = get().settings;
+    if (!settings || JSON.stringify(settings.profile) === JSON.stringify(profile)) return;
+    set({ settings: await api.setSettings({ profile }) });
+  }
+
+  linkDevice() {
+    return this.signal.request<{ code: string; expires: number }>({ t: "account.link" });
+  }
+
+  linkUrl(code: string) {
+    return `${this.playerUrl().replace(/\/player$/, "")}/link/${code}`;
+  }
+
+  claimLink(code: string) {
+    return this.signal.request({ t: "account.claim", code });
+  }
+
+  listDevices() {
+    return this.signal.request<AccountDevice[]>({ t: "account.devices" });
+  }
+
+  revokeDevice(deviceId: string) {
+    return this.signal.request({ t: "account.revoke", deviceId });
+  }
+
+  /** Un billet à usage unique : le navigateur entre sans que le jeton de ce PC quitte l'application. */
+  async openAdmin() {
+    const { ticket } = await this.signal.request<{ ticket: string }>({ t: "admin.ticket" });
+    api.openExternal(`${this.playerUrl().replace(/\/player$/, "")}/admin#t=${ticket}`);
+  }
+
+  private watchErrors() {
+    const seen = new Set<string>();
+    const send = (text: string, details: string) => {
+      if (!get().settings?.sendErrors || seen.has(text) || seen.size >= MAX_ERROR_REPORTS) return;
+      seen.add(text);
+      this.signal.send({ t: "report", kind: "error", text: `${api.version} : ${text}`.slice(0, 1000), details: details.slice(0, 8000) });
+    };
+    window.addEventListener("error", e => send(e.message, String((e.error as Error | undefined)?.stack ?? `${e.filename}:${e.lineno}`)));
+    window.addEventListener("unhandledrejection", e => send(String((e.reason as Error | undefined)?.message ?? e.reason), String((e.reason as Error | undefined)?.stack ?? "")));
+  }
+
+  async sendFeedback(text: string) {
+    this.signal.send({ t: "report", kind: "feedback", text: text.slice(0, 3000), details: (await this.diagnostics()).slice(0, 18_000) });
+  }
+
+  /** Ce que voient les autres appareils du compte. Rien ne part tant que rien n'a changé. */
+  private pushRemote() {
+    const { publish, room, settings, muted, deafened, recording } = get();
+    const name = (id: string | null) => (id ? (memberOf(id)?.name ?? "?") : null);
+    const state: RemoteState | null =
+      publish && room && settings
+        ? {
+            roomId: room.id,
+            roomName: room.name,
+            roomCode: room.code,
+            title: publish.title,
+            source: publish.sourceName,
+            startedAt: room.streams.find(s => s.id === publish.streamId)?.startedAt ?? Date.now(),
+            paused: publish.paused,
+            screen: publish.screen,
+            screens: settings.stream.screens.map(s => s.title),
+            scene: publish.scene,
+            scenes: settings.scenes.map(({ id, name: label }) => ({ id, name: label })),
+            mix: publish.mix.map(({ id, label, volume, muted: off }) => ({ id, label, volume, muted: off })),
+            viewers: publish.viewers.map(v => ({ id: v.id, name: name(v.id) ?? "?" })),
+            stats: publish.stats ? { height: publish.stats.height, fps: publish.stats.fps, kbps: publish.stats.kbps, codec: publish.stats.codec, limit: limitText(publish.stats.limit) || null } : null,
+            muted,
+            deafened,
+            camera: !!publish.camera,
+            banner: publish.banner,
+            recording: recording?.streamId === publish.streamId,
+            file: publish.file ? { playing: publish.file.playing, time: Math.floor(publish.file.time), duration: publish.file.duration } : null,
+            controlAsk: name(publish.controlAsk),
+            controller: name(publish.controller),
+          }
+        : null;
+    const text = JSON.stringify(state);
+    if (text === this.lastRemote) return;
+    this.lastRemote = text;
+    this.signal.send({ t: "remote.state", state });
+  }
+
+  /** Le serveur ne relaie que les appareils du même compte. Ici, seules ces commandes existent : un téléphone ne peut rien faire d'autre. */
+  private async onRemoteCommand(cmd: RemoteCommand, arg?: string | number | boolean) {
+    const publish = get().publish;
+    if (!publish) return;
+    const text = String(arg ?? "");
+    const [id = "", value = ""] = text.split("|");
+    switch (cmd) {
+      case "pause":
+        return this.setPaused(true);
+      case "resume":
+        return this.setPaused(false);
+      case "screen": {
+        const screen = get().settings!.stream.screens[Number(arg)];
+        return screen ? this.setPaused(true, screen) : undefined;
+      }
+      case "scene":
+        return this.applyScene(text);
+      case "mute":
+        return this.toggleMute();
+      case "deafen":
+        return this.toggleDeafen();
+      case "camera":
+        return this.setCamera(publish.camera ? null : get().settings!.stream.cameraId);
+      case "record":
+        return get().recording ? this.stopRecording() : this.startRecording();
+      case "clip":
+        return this.saveClip();
+      case "marker":
+        return this.addMarker();
+      case "clear":
+        return this.clearDrawings(publish.streamId);
+      case "title":
+        return this.updateStreamInfo({ title: text.slice(0, 80) });
+      case "banner":
+        return this.setBanner(text.slice(0, 80));
+      case "mixVolume":
+        return this.setMixVolume(id, Math.max(0, Math.min(1.5, Number(value) || 0)));
+      case "mixMute":
+        return this.setMixMuted(id, value === "1");
+      case "kick":
+        return this.kickViewer(text);
+      case "stop":
+        return this.stopLive();
+      case "controlAccept":
+        return this.acceptControl();
+      case "controlRefuse":
+        return this.refuseControl();
+      case "controlEnd":
+        return this.endControl();
+      case "filePlay":
+        return this.fileControl({ playing: arg === true });
+      case "fileSeek":
+        return this.fileControl({ time: Number(arg) || 0 });
+    }
   }
 
   private quiet() {

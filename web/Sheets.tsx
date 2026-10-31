@@ -4,7 +4,7 @@ import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { LIMITS } from "@shared/protocol.ts";
 import type { ChatMessage } from "@shared/protocol.ts";
-import { deleteChat, inviteLink, pollClose, pollCreate, pollDismiss, QUALITIES, reactChat, saveProfile, setLatency, setPushToTalk, setQuality, shareInvite, togetherAdd } from "./client.ts";
+import { claimLink, deleteChat, inviteLink, pollClose, pollCreate, pollDismiss, QUALITIES, reactChat, saveProfile, setLatency, setPushToTalk, setQuality, shareInvite, togetherAdd } from "./client.ts";
 import { set, useApp } from "./store.ts";
 
 const QUICK = ["👍", "❤️", "😂", "🔥", "😮", "😭", "🎉", "💀"];
@@ -73,6 +73,48 @@ async function pictureToAvatar(file: File) {
   return data.length <= LIMITS.avatarBytes ? data : null;
 }
 
+/** Le code vient du PC : Paramètres, Compte. Le QR code fait la même chose sans rien taper. */
+function LinkField() {
+  const accountId = useApp(s => s.accountId);
+  const userId = useApp(s => s.userId);
+  const admin = useApp(s => s.admin);
+  const [code, setCode] = useState("");
+  const [problem, setProblem] = useState("");
+  if (accountId && accountId !== userId) {
+    return (
+      <div class="field">
+        <span>Compte</span>
+        <p class="sheet-note">Ce téléphone est lié à ton PC : même profil, mêmes salons, et il devient ta régie quand ton PC diffuse.</p>
+        {admin && (
+          <a class="wide" href="/admin">
+            Ouvrir le panneau d'administration
+          </a>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div class="field">
+      <span>Lier à mon compte PC</span>
+      <input value={code} maxLength={12} autoCapitalize="characters" autoComplete="off" spellcheck={false} placeholder="Code à 8 caractères" aria-label="Code de liaison" onInput={e => setCode(e.currentTarget.value)} />
+      {problem && <p class="sheet-note">{problem}</p>}
+      <button
+        type="button"
+        class="wide"
+        disabled={code.trim().length < 8}
+        onClick={() =>
+          void claimLink(code).then(
+            () => (setCode(""), setProblem("")),
+            () => setProblem("Ce code n'est pas valable, ou il a expiré."),
+          )
+        }
+      >
+        Lier ce téléphone
+      </button>
+    </div>
+  );
+}
+
 function ProfileSheet() {
   const name = useApp(s => s.name);
   const color = useApp(s => s.color);
@@ -81,6 +123,7 @@ function ProfileSheet() {
   const [draft, setDraft] = useState(name);
   return (
     <Sheet title="Mon profil">
+      <LinkField />
       <label class="field">
         <span>Nom affiché</span>
         <input value={draft} maxLength={LIMITS.name} aria-label="Nom affiché" onInput={e => setDraft(e.currentTarget.value)} onBlur={() => draft.trim() && draft !== name && saveProfile({ name: draft.trim() })} />
@@ -124,7 +167,7 @@ function ProfileSheet() {
 function PollSheet() {
   const poll = useApp(s => s.room?.poll ?? null);
   const userId = useApp(s => s.userId);
-  const owner = useApp(s => s.room?.ownerId === s.userId);
+  const owner = useApp(s => s.room?.ownerId === s.accountId);
   const [question, setQuestion] = useState("");
   const [options, setOptions] = useState(["", ""]);
   const filled = options.filter(o => o.trim());
@@ -224,7 +267,7 @@ function ShareSheet() {
 }
 
 function MessageSheet({ message }: { message: ChatMessage }) {
-  const mine = useApp(s => message.authorId === s.userId || s.room?.ownerId === s.userId);
+  const mine = useApp(s => message.authorId === s.userId || s.room?.ownerId === s.accountId);
   return (
     <Sheet title={`Message de ${message.authorName}`}>
       <div class="emoji-tray">

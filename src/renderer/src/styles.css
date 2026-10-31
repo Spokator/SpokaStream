@@ -4696,3 +4696,78 @@ body.regie-window {
   right: 6px;
   transform: none;
 }
+
+.soundboard-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.soundboard-card > div {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.soundboard-card span {
+  color: var(--muted);
+}
+
+.link-panel {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.link-panel img {
+  flex: none;
+  width: 164px;
+  height: 164px;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+.link-panel div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.link-panel span,
+.link-panel small {
+  color: var(--muted);
+}
+
+.link-panel code {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.device-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.device-line > span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.device-line small {
+  color: var(--muted);
+}

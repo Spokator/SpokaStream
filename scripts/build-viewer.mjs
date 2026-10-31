@@ -19,6 +19,21 @@ const bundle = await build({
   logLevel: "warning",
 });
 
+const adminDir = path.join(root, "admin");
+const adminBundle = await build({
+  entryPoints: [path.join(adminDir, "main.tsx")],
+  bundle: true,
+  minify: true,
+  write: false,
+  format: "iife",
+  target: ["es2020", "safari15"],
+  jsx: "automatic",
+  jsxImportSource: "preact",
+  logLevel: "warning",
+});
+const adminHtml = readFileSync(path.join(adminDir, "page.html"), "utf8").replace("/*STYLE*/", () => readFileSync(path.join(adminDir, "style.css"), "utf8"));
+const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+
 const css = readFileSync(path.join(web, "style.css"), "utf8");
 const html = readFileSync(path.join(web, "page.html"), "utf8").replace("/*STYLE*/", () => css);
 const js = bundle.outputFiles[0].text;
@@ -32,6 +47,9 @@ writeFileSync(
 export const VIEWER_HTML = ${JSON.stringify(html)};
 export const VIEWER_JS = ${JSON.stringify(js)};
 export const HLS_JS = ${JSON.stringify(hls)};
+export const ADMIN_HTML = ${JSON.stringify(adminHtml)};
+export const ADMIN_JS = ${JSON.stringify(adminBundle.outputFiles[0].text)};
+export const APP_VERSION = ${JSON.stringify(version)};
 export const ICON_192 = ${JSON.stringify(icon(192))};
 export const ICON_512 = ${JSON.stringify(icon(512))};
 `,

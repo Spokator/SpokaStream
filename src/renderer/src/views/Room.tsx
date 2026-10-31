@@ -13,7 +13,7 @@ import { Studio } from "./Studio.tsx";
 
 export function Room() {
   const room = useApp(s => s.room)!;
-  const userId = useApp(s => s.userId);
+  const accountId = useApp(s => s.accountId);
   const panelOpen = useApp(s => s.settings!.chatPanelOpen);
   const panelTab = useApp(s => s.panelTab);
   const publish = useApp(s => s.publish);
@@ -22,7 +22,7 @@ export function Room() {
   const regie = useApp(s => s.regie && !!s.publish && !s.cinema);
   const [copied, setCopied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const isOwner = room.ownerId === userId;
+  const isOwner = room.ownerId === accountId;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -245,7 +245,7 @@ function Dock() {
   const deafened = useApp(s => s.deafened);
   const publish = useApp(s => s.publish);
   const whoCanStream = useApp(s => s.room!.settings.whoCanStream);
-  const isOwner = useApp(s => s.room!.ownerId === s.userId);
+  const isOwner = useApp(s => s.room!.ownerId === s.accountId);
   const canStream = whoCanStream === "everyone" || isOwner;
 
   return (

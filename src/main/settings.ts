@@ -66,6 +66,7 @@ function defaults(): Settings {
     watchQuality: 0,
     notifyMentions: true,
     quietWhileLive: false,
+    sendErrors: true,
     scenes: [],
     obsKey: randomBytes(16).toString("hex"),
     regie: DEFAULT_REGIE,

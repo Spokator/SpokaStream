@@ -1,7 +1,7 @@
 // Le moteur du lecteur web. Il réutilise la réception, le vocal et les clips de l'application.
 // Diffuser reste réservé au logiciel : c'est lui seul qui peut capter le son d'une application.
 import { DEFAULT_VIEWER_QUALITY, isHls, LIMITS, titleFromUrl, videoUrl, youtubeId } from "@shared/protocol.ts";
-import type { ChatMessage, ErrorCode, IceServer, RoomState, RoomStatus, ServerMessage, Stroke, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
+import type { ChatMessage, ErrorCode, IceServer, Profile, RemoteCommand, RemoteState, RoomState, RoomStatus, ServerMessage, Stroke, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
 import { CLIP_SESSION, ClipShare } from "../src/renderer/src/engine/clipShare.ts";
 import { RequestError, Signal } from "../src/renderer/src/engine/signal.ts";
 import { Subscription } from "../src/renderer/src/engine/subscription.ts";
@@ -21,6 +21,7 @@ const ERRORS: Partial<Record<ErrorCode, string>> = {
   rate_limited: "Trop d'essais d'un coup, patiente un instant.",
   viewer_limit: "Ce stream a atteint sa limite de spectateurs.",
   stream_not_found: "Ce stream vient de se terminer.",
+  maintenance: "Le serveur est en maintenance, réessaie dans un moment.",
 };
 
 /** Du plus économe au plus beau. La qualité auto se promène sur cette échelle selon ce que le réseau supporte. */
@@ -86,8 +87,13 @@ export const nameOf = (id: string) => memberOf(id)?.name ?? "?";
 export const streamShown = () => get().room?.streams.find(s => s.id === get().shown) ?? null;
 export const canShare = () => {
   const room = get().room;
-  return !!room && (room.settings.whoCanStream === "everyone" || room.ownerId === get().userId);
+  return !!room && (room.settings.whoCanStream === "everyone" || room.ownerId === get().accountId);
 };
+
+/** Le stream de ton propre PC : on peut le regarder, mais il ne s'ouvre jamais tout seul, il ferait écho à côté de lui. */
+const isMine = (stream: StreamInfo) => get().room?.members.find(m => m.id === stream.ownerId)?.account === get().accountId;
+
+const deviceName = () => (/iPhone/i.test(navigator.userAgent) ? "iPhone" : /iPad/i.test(navigator.userAgent) ? "iPad" : /Android/i.test(navigator.userAgent) ? "Téléphone Android" : "Navigateur");
 
 function deviceToken() {
   const saved = stored("spoka-token");
@@ -120,6 +126,11 @@ export function boot() {
     error: "",
     online: false,
     userId: "",
+    accountId: "",
+    admin: false,
+    linked: false,
+    remote: null,
+    notice: "",
     name,
     color,
     avatar: stored("spoka-avatar"),
@@ -160,7 +171,7 @@ export function boot() {
     if (state === "outdated") location.reload();
   };
   signal.onReady = onConnected;
-  signal.start(socketUrl, deviceToken(), profile(), "web");
+  signal.start(socketUrl, deviceToken(), profile(), "web", "site", deviceName());
   autoRung = matchMedia("(pointer: coarse)").matches ? (slowNetwork() ? 0 : 1) : 2;
 
   addEventListener("popstate", () => {
@@ -231,7 +242,45 @@ export async function install() {
   set({ canInstall: false });
 }
 
+function onRemote(state: RemoteState | null) {
+  set(s => ({ remote: state, tab: !state && s.tab === "regie" ? "chat" : s.tab }));
+}
+
+function applyAccountProfile(next: Profile) {
+  // Un appareil seul reste maître de son profil : le serveur ne fait que le lui répéter.
+  if (get().accountId === get().userId) return;
+  set({ name: next.name, color: next.color, avatar: next.avatar });
+  store("spoka-name", next.name);
+  store("spoka-color", next.color);
+  store("spoka-avatar", next.avatar ?? "");
+}
+
+function showNotice(text: string) {
+  set({ notice: text });
+  setTimeout(() => set(s => (s.notice === text ? { notice: "" } : {})), 12_000);
+}
+
+export const remoteCommand = (cmd: RemoteCommand, arg?: string | number | boolean) => {
+  navigator.vibrate?.(12);
+  signal.send({ t: "remote.cmd", cmd, arg });
+};
+
+/** Rattache ce téléphone au compte du PC qui a créé le code. */
+export async function claimLink(code: string) {
+  await signal.request({ t: "account.claim", code });
+  set({ linked: true });
+  void checkPush().catch(() => {});
+}
+
 function onConnected() {
+  const link = location.pathname.match(/^\/link\/([A-Za-z0-9]{4,16})/)?.[1];
+  if (link) {
+    history.replaceState(null, "", "/");
+    void claimLink(link).then(
+      () => showNotice("Ce téléphone est lié à ton compte."),
+      () => showNotice("Ce lien n'est plus valable : crée-en un nouveau sur ton PC."),
+    );
+  }
   signal.send({ t: "room.subscribe", ids: get().recents.map(r => r.id) });
   void checkPush().catch(() => {});
   const room = get().room;
@@ -304,7 +353,13 @@ function onServer(m: ServerMessage) {
   switch (m.t) {
     case "welcome":
       iceServers = m.iceServers;
-      return set({ userId: m.userId });
+      return set({ userId: m.userId, accountId: m.accountId ?? m.userId, admin: !!m.admin });
+    case "account.sync":
+      return applyAccountProfile(m.profile);
+    case "remote.state":
+      return onRemote(m.state);
+    case "announce":
+      return showNotice(m.text);
     case "room.state":
       return onRoomState(m.room);
     case "room.updated":
@@ -430,9 +485,10 @@ function requestedQuality(): ViewerQuality {
 function pickStream() {
   const { shown, room } = get();
   if (shown === TOGETHER || (shown && room?.streams.some(s => s.id === shown))) return;
-  const first = room?.streams.find(s => s.ownerId !== get().userId);
+  const first = room?.streams.find(s => s.ownerId !== get().userId && !isMine(s));
   if (first) return show(first.id);
   if (room?.together) return show(TOGETHER);
+  if (get().remote) return set({ status: "Ton PC diffuse : tu pilotes tout depuis l'onglet Régie." });
   set({ status: room ? "Personne ne diffuse pour l'instant. Reste ici : le stream s'affichera tout seul." : "" });
 }
 

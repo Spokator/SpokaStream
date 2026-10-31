@@ -106,6 +106,10 @@ export class PushService {
     return this.data.publicKey;
   }
 
+  get count() {
+    return this.data.subscriptions.length;
+  }
+
   /** Rend false pour une adresse qui n'est pas celle d'un service de push. */
   subscribe(record: PushRecord) {
     let host = "";

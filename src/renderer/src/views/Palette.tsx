@@ -30,7 +30,7 @@ function commands(): Command[] {
   const list: Command[] = [];
   for (const r of settings!.recentRooms) list.push({ id: `room:${r.id}`, group: "Salons", label: r.name, hint: r.code, icon: <Users size={16} />, run: () => void core.openRoom(r.id) });
   if (room) {
-    const canShare = room.settings.whoCanStream === "everyone" || room.ownerId === get().userId;
+    const canShare = room.settings.whoCanStream === "everyone" || room.ownerId === get().accountId;
     for (const s of room.streams) {
       if (s.ownerId === get().userId) continue;
       const name = memberOf(s.ownerId)?.name ?? "?";

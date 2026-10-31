@@ -1,17 +1,20 @@
-import { Bell, Check, Copy, Download, ExternalLink, FolderOpen, Gauge, Info, Keyboard, Layers, Mic, Palette, Radio, Server, User } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { DEFAULT_HOTKEYS, DEFAULT_SERVER } from "@shared/ipc.ts";
-import type { CodecChoice, HostStatus, HotkeyMap, LatencyMode, Settings, VideoPriority, WallMode } from "@shared/ipc.ts";
+import { AudioLines, Bell, Check, Copy, Download, ExternalLink, Laptop, ShieldCheck, Smartphone, Trash2, FolderOpen, Gauge, Info, Keyboard, Layers, Mic, Palette, Radio, Server, User } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { DEFAULT_HOTKEYS, DEFAULT_SERVER, isVirtualInput } from "@shared/ipc.ts";
+import type { CodecChoice, HostStatus, HotkeyMap, LatencyMode, Settings, SoundboardInfo, VideoPriority, WallMode } from "@shared/ipc.ts";
+import qrcode from "qrcode-generator";
 import { core } from "../engine/core.ts";
+import type { AccountDevice } from "../engine/core.ts";
 import { cachedBench, measureEncoders, rankResults } from "../engine/encoders.ts";
 import type { BenchResult } from "../engine/encoders.ts";
 import { set, toast, useApp } from "../state/store.ts";
 import type { SettingsSection } from "../state/store.ts";
-import { Avatar, Button, Field, Meter, Segmented, Select, Slider, Toggle } from "../ui/kit.tsx";
+import { Avatar, Button, Field, IconButton, Meter, Segmented, Select, Slider, Toggle } from "../ui/kit.tsx";
 import { BITRATES, CODECS, FPS_OPTIONS, RESOLUTIONS } from "./GoLive.tsx";
 import { ProfileEditor } from "./Onboarding.tsx";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: typeof User }[] = [
+  { id: "account", label: "Compte", icon: Smartphone },
   { id: "profile", label: "Profil", icon: User },
   { id: "appearance", label: "Apparence", icon: Palette },
   { id: "voice", label: "Son et voix", icon: Mic },
@@ -173,6 +176,115 @@ export function HotkeyInput({ value, onChange }: { value: string; onChange: (acc
   );
 }
 
+const seenAt = (at: number) => new Date(at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+function LinkPanel({ onLinked }: { onLinked: () => void }) {
+  const [link, setLink] = useState<{ code: string; expires: number } | null>(null);
+  const url = link ? core.linkUrl(link.code) : "";
+  const picture = useMemo(() => {
+    if (!url) return "";
+    const qr = qrcode(0, "M");
+    qr.addData(url);
+    qr.make();
+    return qr.createDataURL(5, 8);
+  }, [url]);
+
+  useEffect(() => {
+    if (!link) return;
+    const timer = setInterval(() => {
+      if (Date.now() > link.expires) setLink(null);
+      onLinked();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [link]);
+
+  if (!link) {
+    return (
+      <Button variant="primary" icon={<Smartphone size={15} />} onClick={() => void core.linkDevice().then(setLink, () => toast("Impossible de créer le code.", "error"))}>
+        Lier mon téléphone
+      </Button>
+    );
+  }
+  return (
+    <div className="link-panel">
+      <img src={picture} alt="QR code pour lier un téléphone" />
+      <div>
+        <b>Scanne avec ton téléphone</b>
+        <span>Ou entre ce code dans Mon profil, sur le site :</span>
+        <code>{link.code}</code>
+        <small>Valable 5 minutes, une seule fois. Ne le donne à personne : il ouvre ton compte.</small>
+      </div>
+    </div>
+  );
+}
+
+function AccountSection() {
+  const accountId = useApp(s => s.accountId);
+  const admin = useApp(s => s.admin);
+  const connection = useApp(s => s.connection);
+  const [devices, setDevices] = useState<AccountDevice[]>([]);
+  const [code, setCode] = useState("");
+  const refresh = () => void core.listDevices().then(setDevices, () => {});
+  useEffect(() => {
+    if (connection === "online") refresh();
+  }, [connection, accountId]);
+
+  return (
+    <>
+      <h1>Compte</h1>
+      <p className="muted-text">Lie ton téléphone à ce PC : tu es la même personne partout, et pendant que ce PC diffuse, ton téléphone devient ta régie.</p>
+      <LinkPanel onLinked={refresh} />
+      <h2>Mes appareils</h2>
+      {devices.map(device => (
+        <div key={device.id} className="device-line">
+          {device.client === "web" ? <Smartphone size={17} /> : <Laptop size={17} />}
+          <span>
+            <b>
+              {device.label || (device.client === "web" ? "Navigateur" : "Application")}
+              {device.self ? " (cet appareil)" : ""}
+            </b>
+            <small>{device.online ? "En ligne" : `Vu le ${seenAt(device.lastSeen)}`}</small>
+          </span>
+          {!device.primary && !device.self && (
+            <IconButton label={`Détacher ${device.label || "cet appareil"}`} onClick={() => void core.revokeDevice(device.id).then(refresh)}>
+              <Trash2 size={15} />
+            </IconButton>
+          )}
+        </div>
+      ))}
+      <h2>Un autre PC</h2>
+      <p className="muted-text">Sur ton PC principal, crée un code avec « Lier mon téléphone », puis entre-le ici. Ce PC prend alors son compte, son profil et ses salons.</p>
+      <div className="row-gap">
+        <input className="input" value={code} placeholder="Code à 8 caractères" aria-label="Code de liaison" spellCheck={false} onChange={e => setCode(e.target.value)} />
+        <Button
+          disabled={code.trim().length < 8}
+          onClick={() =>
+            void core.claimLink(code).then(
+              () => (setCode(""), refresh(), toast("Ce PC est lié au compte", "success")),
+              () => toast("Ce code n'est pas valable.", "error"),
+            )
+          }
+        >
+          Lier ce PC
+        </Button>
+      </div>
+      <Field label="Identifiant du compte" hint={accountId}>
+        <Button icon={<Copy size={15} />} onClick={() => window.spoka.copyText(accountId)}>
+          Copier
+        </Button>
+      </Field>
+      {admin && (
+        <>
+          <h2>Administration</h2>
+          <Button icon={<ShieldCheck size={15} />} onClick={() => void core.openAdmin().catch(() => toast("Le panneau n'a pas pu s'ouvrir.", "error"))}>
+            Ouvrir le panneau d'administration
+          </Button>
+        </>
+      )}
+    </>
+  );
+}
+
 function ProfileSection({ s }: { s: Settings }) {
   const [profile, setProfile] = useState(s.profile);
   const changed = JSON.stringify({ ...profile, name: profile.name.trim() }) !== JSON.stringify(s.profile);
@@ -264,12 +376,40 @@ function AppearanceSection({ s }: { s: Settings }) {
   );
 }
 
+/** SpokaSoundBoard envoie sa musique, ses sons et la voix transformée dans un micro virtuel : on le prend tel quel. */
+function SoundboardCard({ s, mics }: { s: Settings; mics: { value: string; label: string }[] }) {
+  const [info, setInfo] = useState<SoundboardInfo | null>(null);
+  useEffect(() => {
+    void window.spoka.soundboardInfo().then(setInfo);
+  }, []);
+  const cable = mics.find(m => m.value !== "default" && isVirtualInput(m.label));
+  const usingCable = isVirtualInput(mics.find(m => m.value === s.micId)?.label ?? "");
+  if (!info?.installed && !cable) return null;
+  return (
+    <div className="soundboard-card">
+      <AudioLines size={20} />
+      <div>
+        <b>SpokaSoundBoard {info?.running ? "est ouvert" : info?.installed ? "est installé" : ""}</b>
+        {usingCable ? (
+          <span>Ton vocal passe par son micro virtuel. La réduction du bruit, l'écho et le niveau automatique sont coupés sur ce micro : ils prendraient la musique pour du bruit.</span>
+        ) : cable ? (
+          <span>Utilise son micro virtuel ici pour que le salon entende ta musique, tes sons et tes effets de voix.</span>
+        ) : (
+          <span>Aucun micro virtuel détecté. Lance l'assistant de configuration de SpokaSoundBoard : il installe VB-CABLE, puis il apparaît ici.</span>
+        )}
+      </div>
+      {cable && !usingCable && <Button onClick={() => update({ micId: cable.value, voiceMode: "open", voiceKbps: 128 })}>Utiliser</Button>}
+    </div>
+  );
+}
+
 function VoiceSection({ s }: { s: Settings }) {
   const mics = useDevices("audioinput");
   const outputs = useDevices("audiooutput");
   return (
     <>
       <h1>Son et voix</h1>
+      <SoundboardCard s={s} mics={mics} />
       <Field label="Micro">
         <Select label="Micro" value={s.micId} options={mics} onChange={micId => update({ micId })} />
       </Field>
@@ -704,8 +844,29 @@ function ServerSection({ s }: { s: Settings }) {
   );
 }
 
+function FeedbackForm() {
+  const [text, setText] = useState("");
+  return (
+    <div className="stack">
+      <textarea className="input" rows={3} value={text} maxLength={3000} placeholder="Ce qui s'est passé. Le diagnostic de ce PC part avec le message." aria-label="Décrire le problème" onChange={e => setText(e.target.value)} />
+      <Button
+        disabled={!text.trim()}
+        onClick={() =>
+          void core.sendFeedback(text).then(() => {
+            setText("");
+            toast("Merci, c'est envoyé", "success");
+          })
+        }
+      >
+        Envoyer
+      </Button>
+    </div>
+  );
+}
+
 function AboutSection() {
   const updateState = useApp(s => s.update);
+  const settings = useApp(s => s.settings)!;
   const engine = useApp(s => s.audioEngine);
   const [confirmReset, setConfirmReset] = useState(false);
   const status =
@@ -751,6 +912,11 @@ function AboutSection() {
           Nouveautés
         </Button>
       </div>
+      <h2>Signaler un problème</h2>
+      <FeedbackForm />
+      <Field label="Envoyer les erreurs de l'application" hint="Le message d'erreur et la version, pour pouvoir les corriger. Jamais le chat ni ce qui est diffusé">
+        <Toggle label="Envoyer les erreurs de l'application" checked={settings.sendErrors} onChange={sendErrors => update({ sendErrors })} />
+      </Field>
       <h2>Le moteur audio</h2>
       <p className="muted-text">SpokaAudio est le petit programme installé avec SpokaStream. C'est lui qui capte le son d'une seule application au lieu de tout le PC, et qui donne les images à haute cadence. Il démarre et s'arrête tout seul : il n'y a rien à lancer ni à régler. Il apparaît dans le Gestionnaire des tâches sous ce nom.</p>
       <Field label="État">
@@ -795,6 +961,7 @@ export function SettingsView() {
       </nav>
       <div className="settings-body">
         <div className="settings-inner">
+          {section === "account" && <AccountSection />}
           {section === "profile" && <ProfileSection s={settings} />}
           {section === "appearance" && <AppearanceSection s={settings} />}
           {section === "voice" && <VoiceSection s={settings} />}

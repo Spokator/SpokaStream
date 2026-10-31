@@ -6,7 +6,7 @@ import { Avatar, IconButton, Popover, Slider } from "../ui/kit.tsx";
 
 function MemberRow({ member }: { member: Member }) {
   const userId = useApp(s => s.userId);
-  const isOwner = useApp(s => s.room!.ownerId === s.userId);
+  const isOwner = useApp(s => s.room!.ownerId === s.accountId);
   const speaking = useApp(s => !!s.speaking[member.id]);
   const live = useApp(s => s.room!.streams.some(x => x.ownerId === member.id));
   const volume = useApp(s => s.voiceVolumes[member.id] ?? 1);

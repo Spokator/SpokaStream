@@ -5,6 +5,8 @@ import { gzipSync } from "node:zlib";
 import { WebSocketServer, type WebSocket } from "ws";
 import { LIMITS } from "../src/shared/protocol.ts";
 import type { IceServer } from "../src/shared/protocol.ts";
+import { AdminPanel } from "./admin.ts";
+import type { Accounts } from "./accounts.ts";
 import { Hub } from "./hub.ts";
 import type { PushService } from "./push.ts";
 import type { Store } from "./store.ts";
@@ -23,6 +25,13 @@ export interface ServerOptions {
   trustProxy?: boolean;
   /** Notifications sur téléphone. Absent : le site n'en propose pas. */
   push?: PushService;
+  accounts?: Accounts;
+  /** Les comptes qui ont accès au panneau d'administration. */
+  admins?: string[];
+  /** Dossier des données, pour surveiller le disque. */
+  dataDir?: string;
+  /** Sous systemd, quitter revient à redémarrer. */
+  canRestart?: boolean;
 }
 
 export interface RunningServer {
@@ -250,10 +259,13 @@ send({ type: "ready" });
 
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const downloadUrl = options.downloadUrl ?? "https://github.com/Spokator/SpokaStream/releases/latest";
-  const hub = new Hub({ store: options.store, serverName: options.serverName, push: options.push, iceServers: userId => iceServersFor(userId, options) });
+  const hub = new Hub({ store: options.store, serverName: options.serverName, push: options.push, accounts: options.accounts, admins: options.admins, iceServers: userId => iceServersFor(userId, options) });
+  const admin = new AdminPanel({ hub, store: options.store, push: options.push, dataDir: options.dataDir, canRestart: options.canRestart });
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
+    const forwarded = options.trustProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",")[0]?.trim() : "";
+    if (url.pathname.startsWith("/admin") && admin.handle(req, res, url, forwarded || req.socket.remoteAddress || "?")) return;
     if (url.pathname === "/health") {
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify({ ok: true, uptime: Math.round(process.uptime()), ...hub.stats }));
@@ -263,7 +275,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return res.end(invitePage(invite[1]!, downloadUrl));
     }
-    if (url.pathname === "/" || /^\/w\/[A-Za-z0-9]{4,16}$/.test(url.pathname)) {
+    if (url.pathname === "/" || /^\/(?:w|link)\/[A-Za-z0-9]{4,16}$/.test(url.pathname)) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": VIEWER_CSP, "cache-control": "no-cache", "referrer-policy": "no-referrer" });
       return res.end(VIEWER_HTML);
     }
@@ -357,6 +369,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         close: () =>
           new Promise(done => {
             clearInterval(heartbeat);
+            admin.close();
+            hub.accounts.flush();
             options.store.flush();
             for (const client of wss.clients) client.terminate();
             wss.close();

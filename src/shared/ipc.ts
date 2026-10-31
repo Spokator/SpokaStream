@@ -199,6 +199,8 @@ export interface Settings {
   notifyMentions: boolean;
   /** Aucune notification pendant qu'on diffuse : elles finiraient à l'image. */
   quietWhileLive: boolean;
+  /** Les erreurs de l'application remontent au serveur. Jamais le chat ni ce qui est diffusé. */
+  sendErrors: boolean;
   scenes: Scene[];
   /** Clé de l'entrée OBS : elle ne quitte jamais ce PC. */
   obsKey: string;
@@ -377,6 +379,7 @@ export interface SpokaApi {
   /** Ouvre la page à diffuser. La capture qui suit vise cette page, et rien d'autre. */
   webOpen(url: string): Promise<boolean>;
   webClose(): void;
+  soundboardInfo(): Promise<SoundboardInfo>;
   /** Revient aux réglages d'origine en gardant le profil, les salons, les scènes et les clés. */
   resetSettings(): Promise<Settings>;
   openDataFolder(): void;
@@ -400,6 +403,17 @@ export interface SpokaApi {
 }
 
 export const DEFAULT_SERVER = "wss://stream.chretieno.fr/ws";
+
+const VIRTUAL_INPUT = /CABLE|VB-Audio|Voicemeeter|Virtual Audio|\bLine \d/i;
+
+/** Une entrée qui transporte déjà un mélange préparé : le micro virtuel de SpokaSoundBoard, par exemple. */
+export const isVirtualInput = (label: string) => VIRTUAL_INPUT.test(label);
+
+/** État de SpokaSoundBoard sur ce PC. */
+export interface SoundboardInfo {
+  installed: boolean;
+  running: boolean;
+}
 
 // Un raccourci global s'empare de la combinaison partout : Ctrl+Maj+M est celui de Discord, Ctrl+Maj+P celui de VS Code.
 export const DEFAULT_HOTKEYS: HotkeyMap = {

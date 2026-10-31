@@ -10,7 +10,7 @@ import { Button, IconButton, Modal } from "../ui/kit.tsx";
 export function PollCard() {
   const poll = useApp(s => s.room!.poll);
   const userId = useApp(s => s.userId);
-  const isOwner = useApp(s => s.room!.ownerId === s.userId);
+  const isOwner = useApp(s => s.room!.ownerId === s.accountId);
   if (!poll) return null;
   const total = poll.options.reduce((n, o) => n + o.voters.length, 0);
   const best = Math.max(...poll.options.map(o => o.voters.length));

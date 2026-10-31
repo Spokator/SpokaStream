@@ -25,10 +25,12 @@ import type {
   StreamAnnounce,
   StreamInfo,
   StreamPatch,
+  RemoteState,
   Together,
   TogetherItem,
   ViewerQuality,
 } from "../src/shared/protocol.ts";
+import { Accounts } from "./accounts.ts";
 import type { PushService } from "./push.ts";
 import type { Store, StoredRoom } from "./store.ts";
 
@@ -67,7 +69,13 @@ class Bucket {
 
 interface Conn {
   transport: Transport;
+  /** L'appareil : c'est lui qui est dans un salon et que WebRTC adresse. */
   userId: string | null;
+  /** La personne : droits, bannissements et profil se décident ici. */
+  accountId: string | null;
+  /** Ce que ce PC montre à ses autres appareils pendant qu'il diffuse. */
+  remote: RemoteState | null;
+  device: { client: "app" | "web"; version: string; label: string };
   profile: Profile | null;
   web: boolean;
   room: Room | null;
@@ -99,6 +107,9 @@ interface LiveTogether extends Together {
 export interface HubOptions {
   store: Store;
   push?: PushService;
+  accounts?: Accounts;
+  /** Les comptes qui ont accès au panneau d'administration. */
+  admins?: string[];
   iceServers: (userId: string) => IceServer[];
   serverName?: string;
   graceMs?: number;
@@ -108,6 +119,28 @@ export interface HubOptions {
 const isString = (v: unknown, max: number): v is string => typeof v === "string" && v.length <= max;
 /** Après un redémarrage, les streams en cours s'annoncent à nouveau : ce ne sont pas des nouvelles. */
 const PUSH_QUIET_AFTER_BOOT_MS = 60_000;
+const REMOTE_STATE_BYTES = 16_000;
+const MAX_LOGS = 2000;
+const MAX_REPORTS = 300;
+const MAX_REPORT_DETAILS = 20_000;
+
+export interface LogEntry {
+  at: number;
+  level: "info" | "warning" | "error";
+  topic: string;
+  text: string;
+}
+
+export interface Report {
+  id: string;
+  at: number;
+  kind: "error" | "feedback";
+  name: string;
+  accountId: string;
+  client: "app" | "web";
+  text: string;
+  details: string;
+}
 const clean = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max) : "");
 const isDataImage = (v: unknown, max: number): v is string =>
   typeof v === "string" && v.length <= max && /^data:image\/(png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(v);
@@ -185,10 +218,20 @@ export class Hub {
   private readonly now: () => number;
   private readonly push?: PushService;
   private readonly bootedAt: number;
+  readonly accounts: Accounts;
+  private readonly admins: Set<string>;
+  /** Rend le billet à usage unique qui ouvre le panneau d'administration. */
+  onTicket: ((accountId: string) => string) | null = null;
+  readonly logs: LogEntry[] = [];
+  readonly reports: Report[] = [];
+  /** Message de maintenance : tant qu'il existe, seuls les propriétaires et les administrateurs entrent. */
+  maintenance = "";
 
   constructor(options: HubOptions) {
     this.store = options.store;
     this.push = options.push;
+    this.accounts = options.accounts ?? new Accounts();
+    this.admins = new Set(options.admins ?? []);
     this.iceServers = options.iceServers;
     this.serverName = options.serverName ?? "SpokaStream";
     this.graceMs = options.graceMs ?? GRACE_MS;
@@ -200,6 +243,112 @@ export class Hub {
       this.rooms.set(data.id, this.liveRoom(data));
       this.byCode.set(data.code, data.id);
     }
+  }
+
+  log(level: LogEntry["level"], topic: string, text: string) {
+    this.logs.unshift({ at: this.now(), level, topic, text });
+    this.logs.length = Math.min(this.logs.length, MAX_LOGS);
+  }
+
+  // ---------------------------------------------------------------- administration
+
+  announce(text: string, level: "info" | "warning") {
+    for (const conn of this.conns) if (conn.userId) this.send(conn, { t: "announce", text, level });
+    this.log("info", "admin", `Annonce : ${text}`);
+  }
+
+  adminRooms() {
+    return [...this.rooms.values()].map(room => ({
+      id: room.data.id,
+      code: room.data.code,
+      name: room.data.name,
+      ownerId: room.data.ownerId,
+      ownerName: this.adminName(room.data.ownerId),
+      locked: room.data.settings.locked,
+      createdAt: room.data.createdAt,
+      lastActivity: room.data.lastActivity,
+      messages: room.data.history.length,
+      bans: room.data.bans.length,
+      party: room.together?.title ?? null,
+      members: [...room.members.values()].map(({ member }) => ({ id: member.id, account: member.account ?? member.id, name: member.name, color: member.color, online: member.online, web: !!member.web, voice: !!member.voice })),
+      streams: [...room.streams.values()].map(s => ({ id: s.id, ownerId: s.ownerId, ownerName: room.members.get(s.ownerId)?.member.name ?? "?", title: s.title, kind: s.kind, width: s.width, height: s.height, fps: s.fps, viewers: s.viewers.length, startedAt: s.startedAt, paused: s.paused })),
+    }));
+  }
+
+  private adminName(accountId: string) {
+    return this.accounts.list().find(a => a.id === accountId)?.name ?? "?";
+  }
+
+  adminUsers() {
+    const online = new Set([...this.conns].map(c => c.userId));
+    return this.accounts.list().map(account => ({
+      ...account,
+      admin: this.admins.has(account.id),
+      online: account.devices.some(d => online.has(d.id)),
+      rooms: [...this.rooms.values()].filter(r => r.data.ownerId === account.id).length,
+    }));
+  }
+
+  /** Quelles versions tournent en ce moment : on voit tout de suite qui n'a pas pris la mise à jour. */
+  adminVersions() {
+    const versions: Record<string, number> = {};
+    for (const conn of this.conns) {
+      if (!conn.userId) continue;
+      const device = this.accounts.devicesOf(conn.accountId!).find(d => d.id === conn.userId);
+      const key = conn.web ? "site web" : device?.version || "application";
+      versions[key] = (versions[key] ?? 0) + 1;
+    }
+    return versions;
+  }
+
+  adminStopStream(roomId: string, ownerId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    this.stopStreamOf(room, ownerId);
+    return true;
+  }
+
+  adminKick(roomId: string, userId: string) {
+    const room = this.rooms.get(roomId);
+    const live = room?.members.get(userId);
+    if (!room || !live) return false;
+    if (live.conn) {
+      this.send(live.conn, { t: "room.closed", reason: "kicked" });
+      live.conn.room = null;
+    }
+    this.removeMember(room, userId);
+    return true;
+  }
+
+  adminLockRoom(roomId: string, locked: boolean) {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    room.data.settings.locked = locked;
+    this.persist();
+    this.broadcast(room, { t: "room.updated", name: room.data.name, settings: room.data.settings });
+    return true;
+  }
+
+  adminDeleteRoom(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    for (const live of room.members.values()) {
+      if (live.grace) clearTimeout(live.grace);
+      if (live.conn) {
+        this.send(live.conn, { t: "room.closed", reason: "deleted" });
+        live.conn.room = null;
+      }
+    }
+    this.rooms.delete(roomId);
+    this.byCode.delete(room.data.code);
+    this.persist();
+    return true;
+  }
+
+  adminBan(accountId: string, banned: boolean) {
+    if (this.admins.has(accountId) || !this.accounts.setBanned(accountId, banned)) return false;
+    if (banned) for (const conn of this.conns) if (conn.accountId === accountId) conn.transport.close(4003, "banned");
+    return true;
   }
 
   get stats() {
@@ -217,6 +366,9 @@ export class Hub {
     const conn: Conn = {
       transport,
       userId: null,
+      accountId: null,
+      remote: null,
+      device: { client: "app", version: "", label: "" },
       profile: null,
       web: false,
       room: null,
@@ -237,6 +389,7 @@ export class Hub {
 
   disconnect(conn: Conn) {
     this.conns.delete(conn);
+    if (conn.remote) for (const sibling of this.siblings(conn)) this.send(sibling, { t: "remote.state", state: null });
     const room = conn.room;
     if (!room || !conn.userId) return;
     const live = room.members.get(conn.userId);
@@ -266,6 +419,7 @@ export class Hub {
       this.dispatch(conn, msg);
     } catch (e) {
       console.error(`[hub] ${msg.t} :`, e);
+      this.log("error", "serveur", `${msg.t} : ${String(e).slice(0, 300)}`);
       this.reply(conn, msg, false, "bad_request");
     }
   }
@@ -292,13 +446,41 @@ export class Hub {
         return this.send(conn, { t: "room.status", rooms: [...conn.subscriptions].map(id => this.statusOf(id)) });
       case "profile.update": {
         conn.profile = cleanProfile(msg.profile);
-        const live = this.liveOf(conn);
-        if (live) {
-          Object.assign(live.member, conn.profile);
-          this.broadcast(conn.room!, { t: "member.update", member: live.member });
+        this.accounts.setProfile(conn.accountId!, conn.profile);
+        for (const device of [conn, ...this.siblings(conn)]) {
+          device.profile = conn.profile;
+          if (device !== conn) this.send(device, { t: "account.sync", profile: conn.profile });
+          const live = this.liveOf(device);
+          if (live) {
+            Object.assign(live.member, conn.profile);
+            this.broadcast(device.room!, { t: "member.update", member: live.member });
+          }
         }
         return;
       }
+      case "account.link":
+        if (!conn.buckets.misc.take(now)) return this.reply(conn, msg, false, "rate_limited");
+        return this.onAccountLink(conn, msg);
+      case "account.claim":
+        return this.onAccountClaim(conn, msg);
+      case "account.devices":
+        return this.reply(conn, msg, true, undefined, this.accounts.devicesOf(conn.accountId!).map(({ id, label, client, version, addedAt, lastSeen }) => ({ id, label, client, version, addedAt, lastSeen, online: [...this.conns].some(c => c.userId === id), self: id === conn.userId, primary: id === conn.accountId })));
+      case "account.revoke":
+        return this.onAccountRevoke(conn, msg);
+      case "admin.ticket":
+        if (!this.isAdmin(conn.accountId!) || !this.onTicket) return this.reply(conn, msg, false, "forbidden");
+        return this.reply(conn, msg, true, undefined, { ticket: this.onTicket(conn.accountId!) });
+      case "remote.state":
+        return this.onRemoteState(conn, msg.state);
+      case "remote.cmd":
+        if (!conn.buckets.misc.take(now)) return;
+        for (const sibling of this.siblings(conn)) if (sibling.remote) this.send(sibling, { t: "remote.cmd", cmd: msg.cmd, arg: msg.arg });
+        return;
+      case "report":
+        if (!conn.buckets.room.take(now) || !isString(msg.text, 4000)) return;
+        this.reports.unshift({ id: randomBytes(6).toString("hex"), at: now, kind: msg.kind === "feedback" ? "feedback" : "error", name: conn.profile?.name ?? "?", accountId: conn.accountId!, client: conn.web ? "web" : "app", text: msg.text, details: isString(msg.details, MAX_REPORT_DETAILS) ? msg.details : "" });
+        this.reports.length = Math.min(this.reports.length, MAX_REPORTS);
+        return;
       case "voice.set": {
         const live = this.liveOf(conn);
         if (!live) return;
@@ -369,7 +551,7 @@ export class Hub {
       case "draw.clear": {
         const room = conn.room;
         const stream = room?.streams.get(msg.streamId);
-        if (!room || !stream || (stream.ownerId !== conn.userId && room.data.ownerId !== conn.userId)) return;
+        if (!room || !stream || (stream.ownerId !== conn.userId && !this.owns(room, conn))) return;
         return this.broadcast(room, { t: "draw.clear", streamId: stream.id });
       }
       case "stream.start":
@@ -424,25 +606,90 @@ export class Hub {
     if (msg.protocol !== PROTOCOL_VERSION) return this.reply(conn, msg, false, "version");
     if (typeof msg.token !== "string" || !/^[0-9a-f]{64}$/.test(msg.token)) return this.reply(conn, msg, false, "bad_request");
     // Pas de compte : le jeton aléatoire de l'appareil EST l'identité. Le serveur n'en garde que l'empreinte.
-    conn.userId = createHash("sha256").update(msg.token).digest("hex").slice(0, 24);
-    conn.profile = cleanProfile(msg.profile);
-    conn.web = msg.client === "web";
-    this.send(conn, { t: "welcome", userId: conn.userId, iceServers: this.iceServers(conn.userId), serverName: this.serverName });
+    const deviceId = createHash("sha256").update(msg.token).digest("hex").slice(0, 24);
+    const web = msg.client === "web";
+    const device = { client: web ? ("web" as const) : ("app" as const), version: clean(msg.version, 24), label: clean(msg.device, 60) };
+    const known = this.accounts.seen(deviceId, cleanProfile(msg.profile), device, this.now());
+    if (this.accounts.isBanned(known.accountId)) return this.reply(conn, msg, false, "banned");
+    conn.userId = deviceId;
+    conn.accountId = known.accountId;
+    conn.device = device;
+    conn.profile = known.profile;
+    conn.web = web;
+    this.send(conn, { t: "welcome", userId: deviceId, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers: this.iceServers(deviceId), serverName: this.serverName });
+    this.send(conn, { t: "account.sync", profile: known.profile });
+    for (const sibling of this.siblings(conn)) if (sibling.remote) this.send(conn, { t: "remote.state", state: sibling.remote });
+    if (this.maintenance) this.send(conn, { t: "announce", text: this.maintenance, level: "warning" });
     this.reply(conn, msg, true);
+  }
+
+  private owns(room: Room, conn: Conn) {
+    return room.data.ownerId === conn.accountId;
+  }
+
+  private isAdmin(accountId: string) {
+    return this.admins.has(accountId);
+  }
+
+  isAdminAccount(accountId: string) {
+    return this.admins.has(accountId);
+  }
+
+  /** Les autres appareils allumés de la même personne. */
+  private siblings(conn: Conn) {
+    return [...this.conns].filter(other => other !== conn && other.accountId && other.accountId === conn.accountId);
+  }
+
+  private onAccountLink(conn: Conn, msg: Extract<ClientMessage, { t: "account.link" }>) {
+    this.reply(conn, msg, true, undefined, this.accounts.createLink(conn.accountId!, this.now()));
+  }
+
+  private onAccountClaim(conn: Conn, msg: Extract<ClientMessage, { t: "account.claim" }>) {
+    // Le code fait 8 caractères et vit 5 minutes : on empêche surtout d'en essayer à la chaîne.
+    const bucket = this.joinFailures.get(conn.transport.ip) ?? new Bucket(0.2, 12, this.now());
+    this.joinFailures.set(conn.transport.ip, bucket);
+    const before = conn.accountId!;
+    const accountId = this.accounts.claim(String(msg.code ?? ""), conn.userId!, this.now());
+    if (!accountId) return this.reply(conn, msg, false, bucket.take(this.now()) ? "bad_request" : "rate_limited");
+    // Ce qui appartenait à l'appareil seul suit la personne.
+    for (const room of this.rooms.values()) if (room.data.ownerId === before) room.data.ownerId = accountId;
+    this.persist();
+    conn.accountId = accountId;
+    this.log("info", "compte", `Appareil rattaché à ${conn.profile?.name ?? "?"}`);
+    this.leaveRoom(conn);
+    const known = this.accounts.seen(conn.userId!, conn.profile!, conn.device, this.now());
+    conn.profile = known.profile;
+    this.send(conn, { t: "welcome", userId: conn.userId!, accountId, admin: this.isAdmin(accountId), iceServers: this.iceServers(conn.userId!), serverName: this.serverName });
+    this.send(conn, { t: "account.sync", profile: known.profile });
+    for (const sibling of this.siblings(conn)) if (sibling.remote) this.send(conn, { t: "remote.state", state: sibling.remote });
+    this.reply(conn, msg, true);
+  }
+
+  private onAccountRevoke(conn: Conn, msg: Extract<ClientMessage, { t: "account.revoke" }>) {
+    if (!isString(msg.deviceId, 24) || !this.accounts.revoke(conn.accountId!, msg.deviceId)) return this.reply(conn, msg, false, "forbidden");
+    for (const other of this.conns) if (other.userId === msg.deviceId) other.transport.close(4001, "revoked");
+    this.log("info", "compte", `Appareil détaché par ${conn.profile?.name ?? "?"}`);
+    this.reply(conn, msg, true);
+  }
+
+  private onRemoteState(conn: Conn, state: RemoteState | null) {
+    conn.remote = state && JSON.stringify(state).length <= REMOTE_STATE_BYTES ? state : null;
+    for (const sibling of this.siblings(conn)) this.send(sibling, { t: "remote.state", state: conn.remote });
   }
 
   private onRoomCreate(conn: Conn, rawName: string, rid?: number) {
     const name = clean(rawName, LIMITS.roomName);
     const ack = (ok: boolean, error?: ErrorCode, data?: unknown) => rid !== undefined && this.send(conn, { t: "ack", rid, ok, error, data });
     if (!name) return ack(false, "bad_request");
-    const owned = [...this.rooms.values()].filter(r => r.data.ownerId === conn.userId).length;
+    if (this.maintenance && !this.isAdmin(conn.accountId!)) return ack(false, "maintenance");
+    const owned = [...this.rooms.values()].filter(r => r.data.ownerId === conn.accountId).length;
     if (owned >= LIMITS.roomsPerUser) return ack(false, "too_many_rooms");
     const now = this.now();
     const data: StoredRoom = {
       id: randomBytes(9).toString("base64url"),
       code: this.newCode(),
       name,
-      ownerId: conn.userId!,
+      ownerId: conn.accountId!,
       settings: { ...DEFAULT_ROOM_SETTINGS },
       bans: [],
       history: [],
@@ -453,6 +700,7 @@ export class Hub {
     this.rooms.set(data.id, room);
     this.byCode.set(data.code, data.id);
     this.persist();
+    this.log("info", "salon", `${conn.profile?.name ?? "?"} crée « ${name} »`);
     this.enter(conn, room);
     ack(true, undefined, { id: data.id, code: data.code });
   }
@@ -468,9 +716,10 @@ export class Hub {
       return this.reply(conn, msg, false, bucket.take(this.now()) ? "room_not_found" : "rate_limited");
     }
     const userId = conn.userId!;
-    if (room.data.bans.includes(userId)) return this.reply(conn, msg, false, "banned");
+    if (room.data.bans.includes(conn.accountId!)) return this.reply(conn, msg, false, "banned");
     const already = room.members.has(userId);
-    const isOwner = room.data.ownerId === userId;
+    const isOwner = this.owns(room, conn);
+    if (this.maintenance && !isOwner && !this.isAdmin(conn.accountId!)) return this.reply(conn, msg, false, "maintenance");
     if (!already && room.data.settings.locked && !isOwner) return this.reply(conn, msg, false, "room_locked");
     if (!already && room.members.size >= LIMITS.membersPerRoom) return this.reply(conn, msg, false, "room_full");
     this.enter(conn, room);
@@ -490,7 +739,7 @@ export class Hub {
       }
       existing.conn = conn;
       existing.member.online = true;
-      Object.assign(existing.member, conn.profile, { web: conn.web });
+      Object.assign(existing.member, conn.profile, { web: conn.web, account: conn.accountId! });
       conn.room = room;
       this.send(conn, { t: "room.state", room: this.snapshot(room) });
       this.broadcast(room, { t: "member.update", member: existing.member }, userId);
@@ -499,10 +748,11 @@ export class Hub {
     const member: Member = {
       ...conn.profile!,
       id: userId,
-      role: room.data.ownerId === userId ? "owner" : "member",
+      role: this.owns(room, conn) ? "owner" : "member",
       online: true,
       voice: null,
       web: conn.web,
+      account: conn.accountId!,
     };
     room.members.set(userId, { member, conn, grace: null });
     conn.room = room;
@@ -534,7 +784,7 @@ export class Hub {
 
   private onRoomUpdate(conn: Conn, name?: string, settings?: Partial<RoomSettings>) {
     const room = conn.room;
-    if (!room || room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
+    if (!room || !this.owns(room, conn)) return this.fail(conn, "forbidden");
     if (name !== undefined) room.data.name = clean(name, LIMITS.roomName) || room.data.name;
     if (settings) {
       room.data.settings = {
@@ -550,7 +800,7 @@ export class Hub {
 
   private onRoomDelete(conn: Conn) {
     const room = conn.room;
-    if (!room || room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
+    if (!room || !this.owns(room, conn)) return this.fail(conn, "forbidden");
     for (const live of room.members.values()) {
       if (live.grace) clearTimeout(live.grace);
       if (live.conn) {
@@ -566,10 +816,12 @@ export class Hub {
 
   private onRoomKick(conn: Conn, userId: string, ban: boolean) {
     const room = conn.room;
-    if (!room || room.data.ownerId !== conn.userId || userId === conn.userId) return this.fail(conn, "forbidden");
+    if (!room || !this.owns(room, conn) || userId === conn.userId) return this.fail(conn, "forbidden");
     const live = room.members.get(userId);
-    if (ban && !room.data.bans.includes(userId)) {
-      room.data.bans.push(userId);
+    const account = live?.member.account ?? this.accounts.accountOf(userId);
+    if (account === conn.accountId) return this.fail(conn, "forbidden");
+    if (ban && !room.data.bans.includes(account)) {
+      room.data.bans.push(account);
       this.persist();
     }
     if (!live) return;
@@ -625,7 +877,7 @@ export class Hub {
 
   private onChatPin(conn: Conn, id: string | null) {
     const room = conn.room;
-    if (!room || room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
+    if (!room || !this.owns(room, conn)) return this.fail(conn, "forbidden");
     const message = id ? room.data.history.find(m => m.id === id && m.kind === "user") : null;
     if (id && !message) return;
     room.data.pinned = message ? { ...message, image: null, clip: null } : null;
@@ -637,7 +889,7 @@ export class Hub {
     const room = conn.room;
     const live = this.liveOf(conn);
     if (!room || !live) return;
-    if (room.poll && !room.poll.closed && room.poll.authorId !== conn.userId && room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
+    if (room.poll && !room.poll.closed && room.poll.authorId !== conn.userId && !this.owns(room, conn)) return this.fail(conn, "forbidden");
     const question = clean(rawQuestion, LIMITS.pollQuestion);
     const options = Array.isArray(rawOptions) ? [...new Set(rawOptions.map(o => clean(o, LIMITS.pollOption)).filter(Boolean))].slice(0, LIMITS.pollOptions) : [];
     if (!question || options.length < 2) return this.fail(conn, "bad_request");
@@ -661,14 +913,14 @@ export class Hub {
     const room = conn.room;
     const poll = room?.poll;
     if (!room || !poll || poll.id !== id) return;
-    if (poll.authorId !== conn.userId && room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
+    if (poll.authorId !== conn.userId && !this.owns(room, conn)) return this.fail(conn, "forbidden");
     if (dismiss) room.poll = null;
     else poll.closed = true;
     this.broadcast(room, { t: "poll", poll: room.poll });
   }
 
-  private canShare(room: Room, userId: string) {
-    return room.data.settings.whoCanStream === "everyone" || room.data.ownerId === userId;
+  private canShare(room: Room, conn: Conn) {
+    return room.data.settings.whoCanStream === "everyone" || this.owns(room, conn);
   }
 
   private togetherPosition(t: LiveTogether) {
@@ -690,7 +942,7 @@ export class Hub {
     const room = conn.room;
     const live = this.liveOf(conn);
     if (!room || !live) return;
-    if (!this.canShare(room, conn.userId!)) return this.fail(conn, "forbidden");
+    if (!this.canShare(room, conn)) return this.fail(conn, "forbidden");
     const url = videoUrl(msg.url);
     const videoId = url ? randomBytes(6).toString("hex") : typeof msg.videoId === "string" ? youtubeId(msg.videoId) : null;
     if (!videoId) return this.fail(conn, "bad_request");
@@ -710,7 +962,7 @@ export class Hub {
   private onTogetherControl(conn: Conn, playing: boolean, rawPosition: unknown) {
     const room = conn.room;
     const together = room?.together;
-    if (!room || !together || !this.canShare(room, conn.userId!)) return;
+    if (!room || !together || !this.canShare(room, conn)) return;
     together.position = Number.isFinite(rawPosition) ? Math.max(0, Math.min(86_400, rawPosition as number)) : this.togetherPosition(together);
     together.anchor = this.now();
     together.playing = playing;
@@ -730,7 +982,7 @@ export class Hub {
   private onTogetherRemove(conn: Conn, index: unknown, videoId: unknown) {
     const room = conn.room;
     const together = room?.together;
-    if (!room || !together || !this.canShare(room, conn.userId!)) return;
+    if (!room || !together || !this.canShare(room, conn)) return;
     if (typeof index !== "number" || together.queue[index]?.videoId !== videoId) return;
     together.queue.splice(index, 1);
     this.pushTogether(room);
@@ -739,7 +991,7 @@ export class Hub {
   private onTogetherStop(conn: Conn) {
     const room = conn.room;
     if (!room?.together) return;
-    if (!this.canShare(room, conn.userId!)) return this.fail(conn, "forbidden");
+    if (!this.canShare(room, conn)) return this.fail(conn, "forbidden");
     room.together = null;
     this.pushTogether(room);
   }
@@ -750,7 +1002,7 @@ export class Hub {
     const index = room.data.history.findIndex(m => m.id === id);
     if (index < 0) return;
     const message = room.data.history[index]!;
-    if (message.authorId !== conn.userId && room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
+    if (message.authorId !== conn.userId && !this.owns(room, conn)) return this.fail(conn, "forbidden");
     room.data.history.splice(index, 1);
     if (room.data.pinned?.id === id) {
       room.data.pinned = null;
@@ -784,7 +1036,7 @@ export class Hub {
     const ack = (ok: boolean, error?: ErrorCode, data?: unknown) => rid !== undefined && this.send(conn, { t: "ack", rid, ok, error, data });
     if (!room || !isString(id, 64) || !id) return ack(false, "bad_request");
     const userId = conn.userId!;
-    if (room.data.settings.whoCanStream === "owner" && room.data.ownerId !== userId) return ack(false, "forbidden");
+    if (room.data.settings.whoCanStream === "owner" && !this.owns(room, conn)) return ack(false, "forbidden");
     const previous = this.streamOf(conn);
     if (previous) {
       // Reprise après une coupure du serveur : le flux continue, on repart de ce qu'on savait de lui.
@@ -802,13 +1054,14 @@ export class Hub {
     this.pushSystem(room, `${conn.profile!.name} a lancé un stream`);
     this.touchStatus(room);
     ack(true, undefined, { viewers: [], startedAt: stream.startedAt });
-    this.notifyPhones(room, `live:${userId}`, userId, `${conn.profile!.name} est en direct`, stream.title ? `${stream.title} · ${room.data.name}` : room.data.name);
+    this.log("info", "stream", `${conn.profile!.name} lance un stream dans « ${room.data.name} »`);
+    this.notifyPhones(room, `live:${conn.accountId!}`, userId, `${conn.profile!.name} est en direct`, stream.title ? `${stream.title} · ${room.data.name}` : room.data.name);
   }
 
   private notifyPhones(room: Room, event: string, author: string, title: string, body: string) {
     const { push } = this;
     if (!push || this.now() - this.bootedAt < PUSH_QUIET_AFTER_BOOT_MS) return;
-    const here = new Set([author, ...[...room.members.values()].filter(m => m.member.online).map(m => m.member.id)]);
+    const here = new Set([author, ...[...room.members.values()].filter(m => m.member.online).flatMap(m => [m.member.id, m.member.account ?? m.member.id])]);
     void push.notify(room.data.id, here, event, { title, body, url: `/w/${room.data.code}`, tag: room.data.id }).catch(() => {});
   }
 

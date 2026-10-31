@@ -5,6 +5,7 @@ import { LIMITS } from "@shared/protocol.ts";
 import type { ChatMessage, Member, StreamInfo } from "@shared/protocol.ts";
 import { compressImage } from "../src/renderer/src/ui/image.ts";
 import { canShare, choose, closeMini, fetchClip, joinVoice, leaveRoom, leaveVoice, nameOf, openMini, pollVote, react, REACTIONS, reactChat, sendChat, sendTyping, setTalking, toggleDeafen, toggleMic, togglePush } from "./client.ts";
+import { RegiePane } from "./Regie.tsx";
 import { get, set, TOGETHER, useApp } from "./store.ts";
 import type { Tab } from "./store.ts";
 
@@ -486,6 +487,7 @@ export function VoiceButton() {
 }
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "regie", label: "Régie" },
   { id: "chat", label: "Chat" },
   { id: "live", label: "En direct" },
   { id: "room", label: "Salon" },
@@ -493,14 +495,15 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function Panes() {
   const tab = useApp(s => s.tab);
+  const remote = useApp(s => !!s.remote);
   const unread = useApp(s => s.unread);
   const liveCount = useApp(s => (s.room?.streams.filter(x => x.ownerId !== s.userId).length ?? 0) + (s.room?.together ? 1 : 0));
   const memberCount = useApp(s => s.room?.members.filter(m => m.online).length ?? 0);
-  const badge = (id: Tab) => (id === "chat" ? unread : id === "live" ? liveCount : memberCount);
+  const badge = (id: Tab) => (id === "chat" ? unread : id === "live" ? liveCount : id === "room" ? memberCount : 0);
   return (
     <section class="panes" aria-label="Salon">
       <div class="tabs" role="tablist">
-        {TABS.map(t => (
+        {TABS.filter(t => t.id !== "regie" || remote).map(t => (
           <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} class={tab === t.id ? "is-on" : ""} onClick={() => set({ tab: t.id, ...(t.id === "chat" ? { unread: 0 } : {}) })}>
             {t.label}
             {badge(t.id) > 0 && <em class={t.id === "chat" ? "is-alert" : ""}>{badge(t.id)}</em>}
@@ -511,6 +514,7 @@ export function Panes() {
         </button>
       </div>
       <div class="pane">
+        {tab === "regie" && <RegiePane />}
         {tab === "chat" && <Chat />}
         {tab === "live" && <Live />}
         {tab === "room" && <Salon />}

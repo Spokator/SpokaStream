@@ -1,9 +1,10 @@
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, net, Notification, screen, session, shell, webContents } from "electron";
+import { execFile } from "node:child_process";
 import { appendFileSync, createWriteStream, mkdirSync, statSync, writeFileSync } from "node:fs";
 import type { WriteStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AudioApp, CaptureSource, ControlTarget, NativeVideoRequest, NotifyRequest, OverlayEvent, OverlayTarget, Settings, TrayState, YoutubeInfo } from "../shared/ipc.ts";
+import type { AudioApp, CaptureSource, ControlTarget, NativeVideoRequest, NotifyRequest, OverlayEvent, OverlayTarget, Settings, SoundboardInfo, TrayState, YoutubeInfo } from "../shared/ipc.ts";
 import { AudioEngine } from "./audioEngine.ts";
 import { LocalHost } from "./host.ts";
 import { SettingsStore } from "./settings.ts";
@@ -169,6 +170,13 @@ async function youtubeInfo(videoId: string): Promise<YoutubeInfo | null> {
   return data?.title ? { title: data.title } : null;
 }
 
+/** SpokaSoundBoard vit à côté : on regarde seulement s'il est là, sans jamais y toucher. */
+async function soundboardInfo(): Promise<SoundboardInfo> {
+  const installed = !!statSync(path.join(app.getPath("home"), "AppData", "Local", "Programs", "SpokaSoundBoard", "SpokaSoundBoard.exe"), { throwIfNoEntry: false });
+  const running = await new Promise<boolean>(resolve => execFile("tasklist", ["/FI", "IMAGENAME eq SpokaSoundBoard.exe", "/NH"], { windowsHide: true, timeout: 4000 }, (_e, stdout) => resolve(/SpokaSoundBoard\.exe/i.test(stdout))));
+  return { installed, running };
+}
+
 function applyScale() {
   mainWindow?.webContents.setZoomFactor(settings.current.uiScale);
 }
@@ -301,6 +309,7 @@ function wireIpc() {
   });
   ipcMain.handle("youtube:info", (_e, videoId: string) => youtubeInfo(videoId));
   ipcMain.handle("video:info", (_e, url: string) => videoInfo(url));
+  ipcMain.handle("soundboard:info", () => soundboardInfo());
   ipcMain.handle("web:open", (_e, url: string) => webSource.open(url));
   ipcMain.on("web:close", () => webSource.close());
   webSource.onClosed = () => toRenderer("web:closed");

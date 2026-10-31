@@ -33,6 +33,7 @@ Un navigateur sait capter un onglet ou tout le PC, jamais une application. Parta
 | 📱 **Sans rien installer** | Le lien d'invitation s'ouvre dans un navigateur, ou entre le code sur [stream.chretieno.fr](https://stream.chretieno.fr). Le site s'adapte à tous les écrans et s'ajoute à l'écran d'accueil d'un téléphone : plein écran avec le chat par-dessus, qualité automatique, zoom au doigt, pointeur laser, chat complet, vocal, Watch Party. Glisser pour changer de stream, mini-vue, notifications quand un ami passe en direct. |
 | 🎮 **Prendre la main** | Un ami joue à ta place depuis chez lui, avec ton accord, dans la seule fenêtre partagée. Tu la reprends d'une touche. |
 | ⚡ **La meilleure image** | Capture native à 60 i/s et plus, là où un navigateur plafonne à 48 sur un écran 144 Hz. Mesure réelle des encodeurs de ta machine, puis choix du codec le plus efficace qui tient la cadence : AV1, H265 ou H264, sur la carte graphique. Débit et cadence réglables à chaud. |
+| 📲 **Ton téléphone, ta régie** | Lie ton téléphone à ton PC avec un QR code : même compte partout, et pendant que le PC diffuse, le téléphone pilote pause, scènes, sons, caméra, clips et spectateurs. |
 | 👥 **Streamer à plusieurs** | Chacun peut diffuser en même temps et regarder les autres pendant ce temps. Cinq dispositions, dont une libre où chaque image se glisse et se redimensionne. Un stream à écouter, ou le son qui suit l'image en grand. Personne ne regarde ? Rien n'est encodé. |
 | 🎚️ **Chaque spectateur choisit** | Qualité pour lui seul, son seul pour économiser, volume jusqu'à 300 %, latence ultra faible ou stable. |
 | 🍿 **Watch Party** | Colle un lien YouTube ou l'adresse de n'importe quelle vidéo : chacun la lit chez lui en pleine qualité, et tout le salon reste synchronisé, pause, sous-titres et file d'attente comprises. Un film du PC ou un site qui garde sa vidéo ? Diffuse-le, image et son. |
@@ -94,6 +95,13 @@ Rien ne passe sans ton accord, et tu reprends la main à tout moment avec Ctrl+A
 - Partager un écran entier lui donne tout l'écran : l'application te prévient, et l'accord se donne alors uniquement dans la fenêtre, jamais au clavier.
 
 Clavier et souris uniquement : une manette n'est pas transmise. Certains jeux avec anti-triche refusent les touches simulées, et les fenêtres lancées en administrateur restent hors d'atteinte.
+
+## Avec SpokaSoundBoard
+
+Les deux logiciels tournent ensemble. [SpokaSoundBoard](https://github.com/Spokator/SpokaSoundBoard) mixe ta musique, tes sons et ta voix transformée dans un micro virtuel, VB-CABLE, que son assistant installe.
+
+- **Pour le vocal** : Paramètres, Son et voix, bouton Utiliser. Les filtres de voix se coupent sur ce micro, sinon ils coupent la musique.
+- **Pour le son du stream** : choisis SpokaSoundBoard en tête de la liste des sons. Évite de le capter comme application, ou d'ajouter ton micro en plus : le son arriverait en double.
 
 ## Sans serveur
 

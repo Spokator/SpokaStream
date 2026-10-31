@@ -93,7 +93,7 @@ export interface ActivityItem {
 
 export type View = "home" | "room" | "settings";
 export type PanelTab = "chat" | "members" | "studio";
-export type SettingsSection = "profile" | "appearance" | "voice" | "stream" | "watch" | "overlay" | "hotkeys" | "notifications" | "server" | "about";
+export type SettingsSection = "account" | "profile" | "appearance" | "voice" | "stream" | "watch" | "overlay" | "hotkeys" | "notifications" | "server" | "about";
 /** Identifiant de la vidéo regardée ensemble dans la liste de ce qu'on peut mettre en grand. */
 export const TOGETHER = "together";
 
@@ -103,6 +103,10 @@ interface AppState {
   connection: ConnectionState;
   unreachable: boolean;
   userId: string;
+  /** Le compte : plusieurs appareils peuvent le partager. */
+  accountId: string;
+  /** Ce compte a accès au panneau d'administration. */
+  admin: boolean;
   iceServers: IceServer[];
   serverName: string;
   view: View;
@@ -156,6 +160,8 @@ export const useApp = create<AppState>(() => ({
   connection: "offline",
   unreachable: false,
   userId: "",
+  accountId: "",
+  admin: false,
   iceServers: [],
   serverName: "",
   view: "home",
