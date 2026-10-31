@@ -24,6 +24,35 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm run release
+      - run: npm run dist
+
+      # electron-builder peut s'arrêter en plein envoi avec un code de succès : il construit, gh publie.
+      - name: Publier la release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          installer="dist/SpokaStream-Setup-$version.exe"
+          for file in "$installer" "$installer.blockmap" dist/latest.yml; do
+            test -s "$file" || { echo "Fichier manquant : $file"; exit 1; }
+          done
+          awk -v v="## $version" '$0 == v { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "Pas d'entrée $version dans CHANGELOG.md"; exit 1; }
+          cat >> notes.md <<'NOTES'
+
+          **Installation :** télécharge `SpokaStream-Setup` ci-dessous. Windows peut afficher « Windows a protégé votre ordinateur », car le logiciel n'est pas signé : *Informations complémentaires* → *Exécuter quand même*. Aucun droit administrateur n'est nécessaire.
+          NOTES
+          sed -i 's/^          //' notes.md
+          gh release create "$GITHUB_REF_NAME" "$installer" "$installer.blockmap" dist/latest.yml --title "SpokaStream $version" --notes-file notes.md
+
+      - name: Vérifier que la release est complète
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          assets="$(gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name')"
+          for name in "SpokaStream-Setup-$version.exe" "SpokaStream-Setup-$version.exe.blockmap" latest.yml; do
+            grep -qx "$name" <<< "$assets" || { echo "Absent de la release : $name"; exit 1; }
+          done

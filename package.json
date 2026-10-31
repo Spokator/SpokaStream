@@ -23,8 +23,7 @@
     "server": "node --experimental-strip-types server/start.ts",
     "server:build": "esbuild server/start.ts --bundle --platform=node --format=esm --target=node22 --outfile=server/dist/spokastream-server.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "native": "powershell -ExecutionPolicy Bypass -File scripts/build-native.ps1",
-    "dist": "npm run native && npm run build && electron-builder --win --publish never",
-    "release": "npm run native && npm run build && electron-builder --win --publish always"
+    "dist": "npm run native && npm run build && electron-builder --win --publish never"
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
