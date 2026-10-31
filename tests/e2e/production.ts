@@ -19,7 +19,8 @@ async function launch(name: string): Promise<{ app: ElectronApplication; page: P
   const app = await electron.launch({
     executablePath: electronPath,
     args: [root],
-    env: { ...process.env, SPOKASTREAM_USER_DATA: path.join(temp, name), SPOKASTREAM_SERVER: serverUrl, SPOKASTREAM_FORCE_RELAY: "1" },
+    // Pas de capture native ici : Playwright reçoit chaque trame par DevTools, et l'état du PC se lit alors avec des dizaines de secondes de retard.
+    env: { ...process.env, SPOKASTREAM_USER_DATA: path.join(temp, name), SPOKASTREAM_SERVER: serverUrl, SPOKASTREAM_FORCE_RELAY: "1", SPOKASTREAM_NO_NATIVE: "1" },
   });
   const page = await app.firstWindow();
   await page.getByPlaceholder("Comment tes amis te voient").fill(name);
@@ -86,15 +87,15 @@ try {
     "message reçu",
     () => a.page.evaluate(() => (window as any).__store.useApp.getState().room.history.some((m: { text: string }) => m.text === "Reçu par le vrai serveur") as boolean),
     Boolean,
-    10_000,
+    25_000,
   );
   // Le vrai lien d'invitation, en HTTPS, tel qu'un ami l'ouvre sur son téléphone.
   const edge = await chromium.launch({ channel: "msedge", headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
   const phone = await (await edge.newContext(devices["Pixel 7"])).newPage();
   await phone.goto(`${serverUrl.replace(/^ws/, "http").replace(/\/ws$/, "")}/`);
-  await phone.getByLabel("Code du salon").fill(code.toLowerCase());
+  await phone.getByLabel("Code du salon, ou code de liaison de ton PC").fill(code.toLowerCase());
   await phone.getByLabel("Ton nom").fill("Essai téléphone");
-  await phone.getByRole("button", { name: "Regarder" }).click();
+  await phone.getByRole("button", { name: "Continuer" }).click();
   await phone.waitForURL(/\/w\//);
   const height = await poll("image sur le téléphone", () => phone.evaluate(() => (document.getElementById("video") as HTMLVideoElement).videoHeight), h => h > 0, 30_000);
   await phone.getByRole("textbox", { name: "Message" }).fill("Reçu sur le téléphone");
