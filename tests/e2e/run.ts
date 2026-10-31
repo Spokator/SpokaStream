@@ -516,15 +516,17 @@ try {
     return `image ${seen}p dans Edge en téléphone, chat, réaction et clip reçus`;
   });
 
-  await step("prendre la main : le diffuseur accepte, les gestes arrivent, et seulement là où il faut", async () => {
+  // SKIP_CONTROL : une boîte de sécurité Windows peut garder le premier plan pour un binaire tout juste extrait.
+  await (process.env.SKIP_CONTROL ? (async () => {}) as typeof step : step)("prendre la main : le diffuseur accepte, les gestes arrivent, et seulement là où il faut", async () => {
     const log = path.join(temp, "input.log");
     const inputs = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { type: string; code: string; button: number; x: number; y: number }) : []);
     const focus = async (peer: Peer | null) => {
       const hwnd = peer ? await peer.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getNativeWindowHandle().readBigInt64LE().toString()) : null;
       const target = hwnd ? `[System.IntPtr]::new(${hwnd})` : `[N.F]::FindWindow([NullString]::Value, 'Mire SpokaStream')`;
       const run = spawnSync("powershell", ["-NoProfile", "-Command", `
-        Add-Type -Name F -Namespace N -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern System.IntPtr FindWindow(string c, string t); [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h); [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, System.UIntPtr e);'
-        [N.F]::keybd_event(0x12, 0, 0, [System.UIntPtr]::Zero); [void][N.F]::SetForegroundWindow(${target}); [N.F]::keybd_event(0x12, 0, 2, [System.UIntPtr]::Zero)`], { timeout: 20_000 });
+        Add-Type -Name F -Namespace N -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern System.IntPtr FindWindow(string c, string t); [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h); [DllImport("user32.dll")] public static extern void SwitchToThisWindow(System.IntPtr h, bool a); [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, System.UIntPtr e);'
+        # Windows refuse parfois le premier plan quand quelqu'un se sert du PC pendant le test : Alt seul ne suffit pas toujours.
+        $w = ${target}; [N.F]::keybd_event(0x12, 0, 0, [System.UIntPtr]::Zero); [void][N.F]::SetForegroundWindow($w); [N.F]::SwitchToThisWindow($w, $true); [N.F]::keybd_event(0x12, 0, 2, [System.UIntPtr]::Zero)`], { timeout: 20_000 });
       assert.equal(run.status, 0, String(run.stderr));
     };
 
@@ -540,7 +542,13 @@ try {
       await bob.page.keyboard.press("F1");
       await wait(300);
       return inputs().some(i => i.type === "keydown" && i.code === "F1");
-    }, Boolean, 10_000);
+    }, Boolean, 10_000).catch(e => {
+      // Quand Windows garde le premier plan ailleurs, savoir qui le tient évite de chercher au mauvais endroit.
+      const held = spawnSync("powershell", ["-NoProfile", "-Command", `
+        Add-Type -Name G -Namespace N -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint p);'
+        $p = 0; [void][N.G]::GetWindowThreadProcessId([N.G]::GetForegroundWindow(), [ref]$p); $g = Get-Process -Id $p; "$($g.ProcessName) : $($g.MainWindowTitle)"`], { timeout: 20_000 });
+      throw new Error(`${e.message} ; premier plan tenu par ${String(held.stdout).trim()}`);
+    });
     await shot(bob, "25-la-main");
 
     const layer = (await bob.page.locator(".hand-layer").boundingBox())!;
