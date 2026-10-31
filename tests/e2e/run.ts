@@ -265,20 +265,29 @@ try {
     const state = await bob.page.evaluate(() => Object.values<any>((window as any).__store.useApp.getState().subs)[0]?.state);
     assert.equal(state, "connected");
     // Régression : redimensionner la fenêtre de l'overlay figeait la page du diffuseur.
+    // La mesure se fait dans la page : à travers Playwright, chaque trame de la capture native passe par DevTools,
+    // qui sature, et une page parfaitement fluide semble ne plus répondre pendant 30 s. Une trace l'a prouvé.
+    await alice.page.evaluate(() => {
+      const w = window as any;
+      w.__worstFrame = 0;
+      let last = performance.now();
+      const tick = (now: number) => {
+        w.__worstFrame = Math.max(w.__worstFrame, now - last);
+        last = now;
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
     for (const [width, tall] of [[1000, 800], [1500, 900], [800, 450], [960, 540]]) {
       const moved = spawnSync("powershell", ["-NoProfile", "-Command", `
         Add-Type -Name W -Namespace N -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern System.IntPtr FindWindow(string c, string t); [DllImport("user32.dll")] public static extern bool SetWindowPos(System.IntPtr h, System.IntPtr a, int x, int y, int w, int cy, uint f);'
         [N.W]::SetWindowPos([N.W]::FindWindow([NullString]::Value, 'Mire SpokaStream'), [System.IntPtr]::Zero, 40, 40, ${width}, ${tall}, 0x0040)`], { timeout: 20_000 });
       assert.equal(moved.status, 0);
       await wait(1200);
-      // L'encodeur se réinitialise à chaque nouvelle taille : la page du diffuseur s'arrête, de 1 à plus de 25 s selon ce qui
-      // occupe la carte graphique. Ce garde-fou ne vise que le blocage définitif.
-      const stalledAt = Date.now();
-      const alive = await Promise.race([alice.page.evaluate(() => new Promise(r => requestAnimationFrame(() => r(true)))), wait(60_000).then(() => false)]);
-      console.log(`  ${width}x${tall} : page de retour en ${Date.now() - stalledAt} ms`);
-      assert.equal(alive, true, `la page du diffuseur ne répond plus après ${width}x${tall}`);
     }
-    await alice.page.evaluate(() => new Promise(r => requestAnimationFrame(r)));
+    const worst = await Promise.race([alice.page.evaluate(() => (window as any).__worstFrame as number), wait(120_000).then(() => Number.POSITIVE_INFINITY)]);
+    console.log(`  pire écart entre deux images dans la page : ${Math.round(worst)} ms`);
+    assert.ok(worst < 2000, `la page du diffuseur s'est figée ${Math.round(worst)} ms`);
     return `hauteur reçue ${height}, 4 redimensionnements de plus sans gel`;
   });
 
@@ -1273,7 +1282,9 @@ try {
     const hidden = await Promise.race([peer.page.evaluate(() => `${document.visibilityState}`), wait(4000).then(() => "pas de réponse")]).catch(e => String(e));
     console.log(`État ${peer.name} : ${paint}, page ${hidden}, fenêtres ${JSON.stringify(windows)}`);
     await shot(peer, `echec-${peer.name}`).catch(() => {});
-    console.log(`Diagnostic ${peer.name} :\n${await peer.page.evaluate(() => (window as any).__core.diagnostics()).catch(() => "indisponible")}`);
+    // Toujours borné : une page qui ne répond plus ne doit pas laisser le test tourner sans fin.
+    const report = await Promise.race([peer.page.evaluate(() => (window as any).__core.diagnostics()).catch(() => "indisponible"), wait(15_000).then(() => "pas de réponse")]);
+    console.log(`Diagnostic ${peer.name} :\n${report}`);
     if (peer.errors.length) console.log(`Erreurs ${peer.name} :\n  ${peer.errors.slice(0, 15).join("\n  ")}`);
   }
 } finally {
