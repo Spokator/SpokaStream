@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { _electron as electron } from "playwright";
+import { _electron as electron, chromium, devices } from "playwright";
 import type { ElectronApplication, Page } from "playwright";
 
 const root = path.resolve(import.meta.dirname, "../..");
@@ -88,6 +88,20 @@ try {
     Boolean,
     10_000,
   );
+  // Le vrai lien d'invitation, en HTTPS, tel qu'un ami l'ouvre sur son téléphone.
+  const edge = await chromium.launch({ channel: "msedge", headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
+  const phone = await (await edge.newContext(devices["Pixel 7"])).newPage();
+  await phone.goto(`${serverUrl.replace(/^ws/, "http").replace(/\/ws$/, "")}/j/${code}`);
+  await phone.waitForURL(/\/w\//);
+  await phone.getByLabel("Ton nom").fill("Essai téléphone");
+  await phone.getByRole("button", { name: "Regarder" }).click();
+  const height = await poll("image sur le téléphone", () => phone.evaluate(() => (document.getElementById("video") as HTMLVideoElement).videoHeight), h => h > 0, 30_000);
+  await phone.getByRole("textbox", { name: "Message" }).fill("Reçu sur le téléphone");
+  await phone.keyboard.press("Enter");
+  await poll("message du téléphone", () => a.page.evaluate(() => (window as any).__store.useApp.getState().room.history.some((m: { text: string }) => m.text === "Reçu sur le téléphone") as boolean), Boolean, 10_000);
+  console.log(`lecteur web sur le vrai serveur : image ${height}p, chat dans les deux sens`);
+  await edge.close();
+
   // Le lecteur YouTube vit sur le vrai serveur : c'est ici que son origine compte.
   await a.page.evaluate(() => (window as any).__core.togetherAdd("https://www.youtube.com/watch?v=aqz-KE-bpKQ"));
   await b.page.locator(".tile-together").waitFor({ timeout: 15_000 });
