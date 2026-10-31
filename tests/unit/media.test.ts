@@ -232,6 +232,29 @@ test("on sait où couper un clip, et une partie du milieu repart de zéro", () =
   assert.deepEqual(fragmentTimes(HEADER, parts), [0, 1]);
 });
 
+test("une piste sans temps valable ne décale pas tout le clip", () => {
+  // Le début du clip tombe à 22 s d'enregistrement, et une piste y porte encore un temps de 0 : c'est ainsi qu'un clip de 30 s a annoncé 52 s.
+  const at = (second: number, audio = second * 48_000) => concat(moof(second + 1, audio, second * 30_000), box("mdat", u32(second)));
+  const splitter = new Mp4Splitter();
+  const fragments = splitter.push(concat(HEADER, at(22, 0), at(23), at(24)), 0);
+  assert.equal(fragmentSpan(HEADER, fragments), 2);
+  assert.deepEqual(fragmentTimes(HEADER, fragments), [0, 1, 2]);
+  const again = new Mp4Splitter();
+  const parts = again.push(assembleClip(HEADER, fragments), 0);
+  const video = (bytes: Uint8Array) => Number(new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(24 + 8 + 16 + 12 + 44));
+  assert.deepEqual(parts.map(part => video(part.bytes)), [0, 30_000, 60_000], "l'image repart de zéro");
+  assert.deepEqual(fragmentTimes(HEADER, parts), [0, 1, 2]);
+});
+
+test("un vrai décalage entre l'image et le son reste dans le clip", () => {
+  const splitter = new Mp4Splitter();
+  const fragments = splitter.push(concat(HEADER, concat(moof(1, 10_000 * 48, 10_500 * 30), box("mdat", u32(0)))), 0);
+  const [part] = new Mp4Splitter().push(assembleClip(HEADER, fragments), 0);
+  const view = new DataView(part!.bytes.buffer, part!.bytes.byteOffset);
+  assert.equal(Number(view.getBigUint64(24 + 8 + 16 + 12)), 0, "le son part de zéro");
+  assert.equal(Number(view.getBigUint64(24 + 8 + 16 + 12 + 44)), 15_000, "l'image garde ses 500 ms de retard");
+});
+
 test("la réponse à OBS remplace les noms masqués par les adresses de ce PC", () => {
   const sdp = "a=mid:0\r\na=candidate:1 1 udp 2122260223 4f2a-11.local 54000 typ host generation 0\r\na=end-of-candidates\r\n";
   const answer = revealCandidates(sdp, ["192.168.1.20", "10.0.0.4"]);

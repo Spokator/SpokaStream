@@ -1,5 +1,9 @@
 # Journal des versions
 
+## 1.6.3
+
+- **Un clip n'annonce plus une durée fausse.** Quand le PC était chargé, un clip de 30 secondes pouvait afficher 50 secondes, avec l'image ou le son décalés d'autant. Un fragment sans son portait un temps de zéro, pris à tort pour le début du clip.
+
 ## 1.6.2
 
 - **Avertissement sur la capture compatible** : chez un utilisateur, elle ramène bien la souris dans Project Zomboid, mais l'image clignote fortement, dans le jeu comme dans le stream. Le réglage le dit maintenant clairement, et reste désactivé par défaut.

@@ -82,6 +82,8 @@ Chrome plafonne l'encodeur d'après le SDP distant. On négocie donc 300 Mb/s un
 
 ### Clips
 
+MediaRecorder coupe un fragment à chaque image clé. Sur un PC chargé, un fragment peut ne contenir aucun échantillon d'une piste, qui porte alors un temps de zéro. Une piste à plus de 2 secondes de l'autre ne compte donc pas pour trouver le début d'un fragment (`fragmentStart`) : la prendre laissait tout le clip décalé de son temps d'enregistrement.
+
 Une seule mémoire tourne à la fois : son propre stream, sinon celui qu'on regarde en grand. MediaRecorder y écrit un MP4 fragmenté avec une image clé par seconde, et `mp4.ts` ne garde que l'en-tête et les derniers fragments. Couper ne réencode rien : il suffit de remettre le temps à zéro dans chaque fragment, avec le même décalage en secondes pour l'image et le son, sinon ils se décalent.
 
 - **`avc3`, pas `avc1`** : avec `avc1`, la définition n'est écrite qu'une fois dans l'en-tête, et Chromium se plaint dès qu'une fenêtre change de taille.

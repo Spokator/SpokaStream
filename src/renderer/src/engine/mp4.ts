@@ -8,6 +8,7 @@ export interface Fragment {
 }
 
 const text = new TextDecoder("latin1");
+const MAX_TRACK_SKEW_SECONDS = 2;
 
 const u32 = (b: Uint8Array, o: number) => new DataView(b.buffer, b.byteOffset, b.byteLength).getUint32(o);
 const boxType = (b: Uint8Array, o: number) => text.decode(b.subarray(o + 4, o + 8));
@@ -112,30 +113,40 @@ function tracksOf(bytes: Uint8Array) {
   return tracks;
 }
 
+/**
+ * Début d'un fragment, en secondes. L'image et le son s'écartent de quelques dixièmes au plus : une piste loin derrière
+ * l'autre n'a pas de temps valable dans ce fragment. La prendre pour le début laisserait tout le clip décalé.
+ */
+function fragmentStart(bytes: Uint8Array, scales: Map<number, number>) {
+  const times = tracksOf(bytes).flatMap(track => (scales.has(track.id) ? [track.time / scales.get(track.id)!] : []));
+  const latest = Math.max(...times);
+  return times.length ? Math.min(...times.filter(time => latest - time < MAX_TRACK_SKEW_SECONDS)) : null;
+}
+
 /** Durée entre le début du premier fragment et le début du dernier, en secondes. */
 export function fragmentSpan(header: Uint8Array, fragments: Fragment[]) {
   if (fragments.length < 2) return 0;
   const scales = timescales(header);
-  const first = tracksOf(fragments[0]!.bytes)[0];
-  const last = tracksOf(fragments[fragments.length - 1]!.bytes)[0];
-  const scale = first && scales.get(first.id);
-  return first && last && scale ? (last.time - first.time) / scale : 0;
+  const first = fragmentStart(fragments[0]!.bytes, scales);
+  const last = fragmentStart(fragments[fragments.length - 1]!.bytes, scales);
+  return first !== null && last !== null ? last - first : 0;
 }
 
 /** Début de chaque fragment, en secondes depuis le premier : c'est là, et seulement là, qu'on peut couper. */
 export function fragmentTimes(header: Uint8Array, fragments: Fragment[]) {
   const scales = timescales(header);
-  const first = tracksOf(fragments[0]!.bytes)[0];
-  const scale = first && scales.get(first.id);
-  if (!first || !scale) return fragments.map((_, index) => index);
-  return fragments.map(fragment => (tracksOf(fragment.bytes)[0]!.time - first.time) / scale);
+  const first = fragmentStart(fragments[0]!.bytes, scales);
+  if (first === null) return fragments.map((_, index) => index);
+  return fragments.map((fragment, index) => {
+    const start = fragmentStart(fragment.bytes, scales);
+    return start === null ? index : start - first;
+  });
 }
 
 /** Assemble un fichier autonome : le temps repart de zéro, en gardant l'écart exact entre l'image et le son. */
 export function assembleClip(header: Uint8Array, fragments: Fragment[]) {
   const scales = timescales(header);
-  const firstTracks = tracksOf(fragments[0]!.bytes);
-  const startSeconds = Math.min(...firstTracks.map(t => t.time / (scales.get(t.id) ?? 1)));
+  const startSeconds = fragmentStart(fragments[0]!.bytes, scales) ?? 0;
   const out = concat([header, ...fragments.map(f => f.bytes)]);
   const view = new DataView(out.buffer);
   let offset = header.length;
