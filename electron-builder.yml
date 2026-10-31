@@ -1,0 +1,47 @@
+appId: com.spokator.spokastream
+productName: SpokaStream
+copyright: Copyright © 2026 Spokator
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+
+extraResources:
+  - from: native/publish/SpokaAudio.exe
+    to: native/SpokaAudio.exe
+  - from: build/icon.png
+    to: icon.png
+
+electronLanguages:
+  - fr
+  - en-US
+
+win:
+  target:
+    - target: nsis
+      arch: x64
+  icon: build/icon.ico
+  artifactName: SpokaStream-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: true
+  shortcutName: SpokaStream
+  installerLanguages:
+    - fr_FR
+  language: "1036"
+
+publish:
+  provider: github
+  owner: Spokator
+  repo: SpokaStream
+  releaseType: release

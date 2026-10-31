@@ -1,0 +1,115 @@
+<div align="center">
+
+<img src="src/renderer/public/logo.png" width="96" alt="Logo SpokaStream" />
+
+# SpokaStream
+
+**Stream entre amis, en vraie qualité, avec le son de ton choix.**
+
+Un logiciel installé, pas une page web : il capte le son d'une application précise, reste dans la zone de notification, et envoie l'image directement de ton PC à ceux de tes amis.
+
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20(2004+)%20%7C%2011-0078D6)
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
+
+**[Télécharger l'installeur](https://github.com/Spokator/SpokaStream/releases/latest)**
+
+<img src="docs/screenshots/studio.png" alt="Le studio en direct" width="860" />
+
+</div>
+
+## Pourquoi un logiciel et pas une page web
+
+La watch party de PinoyBot a montré sa limite : un navigateur sait capter un onglet ou tout le PC, jamais une application. Partager un jeu envoyait donc aussi Discord, et les voix revenaient en écho. Seul un logiciel installé a accès à l'API Windows de capture par processus. SpokaStream l'utilise, et récupère au passage tout ce que la party avait appris sur la qualité.
+
+## Ce que ça fait
+
+| | |
+| --- | --- |
+| 🔊 **Le son que tu veux** | Une application, plusieurs, ou tout le PC **sauf SpokaStream** : plus d'écho. Partage une fenêtre et son son est choisi tout seul. Table de mixage en direct, avec un volume et un niveau par source. |
+| 🎬 **Toutes les sources** | Écran, fenêtre, caméra ou carte d'acquisition, fichier vidéo de ton PC. Changement de source en plein direct, sans couper. |
+| ⚡ **La meilleure image** | Capture native à 60 i/s et plus, là où un navigateur plafonne à 48 sur un écran 144 Hz. Mesure réelle des encodeurs de ta machine, puis choix du codec le plus efficace qui tient la cadence : AV1, H265 ou H264, sur la carte graphique. Débit et cadence réglables à chaud. |
+| 👥 **Streamer à plusieurs** | Chacun peut diffuser en même temps. Vignettes en direct, grille ou grand écran. Personne ne regarde ? Rien n'est encodé. |
+| 🎚️ **Chaque spectateur choisit** | Qualité pour lui seul, son seul pour économiser, volume jusqu'à 300 %, latence ultra faible ou stable. |
+| ✏️ **Interagir** | Chat, réactions, pointeur laser et dessin sur le stream. Le diffuseur voit tout sur son écran grâce à l'overlay, que les spectateurs ne voient pas en double. |
+| 📌 **Pratique** | Fenêtre flottante toujours au-dessus, plein écran, capture d'écran, enregistrement en `.mkv`, statistiques détaillées. |
+| 🎙️ **Vocal intégré** | Micro ouvert ou appuyer pour parler, même en jeu, réduction du bruit, volume par personne. Le micro reste séparé du son du stream. |
+| 🖥️ **Un vrai logiciel Windows** | Zone de notification, lancement avec Windows, raccourcis globaux, notifications quand un ami passe en direct, mises à jour automatiques, liens d'invitation. |
+| 🔒 **Privé** | Pas de compte. La vidéo et le son vont de PC à PC : le serveur ne les voit jamais. Pause qui coupe vraiment l'image et le son. |
+
+<div align="center">
+<img src="docs/screenshots/spectateur.png" alt="Réactions et dessin côté spectateur" width="420" /> <img src="docs/screenshots/accueil.png" alt="Accueil" width="420" />
+</div>
+
+## Installation
+
+Télécharge **`SpokaStream-Setup-x.y.z.exe`** depuis les [releases](https://github.com/Spokator/SpokaStream/releases/latest). Aucun droit administrateur ni .NET n'est nécessaire.
+
+> Windows peut afficher « Windows a protégé votre ordinateur », car le logiciel n'est pas signé : *Informations complémentaires* → *Exécuter quand même*.
+
+## Comment ça marche
+
+```
+        ┌─ serveur de salons ─┐   présente les participants, transporte le chat
+        │ (quelques ko/s)     │   ne voit jamais la vidéo
+        └──▲───────────────▲──┘
+           │               │
+   ┌───────┴──────┐  WebRTC direct  ┌──────────────┐
+   │  Diffuseur   ├────────────────►│  Spectateur  │
+   │              │  (relais TURN   │              │
+   │ SpokaAudio ──┤   si le réseau  │              │
+   │  (WASAPI)    │   le bloque)    │              │
+   └──────────────┘                 └──────────────┘
+```
+
+Le détail des choix et des mesures est dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+**À savoir** : chaque spectateur a son propre encodage. C'est ce qui permet une qualité par personne, mais un stream à 12 Mb/s pour 4 spectateurs demande 48 Mb/s d'envoi. La fenêtre de lancement affiche ce total avant de démarrer, et on peut limiter le nombre de spectateurs.
+
+## Sans serveur
+
+Paramètres → Serveur → **Héberger sur ce PC** : tout fonctionne en réseau local, sans rien installer d'autre.
+
+## Développement
+
+Prérequis : Windows 10/11, Node.js 22, SDK .NET 9.
+
+```powershell
+npm install
+npm run native      # compile le moteur audio
+npm run server      # serveur de salons en local, port 8787
+$env:SPOKASTREAM_SERVER = "ws://127.0.0.1:8787/ws"; npm run dev
+```
+
+```powershell
+npm run typecheck
+npm test            # serveur, SDP, choix du codec, tampon audio
+npm run test:e2e    # parcours complet : deux instances, WebRTC réel, son réel
+npm run test:production   # le vrai serveur, vidéo forcée par le relais
+```
+
+Le parcours complet diffuse une mire de test, jamais ton écran. Il joue un son faible pendant environ deux minutes.
+
+| Dossier | Contenu |
+| --- | --- |
+| `src/main` | Processus principal : fenêtres, zone de notification, overlay, moteur audio, mises à jour |
+| `src/renderer/src/engine` | Cœur : signalisation, publication, réception, voix, mixage, encodeurs |
+| `src/renderer/src/views` | Interface React |
+| `src/shared` | Protocole et contrat entre processus |
+| `server` | Serveur de salons, autonome, aussi embarqué dans l'application |
+| `native/SpokaAudio` | Moteur natif C# : son par application, capture d'image, touches globales |
+| `deploy` | Installation du serveur sur un VPS |
+
+## Publier une version
+
+1. Mets à jour `version` dans `package.json` et le [journal des versions](CHANGELOG.md).
+2. `git tag vX.Y.Z && git push --tags`
+
+Le workflow GitHub construit l'installeur et le publie : les applications installées se mettent à jour toutes seules.
+
+## Déployer le serveur
+
+Voir [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#déploiement). Il peut utiliser le coturn déjà en place pour PinoyBot.
+
+## Licence
+
+[MIT](LICENSE) © 2026 Spokator

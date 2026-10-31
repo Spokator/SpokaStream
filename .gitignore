@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist/
+dist-test/
+data/
+server/dist/
+tests/captures/
+native/publish/
+native/*/bin/
+native/*/obj/
+*.log

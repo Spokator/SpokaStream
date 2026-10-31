@@ -1,0 +1,27 @@
+[Unit]
+Description=SpokaStream : serveur de salons
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=spokastream
+Group=spokastream
+WorkingDirectory=/opt/spokastream
+EnvironmentFile=/opt/spokastream/.env
+ExecStart=/usr/bin/node /opt/spokastream/spokastream-server.mjs
+Restart=always
+RestartSec=2
+
+# Le serveur ne transporte aucune vidéo : il coûte très peu et cohabite avec le reste de la machine.
+MemoryMax=256M
+CPUQuota=50%
+Nice=5
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/spokastream/data
+
+[Install]
+WantedBy=multi-user.target

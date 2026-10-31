@@ -1,0 +1,52 @@
+{
+  "name": "spokastream",
+  "productName": "SpokaStream",
+  "version": "1.0.0",
+  "description": "Stream en haute qualité entre amis : un vrai logiciel, avec le son de l'application de ton choix.",
+  "author": "Spokator",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Spokator/SpokaStream.git"
+  },
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test --experimental-strip-types \"tests/unit/*.test.ts\"",
+    "test:e2e": "electron-vite build && node --experimental-strip-types --no-warnings tests/e2e/run.ts",
+    "test:production": "electron-vite build && node --experimental-strip-types --no-warnings tests/e2e/production.ts",
+    "server": "node --experimental-strip-types server/start.ts",
+    "server:build": "esbuild server/start.ts --bundle --platform=node --format=esm --target=node22 --outfile=server/dist/spokastream-server.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "native": "powershell -ExecutionPolicy Bypass -File scripts/build-native.ps1",
+    "dist": "npm run native && npm run build && electron-builder --win --publish never",
+    "release": "npm run native && npm run build && electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11",
+    "lucide-react": "^1.65.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "ws": "^8.22.0",
+    "zustand": "^5.0.16"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.18.2",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.2.0",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "esbuild": "^0.28.2",
+    "playwright": "^1.64.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}
