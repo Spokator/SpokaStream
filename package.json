@@ -1,7 +1,7 @@
 {
   "name": "spokastream",
   "productName": "SpokaStream",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Stream en haute qualité entre amis : un vrai logiciel, avec le son de l'application de ton choix.",
   "author": "Spokator",
   "license": "MIT",
@@ -23,6 +23,7 @@
     "test:e2e": "npm run build && node --experimental-strip-types --no-warnings tests/e2e/run.ts",
     "test:party": "npm run build && node --experimental-strip-types --no-warnings tests/e2e/party.ts",
     "test:remote": "npm run build && node --experimental-strip-types --no-warnings tests/e2e/remote.ts",
+    "test:capture-compat": "node --experimental-strip-types --no-warnings tests/e2e/capture-compat.ts",
     "test:admin-phone": "npm run viewer && node --experimental-strip-types --no-warnings tests/e2e/admin-phone.ts",
     "test:production": "npm run build && node --experimental-strip-types --no-warnings tests/e2e/production.ts",
     "test:obs": "npm run build && node --experimental-strip-types --no-warnings tests/e2e/obs.ts",

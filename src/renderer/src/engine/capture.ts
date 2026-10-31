@@ -27,6 +27,8 @@ export interface OpenedSource {
   width: number;
   height: number;
   /** La source a disparu : fenêtre fermée, écran débranché. */
+  /** La capture compatible a été demandée, mais Windows la refuse sur cet écran : c'est WGC qui tourne. */
+  compatFailed?: boolean;
   onEnded(listener: () => void): void;
   /** Taille réelle des images, quand une fenêtre est redimensionnée par exemple. */
   onResize(listener: (width: number, height: number) => void): void;
@@ -36,9 +38,9 @@ export interface OpenedSource {
 
 const NATIVE_START_TIMEOUT_MS = 3000;
 
-async function openNative(source: CaptureSource, fps: number, maxHeight: number): Promise<OpenedSource | null> {
+async function openNative(source: CaptureSource, fps: number, maxHeight: number, compat: boolean): Promise<OpenedSource | null> {
   if (!("MediaStreamTrackGenerator" in window) || window.spoka.noNative) return null;
-  const started = await window.spoka.startNativeVideo({ sourceId: source.id, displayId: source.displayId, fps, maxHeight });
+  const started = await window.spoka.startNativeVideo({ sourceId: source.id, displayId: source.displayId, fps, maxHeight, compat });
   if (!started) return null;
 
   const generator = new MediaStreamTrackGenerator({ kind: "video" });
@@ -89,6 +91,7 @@ async function openNative(source: CaptureSource, fps: number, maxHeight: number)
     audio: null,
     element: null,
     native: true,
+    compatFailed: !!started.compatFailed,
     get width() {
       return width;
     },
@@ -102,9 +105,9 @@ async function openNative(source: CaptureSource, fps: number, maxHeight: number)
   };
 }
 
-export async function openSource(source: VideoSource, fps: number, maxHeight: number): Promise<OpenedSource> {
+export async function openSource(source: VideoSource, fps: number, maxHeight: number, compat = false): Promise<OpenedSource> {
   if (source.kind === "screen" || source.kind === "window") {
-    const native = await openNative(source.source, fps, maxHeight).catch(e => {
+    const native = await openNative(source.source, fps, maxHeight, compat).catch(e => {
       console.warn("capture native :", e);
       return null;
     });

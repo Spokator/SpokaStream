@@ -46,6 +46,7 @@ function defaults(): Settings {
       cameraLayout: DEFAULT_CAMERA_LAYOUT,
       allowControl: true,
       autoRecord: false,
+      compatCapture: false,
       screens: DEFAULT_SCREENS,
     },
     hotkeys: DEFAULT_HOTKEYS,

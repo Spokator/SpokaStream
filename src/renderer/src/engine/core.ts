@@ -1182,7 +1182,8 @@ class Core {
     const streamId = `${get().userId.slice(0, 8)}-${Date.now().toString(36)}`;
     let opened: OpenedSource;
     try {
-      opened = await openSource(config.source, config.fps, resolutionHeight(config.resolution));
+      opened = await openSource(config.source, config.fps, resolutionHeight(config.resolution), get().settings!.stream.compatCapture);
+      if (opened.compatFailed) toast("La capture compatible n'est pas disponible sur cet écran : capture normale.", "warning", 8000);
     } catch (e) {
       this.reportError(e);
       return false;
@@ -1369,7 +1370,7 @@ class Core {
     const { fps, maxHeight, priority } = get().publish!.target;
     let next: OpenedSource;
     try {
-      next = await openSource(source, fps, maxHeight);
+      next = await openSource(source, fps, maxHeight, get().settings!.stream.compatCapture);
     } catch (e) {
       return this.reportError(e);
     }

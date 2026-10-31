@@ -18,7 +18,7 @@ namespace SpokaAudio;
 /// tombe à la 3e synchro, soit 48 i/s. MinUpdateInterval lève cette limite (Windows 11 24H2) ; la cadence voulue
 /// est ensuite tenue ici. La capture de bureau de Chromium ne règle pas cette propriété.
 /// </summary>
-public sealed class ScreenCapture : IDisposable
+public sealed class ScreenCapture : IVideoCapture
 {
     /// <summary>
     /// Débit mesuré du WebSocket local vers la page, plafonné par le service réseau de Chromium.

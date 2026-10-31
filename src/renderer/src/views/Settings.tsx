@@ -534,6 +534,9 @@ function StreamSection({ s }: { s: Settings }) {
       <Field label="Codec par défaut" hint="Automatique choisit le meilleur que ton PC tient">
         <Select<CodecChoice> label="Codec" value={s.stream.codec} options={CODECS} onChange={codec => setStream({ codec })} />
       </Field>
+      <Field label="Capture compatible avec les jeux" hint="Si ta souris disparaît dans un jeu pendant que tu diffuses. Ce qui passe devant une fenêtre partagée sera visible. Prend effet au prochain direct">
+        <Toggle label="Capture compatible avec les jeux" checked={s.stream.compatCapture} onChange={compatCapture => setStream({ compatCapture })} />
+      </Field>
       <Field label="Priorité par défaut">
         <Segmented<VideoPriority>
           label="Priorité"

@@ -23,6 +23,8 @@ export interface StreamDefaults {
   allowControl: boolean;
   /** L'enregistrement démarre avec le stream. */
   autoRecord: boolean;
+  /** Capture sans WGC : la souris reste visible dans les jeux OpenGL et Vulkan, mais une fenêtre partagée montre ce qui passe devant elle. */
+  compatCapture: boolean;
   screens: WaitScreen[];
 }
 
@@ -315,12 +317,14 @@ export interface NativeVideoRequest {
   displayId: string;
   fps: number;
   maxHeight: number;
+  compat: boolean;
 }
 
 export interface NativeVideo {
   url: string;
   width: number;
   height: number;
+  compatFailed?: boolean;
 }
 
 export interface SpokaApi {

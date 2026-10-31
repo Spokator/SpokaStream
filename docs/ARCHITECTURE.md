@@ -51,6 +51,12 @@ Détails qui comptent :
 
 Pour une capture Chromium, **ne jamais mettre `maxWidth` sur une fenêtre** : l'image est agrandie jusqu'à cette limite. Une fenêtre de 960 px partait en 8K et écrasait la machine.
 
+### Capture compatible
+
+WGC force le curseur logiciel, dessiné par le compositeur. Dans un jeu OpenGL ou Vulkan qui présente sans passer par lui, plus personne ne le dessine : **la vraie souris disparaît de l'écran du joueur**, en direct seulement. C'est [connu de Microsoft](https://github.com/microsoft/Windows.UI.Composition-Win32-Samples/issues/128), toujours ouvert au 2026-10-31, et `IsCursorCaptureEnabled` n'y change rien. Les traces du pointeur de Windows font tomber les mêmes jeux dans le même piège, puisqu'elles forcent le même mode.
+
+`DesktopDuplication.cs` passe par la duplication du bureau, activée par `compatCapture`. Le curseur reste matériel, donc absent de l'image : le moteur le pose lui-même, en relisant le petit carré dessous sans passer par un shader. Une fenêtre se découpe dans l'image de l'écran, donc ce qui passe devant elle part avec : c'est pour ça que ce n'est pas le mode par défaut, et qu'on ne le choisit pas seul. Un écran tourné reste sur WGC. Le bug se manifeste sur certaines machines seulement, et la duplication a ses propres limites sur Windows 24H2 avec plusieurs écrans. Il n'existe pas de détection fiable : cacher le curseur est normal pour beaucoup de jeux.
+
 ### Choix du codec
 
 Mesure réelle à la première diffusion, 2 s par codec :
