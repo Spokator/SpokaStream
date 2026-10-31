@@ -48,8 +48,14 @@ export function usePolled<T>(path: string, every = REFRESH_MS) {
   const refresh = () => api<T>(path).then(value => (setData(value), setError("")), (e: Error) => (e.message === "login" ? location.reload() : setError(e.message)));
   useEffect(() => {
     void refresh();
-    const timer = setInterval(() => void refresh(), every);
-    return () => clearInterval(timer);
+    // Un téléphone rangé dans la poche ne doit pas interroger le serveur : il reprend dès qu'on revient, sans attendre le prochain tour.
+    const timer = setInterval(() => document.hidden || void refresh(), every);
+    const back = () => document.hidden || void refresh();
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", back);
+    };
   }, [path]);
   return { data, error, refresh };
 }
@@ -128,7 +134,7 @@ export function Chart({ title, unit, at, series, max, digits = 1 }: { title: str
               const rect = box.current!.getBoundingClientRect();
               setHover(Math.max(0, Math.min(at.length - 1, Math.round(((e.clientX - rect.left) / rect.width) * (at.length - 1)))));
             }}
-            onPointerLeave={() => setHover(null)}
+            onPointerLeave={e => e.pointerType === "mouse" && setHover(null)}
           >
             <small class="chart-tick" style={{ top: "0" }}>
               {number(top, 1)}
@@ -178,9 +184,9 @@ export function Bars({ title, unit, labels, values, digits = 0 }: { title: strin
       {total === 0 ? (
         <p class="chart-empty">Rien sur cette période.</p>
       ) : (
-        <div class="bars" role="img" aria-label={`${title} : maximum ${number(top, digits)} ${unit}`} onPointerLeave={() => setHover(null)}>
+        <div class="bars" role="img" aria-label={`${title} : maximum ${number(top, digits)} ${unit}`} onPointerLeave={e => e.pointerType === "mouse" && setHover(null)}>
           {values.map((value, i) => (
-            <span key={labels[i]} class="bar-slot" onPointerEnter={() => setHover(i)}>
+            <span key={labels[i]} class="bar-slot" onPointerEnter={() => setHover(i)} onPointerDown={() => setHover(i)}>
               <i class={hover === i ? "is-on" : ""} style={{ height: `${top ? Math.max(value ? 3 : 0, (value / top) * 100) : 0}%` }} />
             </span>
           ))}

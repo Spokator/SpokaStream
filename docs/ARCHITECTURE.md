@@ -206,6 +206,8 @@ Le panneau montre le chat d'un salon, parce qu'on ne modère pas ce qu'on ne peu
 
 Le journal (`journal.jsonl`) et les retours (`reports.json`) sont écrits sur le disque : c'est après un incident qu'on veut les relire. Les sessions du panneau et les blocages de connexion restent en mémoire : un redémarrage les efface.
 
+Sur un téléphone, le panneau s'installe à part du site (`/admin/manifest.webmanifest`, portée `/admin`) : le service worker ne met rien en cache, parce qu'un panneau qui afficherait des chiffres anciens serait pire qu'un panneau vide. Sa mise en page se vérifie page par page sur quatre tailles d'écran avec `npm run test:admin-phone`. Le cookie de session reste à 12 h : une application installée redemande donc le mot de passe aussi souvent qu'un navigateur.
+
 ### Mesures
 
 `server/metrics.ts` lit `/proc` et les cgroups toutes les 10 secondes : aucun agent à installer, et rien ne change côté coturn ni nginx, qui appartiennent aussi à PinoyBot. Les cgroups donnent le processeur et la mémoire de chaque service, conteneurs compris, ainsi que les limites posées par systemd et le temps passé bridé. Hors de Linux, une mesure absente reste `null` : le panneau dit « pas de mesure » plutôt que zéro. Les points sont gardés 1 h à 10 s, 24 h à la minute et 30 jours au quart d'heure ; en résumant une tranche, une moyenne ferait disparaître les pics de connexions, donc ces mesures gardent le maximum.

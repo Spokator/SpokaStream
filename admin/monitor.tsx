@@ -440,7 +440,7 @@ export function StreamsPage() {
           )}
           {stream.viewers.length > 0 && (
             <div class="table-wrap">
-              <table>
+              <table class="stack">
                 <thead>
                   <tr>
                     <th>Spectateur</th>
@@ -456,18 +456,18 @@ export function StreamsPage() {
                     const level = viewerLevel(viewer);
                     return (
                       <tr key={viewer.id}>
-                        <td class={`is-${level}`}>
+                        <td class={`is-${level} is-title`}>
                           <LevelIcon level={level} size={14} /> {viewer.name}
                           {viewer.web && <small> site</small>}
                         </td>
-                        <td>{viewer.relay === null ? "—" : viewer.relay ? `Relais ${viewer.protocol.toUpperCase()}` : "Directe"}</td>
-                        <td class="num">
+                        <td data-label="Route">{viewer.relay === null ? "—" : viewer.relay ? `Relais ${viewer.protocol.toUpperCase()}` : "Directe"}</td>
+                        <td class="num" data-label="Reçoit">
                           {viewer.height ? `${viewer.height}p · ` : ""}
                           {viewer.kbps === null ? "—" : `${number(viewer.kbps / 1000, 1)} Mb/s`}
                         </td>
-                        <td class="num">{viewer.lostPct === null ? "—" : `${number(viewer.lostPct, 1)} %`}</td>
-                        <td class="num">{viewer.rttMs === null ? "—" : `${viewer.rttMs} ms`}</td>
-                        <td class="num">{number(viewer.freezes)}</td>
+                        <td class="num" data-label="Pertes">{viewer.lostPct === null ? "—" : `${number(viewer.lostPct, 1)} %`}</td>
+                        <td class="num" data-label="Aller-retour">{viewer.rttMs === null ? "—" : `${viewer.rttMs} ms`}</td>
+                        <td class="num" data-label="Gels">{number(viewer.freezes)}</td>
                       </tr>
                     );
                   })}
@@ -483,7 +483,7 @@ export function StreamsPage() {
           <p class="muted">Elles s'afficheront ici.</p>
         ) : (
           <div class="table-wrap">
-            <table>
+            <table class="stack">
               <thead>
                 <tr>
                   <th>Début</th>
@@ -499,14 +499,14 @@ export function StreamsPage() {
               <tbody>
                 {data.sessions.map(session => (
                   <tr key={session.id}>
-                    <td>{date(session.startedAt)}</td>
-                    <td>{session.name}</td>
-                    <td>{session.room}</td>
-                    <td class="num">{span((session.endedAt - session.startedAt) / 1000)}</td>
-                    <td class="num">{session.peakViewers}</td>
-                    <td class="num">{session.kbps ? `${number(session.kbps / 1000, 1)} Mb/s` : "—"}</td>
-                    <td class="num">{session.relayShare} %</td>
-                    <td class="num">{number(session.lossPct, 1)} %</td>
+                    <td data-label="Début">{date(session.startedAt)}</td>
+                    <td class="is-title">{session.name}</td>
+                    <td data-label="Salon">{session.room}</td>
+                    <td class="num" data-label="Durée">{span((session.endedAt - session.startedAt) / 1000)}</td>
+                    <td class="num" data-label="Pic">{session.peakViewers}</td>
+                    <td class="num" data-label="Débit">{session.kbps ? `${number(session.kbps / 1000, 1)} Mb/s` : "—"}</td>
+                    <td class="num" data-label="Relais">{session.relayShare} %</td>
+                    <td class="num" data-label="Pertes">{number(session.lossPct, 1)} %</td>
                   </tr>
                 ))}
               </tbody>

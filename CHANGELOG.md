@@ -34,6 +34,7 @@ Panneau d'administration
 - **Sauvegardes** : une par jour toute seule, à la demande, téléchargement et restauration en un clic. Les accès au panneau n'en font pas partie.
 - **Sécurité** : toutes les sessions ouvertes, fermer l'une d'elles, voir et lever un blocage de connexion.
 - **Journal et retours gardés** après un redémarrage, avec recherche et export pour Excel.
+- **Une vraie application sur téléphone** : il s'installe à part du site, avec son icône, et n'affiche plus de barre de navigateur. Barre du bas pour l'essentiel, tout le reste derrière « Plus », tableaux transformés en fiches, zones tactiles de 44 px, bouton retour qui revient à la page d'avant, et le téléphone couché est pris en charge. Le panneau ne garde rien sur l'appareil et dit quand il n'a plus de réseau.
 
 ## 1.5.0
 

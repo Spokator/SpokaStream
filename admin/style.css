@@ -44,9 +44,15 @@ p {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
-.panel > nav {
+.tabbar,
+.more {
+  display: none;
+}
+
+.panel > nav.side {
   position: sticky;
   top: 0;
   display: flex;
@@ -536,51 +542,13 @@ summary {
   gap: 10px;
   max-width: 440px;
   margin: 12vh auto 0;
+  padding: env(safe-area-inset-top) 16px calc(env(safe-area-inset-bottom) + 16px);
   text-align: center;
 }
 
 @media (max-width: 760px) {
   .panel {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .panel > nav {
-    position: fixed;
-    inset: auto 0 0 0;
-    z-index: 5;
-    flex-direction: row;
-    gap: 2px;
-    height: auto;
-    padding: 4px 6px calc(env(safe-area-inset-bottom) + 4px);
-    border-top: 1px solid var(--line);
-    border-right: 0;
-  }
-
-  .panel > nav h1,
-  .panel > nav span.grow,
-  .panel > nav button:last-child {
-    display: none;
-  }
-
-  .panel > nav button {
-    flex: 1;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-    padding: 6px 2px;
-    font-size: 10px;
-    text-align: center;
-  }
-
-  .panel > nav button span {
-    overflow: hidden;
-    max-width: 100%;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  main {
-    padding-bottom: 90px;
   }
 
   .log {
@@ -802,7 +770,7 @@ summary {
   text-transform: uppercase;
 }
 
-.panel > nav {
+.panel > nav.side {
   overflow-y: auto;
 }
 
@@ -1290,27 +1258,374 @@ button.link {
   margin: 0;
 }
 
-/* Sur un téléphone, le menu devient une bande qu'on fait glisser : quatorze pages ne tiennent pas côte à côte. */
-@media (max-width: 760px) {
-  .panel > nav {
-    justify-content: flex-start;
-    overflow-x: auto;
-    overflow-y: hidden;
+
+.count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #d03b3b;
+  color: #fff;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.offline {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+}
+
+.more-install,
+.more-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.login button.primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+}
+
+/* Le téléphone : une application, pas un site réduit. Une barre en bas pour ce qu'on regarde tout le temps, le reste derrière « Plus ». */
+@media (max-width: 760px), (max-height: 500px) {
+  html {
+    -webkit-text-size-adjust: 100%;
   }
 
-  .panel > nav .me,
-  .nav-group h2 {
+  body {
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .panel > nav.side {
     display: none;
   }
 
-  .nav-group {
-    display: contents;
+  main {
+    padding: calc(env(safe-area-inset-top) + 14px) calc(env(safe-area-inset-right) + 14px) calc(env(safe-area-inset-bottom) + 84px) calc(env(safe-area-inset-left) + 14px);
   }
 
-  .panel > nav button,
-  .panel > nav button:last-child {
+  main > h1 {
+    margin-bottom: 12px;
+  }
+
+  .tabbar {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 5;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    padding: 4px calc(env(safe-area-inset-right) + 4px) calc(env(safe-area-inset-bottom) + 4px) calc(env(safe-area-inset-left) + 4px);
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .tabbar button {
+    position: relative;
     display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 54px;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .tabbar button.is-on {
+    background: var(--surface-2);
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .tabbar .count {
+    position: absolute;
+    top: 3px;
+    left: calc(50% + 5px);
+    margin: 0;
+  }
+
+  .more {
+    position: fixed;
+    inset: 0;
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-y: auto;
+    padding: calc(env(safe-area-inset-top) + 12px) calc(env(safe-area-inset-right) + 14px) calc(env(safe-area-inset-bottom) + 16px) calc(env(safe-area-inset-left) + 14px);
+    background: var(--bg);
+  }
+
+  .more header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .more .me {
+    padding: 0;
+  }
+
+  .more h2 {
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .more-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .more-grid button,
+  .more-install,
+  .more-logout {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 54px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--text);
+    text-align: left;
+  }
+
+  .more-grid button.is-on {
+    border-color: var(--accent);
+  }
+
+  .more-install {
+    border-color: var(--accent);
+  }
+
+  .more-logout {
+    color: var(--muted);
+  }
+
+  .more-hint {
+    font-size: 13px;
+  }
+
+  .more-hint svg {
     flex: none;
-    width: 76px;
+  }
+
+  /* Rien à viser au doigt sous 44 px, et 16 px dans les champs : en dessous, iPhone zoome à chaque saisie. */
+  input:not([type="checkbox"]),
+  select,
+  .card header select,
+  textarea {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+  }
+
+  button,
+  a.button,
+  .manage,
+  .tool-row button,
+  .filters button,
+  .actions button {
+    min-height: 44px;
+  }
+
+  .icon {
+    width: 44px;
+    height: 44px;
+  }
+
+  summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .filters {
+    flex-wrap: wrap;
+  }
+
+  .filters select {
+    margin-left: 0;
+    flex: 1 1 100%;
+  }
+
+  .tool-row {
+    flex-wrap: wrap;
+  }
+
+  .tool-row > span {
+    flex: 1 1 100%;
+  }
+
+  .tool-row input:not([type="checkbox"]),
+  .tool-row select {
+    flex: 1 1 100%;
+    min-width: 0;
+    font-size: 16px;
+  }
+
+  .tool-row button {
+    flex: 1 1 auto;
+  }
+
+  .row-line {
+    flex-wrap: wrap;
+    min-height: 44px;
+  }
+
+  .row-line > span {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .rule .tool-check {
+    flex: 1 1 100%;
+  }
+
+  .rule-limit {
+    flex: 1 1 100%;
+    padding-left: 32px;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+  }
+
+  .actions span {
+    flex: 1 1 100%;
+  }
+
+  .actions button {
+    flex: 1 1 auto;
+  }
+
+  .gauges {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .card header {
+    flex-wrap: wrap;
+  }
+
+  .service small {
+    text-align: right;
+  }
+
+  code {
+    overflow-wrap: anywhere;
+  }
+
+  .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Un tableau de six colonnes ne se lit pas sur 360 px : chaque ligne devient une petite fiche. */
+  table.stack thead {
+    display: none;
+  }
+
+  table.stack,
+  table.stack tbody,
+  table.stack tr,
+  table.stack td {
+    display: block;
+  }
+
+  table.stack tr {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  table.stack td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 2px 0;
+    border: 0;
+    text-align: right;
+    white-space: normal;
+  }
+
+  table.stack td[data-label]::before {
+    content: attr(data-label);
+    flex: none;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  table.stack td.is-title {
+    justify-content: flex-start;
+    gap: 6px;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  table.stack td.is-action {
+    justify-content: flex-end;
+  }
+
+  table.stack tr:last-child {
+    border-bottom: 0;
+  }
+}
+
+/* Téléphone couché : la barre garde sa place, mais la hauteur est trop précieuse pour empiler icône et texte. */
+@media (max-height: 500px) {
+  .panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tabbar button {
+    flex-direction: row;
+    gap: 6px;
+    min-height: 44px;
+  }
+
+  .tabbar .count {
+    position: static;
+  }
+
+  main {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 66px);
+  }
+
+  .more-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 340px) {
+  .tabbar span {
+    font-size: 10px;
   }
 }

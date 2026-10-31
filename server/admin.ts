@@ -18,7 +18,7 @@ import type { Metrics } from "./metrics.ts";
 import type { PushService } from "./push.ts";
 import type { Store } from "./store.ts";
 import type { Usage } from "./usage.ts";
-import { ADMIN_HTML, ADMIN_JS, APP_VERSION } from "./viewer.gen.ts";
+import { ADMIN_HTML, ADMIN_ICON_192, ADMIN_ICON_512, ADMIN_JS, APP_VERSION } from "./viewer.gen.ts";
 
 const SESSION_MS = 12 * 3600_000;
 const TICKET_MS = 60_000;
@@ -35,7 +35,28 @@ const LOGIN_FAILURES = 5;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 const BODY_BYTES = 32_768;
 const COOKIE = "spoka_admin";
-const CSP = ["default-src 'none'", "script-src 'self'", "style-src 'unsafe-inline'", "img-src 'self' data:", "connect-src 'self'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'"].join("; ");
+const CSP = ["default-src 'none'", "script-src 'self'", "style-src 'unsafe-inline'", "img-src 'self' data:", "connect-src 'self'", "manifest-src 'self'", "worker-src 'self'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'"].join("; ");
+/** Le panneau s'installe à part du site : sa propre icône, son propre nom, et il ne garde rien hors ligne. */
+const MANIFEST = JSON.stringify({
+  id: "/admin",
+  name: "SpokaStream Administration",
+  short_name: "Spoka Admin",
+  description: "Surveiller et gérer le serveur SpokaStream.",
+  lang: "fr",
+  start_url: "/admin",
+  scope: "/admin",
+  display: "standalone",
+  orientation: "any",
+  background_color: "#0b0d14",
+  theme_color: "#0b0d14",
+  icons: [
+    { src: "/admin/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+    { src: "/admin/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+  ],
+});
+const SERVICE_WORKER = `self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
+`;
 
 interface Session {
   /** null : ouverte depuis l'application par un compte de ADMIN_ACCOUNTS, sans accès du panneau. */
@@ -744,6 +765,22 @@ export class AdminPanel {
     if (url.pathname === "/admin/app.js") {
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" });
       res.end(ADMIN_JS);
+      return true;
+    }
+    if (url.pathname === "/admin/manifest.webmanifest") {
+      res.writeHead(200, { "content-type": "application/manifest+json", "cache-control": "no-cache" });
+      res.end(MANIFEST);
+      return true;
+    }
+    if (url.pathname === "/admin/sw.js") {
+      // Le fichier vit sous /admin/ et doit couvrir /admin elle-même : c'est ce qu'autorise cet en-tête.
+      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", "service-worker-allowed": "/admin" });
+      res.end(SERVICE_WORKER);
+      return true;
+    }
+    if (url.pathname === "/admin/icon-192.png" || url.pathname === "/admin/icon-512.png") {
+      res.writeHead(200, { "content-type": "image/png", "cache-control": "public, max-age=86400" });
+      res.end(Buffer.from(url.pathname.includes("192") ? ADMIN_ICON_192 : ADMIN_ICON_512, "base64"));
       return true;
     }
     if (!url.pathname.startsWith("/admin/api/")) return false;

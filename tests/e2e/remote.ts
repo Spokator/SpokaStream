@@ -387,15 +387,7 @@ try {
     await mobile.goto(`${base}/admin`);
     await mobile.getByRole("heading", { name: "Vue d'ensemble" }).waitFor();
     assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "le panneau déborde sur un téléphone");
-    assert.ok(await mobile.evaluate(() => document.querySelector(".panel > nav")!.getBoundingClientRect().height < 90), "le menu mange l'écran du téléphone");
     await shot(mobile, "70-admin-telephone");
-    for (const name of ["Système", "Diffusions", "Modération", "Statistiques", "Alertes", "Sauvegardes"]) {
-      await mobile.getByRole("button", { name }).click();
-      await mobile.getByRole("heading", { name, level: 1 }).waitFor();
-      await wait(400);
-      assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name} déborde sur un téléphone`);
-    }
-    await shot(mobile, "79-admin-telephone-page");
 
     return "billet à usage unique, journal, retour reçu, annonce, stream coupé";
   });
@@ -440,7 +432,8 @@ try {
     await page.getByRole("button", { name: "Se connecter" }).click();
     await page.getByLabel("Code à 6 chiffres, ou code de secours").fill(totpCode(secret, counter + 1));
     await page.getByRole("button", { name: "Se connecter" }).click();
-    await page.getByRole("heading", { name: "Vue d'ensemble" }).waitFor();
+    // On revient sur la page qu'on avait quittée : elle est dans l'adresse.
+    await page.getByRole("heading", { name: "Sécurité", level: 1 }).waitFor();
 
     await page.getByRole("button", { name: "Administrateurs" }).click();
     await page.getByLabel("Identifiant du nouvel accès").fill("modo");

@@ -599,7 +599,7 @@ export function ModerationPage() {
         <h2>Connexions en cours</h2>
         {data.connections.length === 0 && <p class="muted">Personne en ligne.</p>}
         <div class="table-wrap">
-          <table>
+          <table class="stack">
             <thead>
               <tr>
                 <th>Qui</th>
@@ -612,15 +612,15 @@ export function ModerationPage() {
             <tbody>
               {data.connections.map((row, i) => (
                 <tr key={i}>
-                  <td>{row.name || "Inconnu"}</td>
-                  <td>
+                  <td class="is-title">{row.name || "Inconnu"}</td>
+                  <td data-label="Appareil">
                     {row.client === "site" ? "Site" : `Application ${row.version}`} {row.label && <small>{row.label}</small>}
                   </td>
-                  <td>{row.room ?? "—"}</td>
-                  <td>
+                  <td data-label="Salon">{row.room ?? "—"}</td>
+                  <td data-label="Adresse">
                     <code>{row.ip}</code>
                   </td>
-                  <td class="num">
+                  <td class="num is-action">
                     {can("admin") && (
                       <button type="button" class="icon" title="Bloquer cette adresse" aria-label={`Bloquer ${row.ip}`} onClick={() => run("blockIp", { ip: row.ip, reason: row.name, hours: 24 }, `Adresse ${row.ip} bloquée pour 24 heures.`)}>
                         <Ban size={14} />

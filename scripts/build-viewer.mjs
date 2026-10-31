@@ -40,6 +40,7 @@ const js = bundle.outputFiles[0].text;
 
 const hls = readFileSync(path.join(root, "node_modules", "hls.js", "dist", "hls.min.js"), "utf8");
 const icon = size => readFileSync(path.join(web, `icon-${size}.png`)).toString("base64");
+const adminIcon = size => readFileSync(path.join(adminDir, `icon-${size}.png`)).toString("base64");
 
 writeFileSync(
   path.join(root, "server", "viewer.gen.ts"),
@@ -52,6 +53,8 @@ export const ADMIN_JS = ${JSON.stringify(adminBundle.outputFiles[0].text)};
 export const APP_VERSION = ${JSON.stringify(version)};
 export const ICON_192 = ${JSON.stringify(icon(192))};
 export const ICON_512 = ${JSON.stringify(icon(512))};
+export const ADMIN_ICON_192 = ${JSON.stringify(adminIcon(192))};
+export const ADMIN_ICON_512 = ${JSON.stringify(adminIcon(512))};
 `,
 );
 console.log(`lecteur web : ${Math.round(js.length / 1024)} ko de script`);
