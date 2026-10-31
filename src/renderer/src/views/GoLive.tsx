@@ -1,4 +1,4 @@
-import { AppWindow, Camera, Check, FileVideo, Loader2, Monitor, Plus, Radio, RefreshCw, Volume2, VolumeX, X } from "lucide-react";
+import { AppWindow, Camera, Check, Clapperboard, FileVideo, Loader2, Monitor, Plus, Radio, RefreshCw, Volume2, VolumeX, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AudioApp, CaptureSource, CodecChoice, Resolution, VideoPriority } from "@shared/ipc.ts";
 import type { VideoSource } from "../engine/capture.ts";
@@ -7,6 +7,7 @@ import type { AudioChoice } from "../engine/core.ts";
 import { get, set, useApp } from "../state/store.ts";
 import { mbps } from "../ui/format.ts";
 import { Button, Field, Modal, Popover, Segmented, Select } from "../ui/kit.tsx";
+import { ObsPanel } from "./ObsPanel.tsx";
 
 export const RESOLUTIONS: { value: Resolution; label: string }[] = [
   { value: "source", label: "Source (native)" },
@@ -46,13 +47,14 @@ const PRESETS: Preset[] = [
   { id: "max", label: "Maximum", hint: "Native, 60 i/s, 40 Mb/s", resolution: "source", fps: 60, kbps: 40000, priority: "motion" },
 ];
 
-type Tab = "screen" | "window" | "camera" | "file";
+type Tab = "screen" | "window" | "camera" | "file" | "obs";
 
 const TABS: { value: Tab; label: string; icon: typeof Monitor }[] = [
   { value: "screen", label: "Écrans", icon: Monitor },
   { value: "window", label: "Fenêtres", icon: AppWindow },
   { value: "camera", label: "Caméra", icon: Camera },
   { value: "file", label: "Fichier vidéo", icon: FileVideo },
+  { value: "obs", label: "OBS", icon: Clapperboard },
 ];
 
 const choiceKey = (c: AudioChoice) => (c.type === "system" ? "system" : c.type === "app" ? `app:${c.pid}` : `device:${c.deviceId}`);
@@ -168,7 +170,8 @@ export function GoLiveModal() {
   const switching = !!publish;
   const defaults = settings.stream;
 
-  const [tab, setTab] = useState<Tab>("screen");
+  const obsConnected = useApp(s => s.obs.connected);
+  const [tab, setTab] = useState<Tab>(obsConnected ? "obs" : "screen");
   const [sources, setSources] = useState<CaptureSource[]>([]);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [selected, setSelected] = useState<VideoSource | null>(null);
@@ -215,8 +218,14 @@ export function GoLiveModal() {
     }
   };
 
+  // OBS se branche depuis un autre logiciel : dès qu'il arrive, c'est forcément ce qu'on veut diffuser.
   useEffect(() => {
-    if (selected || !sources.length) return;
+    if (tab === "obs" && obsConnected) pick(core.obsSource());
+    else if (selected?.kind === "obs" && !obsConnected) setSelected(null);
+  }, [tab, obsConnected]);
+
+  useEffect(() => {
+    if (selected || !sources.length || tab === "obs") return;
     const primary = sources.find(s => s.kind === "screen");
     if (primary) pick({ kind: "screen", source: primary });
   }, [sources]);
@@ -238,7 +247,7 @@ export function GoLiveModal() {
     setStarting(true);
     void core.updateSettings({ stream: { ...get().settings!.stream, resolution, fps, kbps, priority, codec, audioKbps } });
     if (switching) {
-      await core.switchSource(selected, audioTouched || selected.kind === "window" ? audio : null);
+      await core.switchSource(selected, audioTouched || selected.kind === "window" || selected.kind === "obs" ? audio : null);
       await core.updateEncoding({ kbps, fps, priority, codec, audioKbps, maxHeight: resolution === "source" ? 0 : Number(resolution) });
     } else {
       await core.goLive({ source: selected, audio, title: title.trim(), resolution, fps, kbps, codec, priority, audioKbps, allowDraw: defaults.allowDraw, maxViewers: defaults.maxViewers });
@@ -317,6 +326,8 @@ export function GoLiveModal() {
               {cameras.length === 0 && <p className="muted-text">Aucune caméra ni carte d'acquisition détectée.</p>}
             </div>
           )}
+
+          {tab === "obs" && <ObsPanel />}
 
           {tab === "file" && (
             <div className="file-pick">

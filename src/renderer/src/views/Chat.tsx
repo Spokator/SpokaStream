@@ -1,5 +1,6 @@
-import { CornerUpLeft, ImagePlus, MessageCircle, Pin, PinOff, Plus, Reply, SendHorizontal, Smile, SmilePlus, TvMinimalPlay, Trash2, Vote, X } from "lucide-react";
+import { CornerUpLeft, ImagePlus, MessageCircle, Pin, PinOff, Play, Plus, Reply, SendHorizontal, Smile, SmilePlus, TvMinimalPlay, Trash2, Vote, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { ChatMessage } from "@shared/protocol.ts";
 import { LIMITS } from "@shared/protocol.ts";
 import { core } from "../engine/core.ts";
@@ -64,6 +65,27 @@ function Reactions({ message }: { message: ChatMessage }) {
   );
 }
 
+function ClipCard({ message }: { message: ChatMessage }) {
+  const clip = message.clip!;
+  const share = useApp(s => (s.clipLoading?.id === clip.id ? s.clipLoading.share : null));
+  const here = useApp(s => s.room!.members.some(m => m.id === message.authorId && m.online));
+  return (
+    <button type="button" className="chat-clip" disabled={!here || share !== null} aria-label={`Ouvrir le clip ${clip.title}`} onClick={() => void core.openClip(message)}>
+      {clip.thumb ? <img src={clip.thumb} alt="" /> : <span className="chat-clip-empty" />}
+      {here && (
+        <span className="chat-clip-play">
+          <Play size={18} fill="currentColor" />
+        </span>
+      )}
+      <span className="chat-clip-info">
+        <b>{clip.title}</b>
+        <small>{here ? `${clip.seconds} s · ${Math.max(1, Math.round(clip.bytes / 1e6))} Mo` : `${message.authorName} est parti avec ce clip`}</small>
+      </span>
+      {share !== null && <i className="chat-clip-progress" style={{ width: `${Math.round(share * 100)}%` }} />}
+    </button>
+  );
+}
+
 function Message({ message, grouped, reply, canDelete }: { message: ChatMessage; grouped: boolean; reply: ChatMessage | undefined; canDelete: boolean }) {
   const name = useApp(s => s.settings!.profile.name);
   const isOwner = useApp(s => s.room!.ownerId === s.userId);
@@ -85,11 +107,12 @@ function Message({ message, grouped, reply, canDelete }: { message: ChatMessage;
           <time>{clock(message.at)}</time>
         </div>
       )}
-      {message.text && (
+      {message.text && !message.clip && (
         <div className="chat-text">
           <MessageText text={message.text} />
         </div>
       )}
+      {message.clip && <ClipCard message={message} />}
       {message.image ? (
         <button type="button" className="chat-image" aria-label="Agrandir l'image" onClick={() => set({ lightbox: message.image })}>
           <img src={message.image} alt="" />
@@ -214,12 +237,13 @@ export function Chat() {
     if (!suggestions) return;
     const next = `${text.slice(0, suggestions.start)}@${name} ${text.slice(caret)}`;
     const position = suggestions.start + name.length + 2;
-    setText(next);
-    setCaret(position);
-    requestAnimationFrame(() => {
-      input.current?.focus();
-      input.current?.setSelectionRange(position, position);
+    // Le curseur se replace tout de suite : une image plus tard, une frappe rapide atterrirait au mauvais endroit.
+    flushSync(() => {
+      setText(next);
+      setCaret(position);
     });
+    input.current?.focus();
+    input.current?.setSelectionRange(position, position);
   };
 
   const attach = async (file: Blob | null | undefined) => {

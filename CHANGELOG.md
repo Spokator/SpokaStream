@@ -1,5 +1,28 @@
 # Journal des versions
 
+## 1.2.0
+
+Regarder et jouer ensemble
+
+- **Lecteur web** : le lien d'invitation s'ouvre dans un navigateur, téléphone compris, sans rien installer. Image, son, chat, réactions, sondages, clips, YouTube ensemble et vocal. Diffuser reste réservé à l'application.
+- **Prendre la main** : un ami demande, tu acceptes, et il joue à ta place avec son clavier et sa souris, directement dans ta fenêtre. Mode souris de jeu pour les jeux à la première personne.
+- **Revoir** (R) : les dernières secondes rejouées tout de suite, coupées à la seconde près, sans réencoder.
+- **Clips dans le chat** : envoyés au salon de PC à PC, ils s'ouvrent d'un clic chez les autres et se gardent en fichier.
+
+Gérer son stream
+
+- **Diffuser depuis OBS** : choisis le service WHIP dans OBS, colle l'adresse et la clé. Tes scènes, filtres et ton mix arrivent tels quels, et le stream reprend tout seul si OBS redémarre.
+- **Caméra libre** : glisse-la sur l'aperçu, redimensionne-la, choisis sa forme et l'effet miroir. Elle apparaît au même endroit chez tout le monde.
+- **Scènes** : une scène retient la source, la caméra et le bandeau, et un clic passe de l'une à l'autre sans couper.
+- **Bandeau** : un texte posé sur l'image.
+
+Corrections
+
+- Les boutons de l'écran vide d'un salon sont alignés.
+- Positions justes sur un écran mis à l'échelle : le moteur natif tient compte de l'échelle de Windows.
+
+Le protocole ne change pas : une application 1.1 continue de fonctionner dans un salon 1.2.
+
 ## 1.1.0
 
 Les menus ne sont plus coupés : celui des sons, dans la fenêtre de lancement, était illisible.

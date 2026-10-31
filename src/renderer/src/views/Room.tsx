@@ -24,10 +24,11 @@ export function Room() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && get().cinema && !document.querySelector(".modal-backdrop")) return set({ cinema: false });
-      if (isTyping(e) || get().view !== "room") return;
+      if (isTyping(e) || get().view !== "room" || get().hand?.state === "granted") return;
       const key = e.key.toLowerCase();
       if (key === "t") set({ cinema: !get().cinema });
       else if (key === "c") void core.saveClip();
+      else if (key === "r") void core.replay();
       else if (e.key === "Enter" && !document.querySelector(".floating-chat")) document.querySelector<HTMLTextAreaElement>(".chat-input textarea")?.focus();
       else return;
       e.preventDefault();

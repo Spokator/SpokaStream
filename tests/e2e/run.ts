@@ -2,12 +2,12 @@
 //   npm run test:e2e
 import assert from "node:assert/strict";
 import { execFile, spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { _electron as electron } from "playwright";
-import type { ElectronApplication, Page } from "playwright";
+import { _electron as electron, chromium, devices } from "playwright";
+import type { Browser, ElectronApplication, Page } from "playwright";
 import { startServer } from "../../server/index.ts";
 import { MemoryStore } from "../../server/store.ts";
 
@@ -88,6 +88,7 @@ const pattern = spawn(electronPath, [path.join(root, "tests", "e2e", "pattern", 
 
 let a: Peer | undefined;
 let b: Peer | undefined;
+let edge: Browser | undefined;
 let failed = false;
 
 try {
@@ -125,6 +126,8 @@ try {
     await alice.page.locator(".stage-empty").waitFor();
     code = (await alice.page.locator(".room-code").textContent())!.trim();
     assert.equal(code.length, 8);
+    const [first, second] = await alice.page.locator(".stage-empty-actions .btn").evaluateAll(buttons => buttons.map(b => b.getBoundingClientRect()).map(r => ({ top: r.top, height: r.height })));
+    assert.deepEqual(first, second, "les deux boutons de l'écran vide doivent être alignés");
     await bob.page.getByLabel("Code du salon").fill(code.toLowerCase());
     await bob.page.getByRole("button", { name: "Rejoindre", exact: true }).click();
     await bob.page.locator(".room-head h1").getByText("Soirée test").waitFor();
@@ -383,7 +386,7 @@ try {
 
   await step("enregistrement sur disque, lisible par ffprobe", async () => {
     await alice.page.evaluate(dir => (window as any).__core.updateSettings({ recordingsDir: dir }), path.join(temp, "enregistrements"));
-    await alice.page.getByRole("button", { name: "Enregistrer" }).click();
+    await alice.page.getByRole("button", { name: "Enregistrer", exact: true }).click();
     await alice.page.locator(".is-recording").waitFor();
     await wait(4000);
     const file: string = await alice.page.evaluate(() => (window as any).__store.useApp.getState().recording.path);
@@ -412,7 +415,7 @@ try {
       );
     const clip = async (peer: Peer) => {
       await peer.page.keyboard.press("c");
-      const button = peer.page.locator(".toast-action", { hasText: "Voir le fichier" });
+      const button = peer.page.locator(".toast-action", { hasText: "Revoir" });
       await button.waitFor({ timeout: 8000 });
       const dir = await peer.page.evaluate(() => (window as any).__store.useApp.getState().settings.recordingsDir as string);
       const file = readdirSync(dir).map(f => path.join(dir, f)).filter(f => /Clip .*\.mp4$/.test(f)).sort().at(-1)!;
@@ -429,6 +432,178 @@ try {
       return `${path.basename(file).slice(0, 24)}… ${seconds.toFixed(1)} s, ${count} images, ${(statSync(file).size / 2 ** 20).toFixed(1)} Mo`;
     };
     return `${await clip(alice)} | ${await clip(bob)}`;
+  });
+
+  let clipBytes = 0;
+  await step("revoir, couper et envoyer : le clip part de PC à PC", async () => {
+    await alice.page.getByRole("tab", { name: /Chat/ }).click();
+    await bob.page.locator("body").click({ position: { x: 300, y: 8 } });
+    await bob.page.keyboard.press("r");
+    const player = bob.page.locator(".clip-video");
+    await player.waitFor({ timeout: 8000 });
+    await poll("clip lisible", () => player.evaluate((v: HTMLVideoElement) => v.readyState), s => s >= 2, 10_000);
+    const full = await player.evaluate((v: HTMLVideoElement) => v.duration);
+    const steps = Number(await bob.page.getByLabel("Fin du clip").getAttribute("max"));
+    assert.ok(steps >= 6, `fragments disponibles : ${steps}`);
+    await bob.page.getByLabel("Début du clip").fill("2");
+    await bob.page.getByLabel("Fin du clip").fill(String(steps - 1));
+    await shot(bob, "21-revoir-et-couper");
+    await bob.page.getByRole("button", { name: "Envoyer au salon" }).click();
+    await bob.page.getByRole("button", { name: "Envoyé" }).waitFor();
+    await bob.page.getByRole("button", { name: "Fermer" }).click();
+
+    const card = alice.page.locator(".chat-clip");
+    await card.waitFor({ timeout: 8000 });
+    clipBytes = await alice.page.evaluate(() => (window as any).__store.useApp.getState().room.history.at(-1).clip.bytes as number);
+    await card.click();
+    const received = alice.page.locator(".clip-video");
+    await received.waitFor({ timeout: 20_000 });
+    await poll("clip reçu lisible", () => received.evaluate((v: HTMLVideoElement) => v.readyState), s => s >= 2, 10_000);
+    const seconds = await received.evaluate((v: HTMLVideoElement) => v.duration);
+    assert.ok(seconds > 2 && seconds < full - 1.5, `la coupe doit se voir : ${seconds} s sur ${full} s`);
+    await shot(alice, "22-clip-recu");
+
+    await alice.page.getByRole("button", { name: "Garder le fichier" }).click();
+    await alice.page.getByRole("button", { name: "Voir le fichier" }).waitFor();
+    const dir = await alice.page.evaluate(() => (window as any).__store.useApp.getState().settings.recordingsDir as string);
+    const file = readdirSync(dir).map(f => path.join(dir, f)).filter(f => /Clip .*\.mp4$/.test(f)).sort((x, y) => statSync(x).mtimeMs - statSync(y).mtimeMs).at(-1)!;
+    assert.equal(statSync(file).size, clipBytes, "le fichier reçu doit être identique octet pour octet");
+    await alice.page.getByRole("button", { name: "Fermer" }).click();
+    await alice.page.evaluate(() => (window as any).__store.useApp.setState({ toasts: [] }));
+    return `${seconds.toFixed(1)} s sur ${full.toFixed(1)} s, ${(clipBytes / 2 ** 20).toFixed(1)} Mo transférés de Pinoy à Spoka`;
+  });
+
+  let phone: Page | undefined;
+  await step("lecteur web : le lien d'invitation s'ouvre sur un téléphone, sans rien installer", async () => {
+    edge = await chromium.launch({ channel: "msedge", headless: true, args: ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] });
+    const context = await edge.newContext({ ...devices["Pixel 7"], permissions: ["microphone"] });
+    phone = await context.newPage();
+    const webErrors: string[] = [];
+    phone.on("pageerror", e => webErrors.push(String(e)));
+    await phone.goto(`http://127.0.0.1:${serverPort}/j/${code}`);
+    await phone.waitForURL(/\/w\//);
+    await phone.getByLabel("Ton nom").fill("Téléphone");
+    await phone.getByRole("button", { name: "Regarder" }).click();
+    const seen = await poll("image sur le téléphone", () => phone!.evaluate(() => (document.getElementById("video") as HTMLVideoElement).videoHeight), h => h > 0, 30_000);
+    await alice.page.getByRole("tab", { name: /Membres/ }).click();
+    await alice.page.locator(".member", { hasText: "Téléphone" }).getByLabel("Dans un navigateur").waitFor();
+    await alice.page.getByRole("tab", { name: /Chat/ }).click();
+    assert.ok(seen <= 720, `un téléphone reçoit 720p au plus par défaut : ${seen}`);
+    await poll("son sur le téléphone", () => phone!.evaluate(() => (document.getElementById("video") as HTMLVideoElement).srcObject && !(document.getElementById("video") as HTMLVideoElement).paused), Boolean, 10_000);
+    assert.equal(await phone.evaluate(() => (document.getElementById("video") as HTMLVideoElement).muted), false, "le son doit rester actif après le clic sur Regarder");
+    assert.equal(await phone.locator("#unmute").isVisible(), false);
+
+    await phone.getByRole("textbox", { name: "Message" }).fill("Je regarde depuis mon téléphone");
+    await phone.keyboard.press("Enter");
+    await alice.page.locator(".chat-text", { hasText: "depuis mon téléphone" }).waitFor();
+    await bob.page.getByRole("textbox", { name: "Message", exact: true }).fill("Bien reçu sur le téléphone ?");
+    await bob.page.keyboard.press("Enter");
+    await phone.locator(".message", { hasText: "Bien reçu" }).waitFor();
+    await phone.getByRole("button", { name: "Réagir 🔥" }).click();
+    await alice.page.locator(".reaction").first().waitFor({ timeout: 5000 });
+
+    await phone.locator("button.clip").first().scrollIntoViewIfNeeded();
+    await phone.locator("button.clip").first().click();
+    const player = phone.locator("#clip-video");
+    await player.waitFor({ timeout: 20_000 });
+    await poll("clip sur le téléphone", () => player.evaluate((v: HTMLVideoElement) => v.readyState), s => s >= 2, 10_000);
+    await phone.getByRole("button", { name: "Fermer" }).click();
+
+    await phone.screenshot({ path: path.join(captures, "23-lecteur-web.png") });
+    const overflow = await phone.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    assert.ok(overflow <= 0, `la page déborde de ${overflow} px sur un téléphone`);
+    assert.deepEqual(webErrors, []);
+    return `image ${seen}p dans Edge en téléphone, chat, réaction et clip reçus`;
+  });
+
+  await step("prendre la main : le diffuseur accepte, les gestes arrivent, et seulement là où il faut", async () => {
+    const log = path.join(temp, "input.log");
+    const inputs = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { type: string; code: string; button: number; x: number; y: number }) : []);
+    const focus = async (peer: Peer | null) => {
+      const hwnd = peer ? await peer.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getNativeWindowHandle().readBigInt64LE().toString()) : null;
+      const target = hwnd ? `[System.IntPtr]::new(${hwnd})` : `[N.F]::FindWindow([NullString]::Value, 'Mire SpokaStream')`;
+      const run = spawnSync("powershell", ["-NoProfile", "-Command", `
+        Add-Type -Name F -Namespace N -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern System.IntPtr FindWindow(string c, string t); [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h); [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, System.UIntPtr e);'
+        [N.F]::keybd_event(0x12, 0, 0, [System.UIntPtr]::Zero); [void][N.F]::SetForegroundWindow(${target}); [N.F]::keybd_event(0x12, 0, 2, [System.UIntPtr]::Zero)`], { timeout: 20_000 });
+      assert.equal(run.status, 0, String(run.stderr));
+    };
+
+    await bob.page.locator(".tile").first().hover();
+    await bob.page.getByRole("button", { name: /Demander la main/ }).click();
+    await alice.page.getByRole("dialog", { name: "Pinoy demande la main" }).waitFor({ timeout: 8000 });
+    await shot(alice, "24-demande-de-main");
+    assert.equal(inputs().length, 0, "rien ne doit passer avant l'accord");
+    await alice.page.getByRole("button", { name: "Donner la main" }).click();
+    await bob.page.locator(".hand-bar").waitFor({ timeout: 8000 });
+    await poll("la mire au premier plan", async () => {
+      await focus(null);
+      await bob.page.keyboard.press("F1");
+      await wait(300);
+      return inputs().some(i => i.type === "keydown" && i.code === "F1");
+    }, Boolean, 10_000);
+    await shot(bob, "25-la-main");
+
+    const layer = (await bob.page.locator(".hand-layer").boundingBox())!;
+    await bob.page.mouse.move(layer.x + layer.width * 0.25, layer.y + layer.height * 0.6);
+    await bob.page.mouse.down();
+    await bob.page.mouse.up();
+    await bob.page.mouse.click(layer.x + layer.width * 0.7, layer.y + layer.height * 0.4, { button: "right" });
+    await bob.page.mouse.wheel(0, 100);
+    await bob.page.keyboard.press("w");
+    await bob.page.keyboard.press("ArrowLeft");
+    const click = await poll("clic reçu", async () => inputs().find(i => i.type === "mousedown" && i.button === 0), Boolean, 8000);
+    assert.ok(Math.abs(click!.x - 0.25) < 0.03, `clic à ${click!.x} au lieu de 0,25`);
+    assert.ok(Math.abs(click!.y - 0.6) < 0.1, `clic à ${click!.y} au lieu de 0,6`);
+    await poll("clic droit, molette et touches reçus", async () => inputs().map(i => (i.type === "mousedown" ? `b${i.button}` : i.type === "keydown" ? i.code : i.type)), got => ["b2", "wheel", "KeyW", "ArrowLeft"].every(g => got.includes(g)), 8000);
+
+    // Alt+F4 fermerait le jeu, et la touche Windows n'existe pas dans le moteur.
+    await bob.page.keyboard.down("Alt");
+    await bob.page.keyboard.press("F4");
+    await bob.page.keyboard.up("Alt");
+    await bob.page.keyboard.press("Meta");
+    await bob.page.keyboard.press("Control+Alt+s");
+    await bob.page.keyboard.press("F2");
+    await poll("touche témoin", async () => inputs().some(i => i.code === "F2"), Boolean, 8000);
+    const passed = inputs().map(i => i.code);
+    assert.ok(!passed.includes("F4") && !passed.includes("MetaLeft") && !passed.includes("KeyS"), `touche interdite reçue : ${passed.join(" ")}`);
+    assert.ok(await alice.page.locator(".titlebar-live").isVisible(), "un raccourci envoyé par le spectateur ne doit pas couper le stream");
+
+    // Le diffuseur quitte la fenêtre : plus rien ne passe, et l'ami le voit.
+    await focus(alice);
+    await bob.page.keyboard.press("F3");
+    await bob.page.locator(".hand-bar .is-blocked").waitFor({ timeout: 6000 });
+    await bob.page.keyboard.press("F6");
+    await wait(600);
+    assert.ok(!inputs().some(i => i.code === "F3" || i.code === "F6"), "une autre fenêtre ne doit rien recevoir");
+
+    await focus(null);
+    await poll("retour sur la fenêtre", async () => {
+      await bob.page.keyboard.press("F7");
+      await wait(300);
+      return inputs().some(i => i.code === "F7");
+    }, Boolean, 8000);
+
+    // Reprendre la main relâche ce que l'ami tenait enfoncé.
+    await bob.page.keyboard.down("d");
+    await poll("touche tenue", async () => inputs().some(i => i.type === "keydown" && i.code === "KeyD"), Boolean, 5000);
+    const hotkey = spawnSync("powershell", ["-NoProfile", "-Command", `
+      Add-Type -Name K -Namespace N -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, System.UIntPtr e);'
+      foreach ($k in 0x11, 0x12, 0x41) { [N.K]::keybd_event($k, 0, 0, [System.UIntPtr]::Zero) }
+      foreach ($k in 0x41, 0x12, 0x11) { [N.K]::keybd_event($k, 0, 2, [System.UIntPtr]::Zero) }`], { timeout: 20_000 });
+    assert.equal(hotkey.status, 0);
+    await bob.page.locator(".hand-bar").waitFor({ state: "detached", timeout: 6000 });
+    await poll("touche relâchée", async () => inputs().some(i => i.type === "keyup" && i.code === "KeyD"), Boolean, 5000);
+    await bob.page.keyboard.up("d");
+    const count = inputs().length;
+    await bob.page.keyboard.press("F9");
+    await wait(500);
+    assert.equal(inputs().length, count, "plus rien ne passe après la reprise");
+
+    await bob.page.locator(".tile").first().hover();
+    await bob.page.getByRole("button", { name: /Demander la main/ }).click();
+    await bob.page.locator(".toast", { hasText: "Demande refusée" }).waitFor({ timeout: 5000 });
+    await bob.page.evaluate(() => (window as any).__store.useApp.setState({ toasts: [] }));
+    return `${inputs().length} gestes reçus par la mire, aucun geste interdit`;
   });
 
   await step("le chat : réactions, mentions, écrit…, épingle, image", async () => {
@@ -542,9 +717,118 @@ try {
     assert.equal(state, "connected");
     assert.ok(main > width, `l'image principale doit rester celle du stream : ${main}, caméra ${width}`);
     await shot(bob, "17-bulle-camera");
-    await alice.page.getByRole("button", { name: "Couper la caméra" }).click();
-    await bob.page.locator(".tile-cam").waitFor({ state: "detached" });
     return `caméra ${width} px, image ${main} px`;
+  });
+
+  await step("caméra : on la place et on la redimensionne, tout le monde suit", async () => {
+    const camera = alice.page.locator(".tile-cam.is-editable");
+    const from = (await camera.boundingBox())!;
+    const tile = (await alice.page.locator(".tile-own").boundingBox())!;
+    await alice.page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await alice.page.mouse.down();
+    await alice.page.mouse.move(tile.x + tile.width * 0.2, tile.y + tile.height * 0.25, { steps: 12 });
+    await alice.page.mouse.up();
+    const handle = (await alice.page.locator(".tile-cam-handle").boundingBox())!;
+    await alice.page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await alice.page.mouse.down();
+    await alice.page.mouse.move(handle.x + 90, handle.y + 50, { steps: 8 });
+    await alice.page.mouse.up();
+    await alice.page.getByRole("radio", { name: "Ronde" }).click();
+    await bob.page.locator(".tile-cam.is-circle").waitFor({ timeout: 5000 });
+    const layout = await alice.page.evaluate(() => (window as any).__store.useApp.getState().publish.cameraLayout as { x: number; y: number; width: number });
+    assert.ok(layout.x < 0.35 && layout.y < 0.4, `caméra mal placée : ${JSON.stringify(layout)}`);
+    assert.ok(layout.width > 0.2, `caméra pas agrandie : ${layout.width}`);
+    // Mesuré dans l'image, pas dans la fenêtre : les bandes noires ne sont pas les mêmes chez chacun.
+    const placed = await bob.page.evaluate(() => {
+      const video = document.querySelector<HTMLVideoElement>(".tile-video")!;
+      const box = video.getBoundingClientRect();
+      const scale = Math.min(box.width / video.videoWidth, box.height / video.videoHeight);
+      const left = box.left + (box.width - video.videoWidth * scale) / 2;
+      const top = box.top + (box.height - video.videoHeight * scale) / 2;
+      const cam = document.querySelector(".tile-cam")!.getBoundingClientRect();
+      return { x: (cam.left - left) / (video.videoWidth * scale), y: (cam.top - top) / (video.videoHeight * scale), width: cam.width / (video.videoWidth * scale) };
+    });
+    for (const key of ["x", "y", "width"] as const) assert.ok(Math.abs(placed[key] - layout[key]) < 0.02, `${key} : ${placed[key]} chez le spectateur, ${layout[key]} chez le diffuseur`);
+    await poll("caméra sur le téléphone", () => phone!.evaluate(() => document.getElementById("camera")!.className), c => c.includes("is-circle"), 6000);
+    const overflow = await alice.page.locator(".studio").evaluate((s: HTMLElement) => {
+      const right = s.getBoundingClientRect().left + s.clientWidth;
+      const wide = [...s.querySelectorAll("*")].filter(e => e.getBoundingClientRect().right > right + 1).slice(0, 4);
+      return { px: s.scrollWidth - s.clientWidth, wide: wide.map(e => `${e.tagName}.${e.className}`) };
+    });
+    assert.ok(overflow.px <= 0, `le Studio déborde de ${overflow.px} px avec la caméra allumée : ${overflow.wide.join(", ")}`);
+    await shot(alice, "26-camera-placee");
+    await shot(bob, "27-camera-chez-le-spectateur");
+    return `x ${layout.x.toFixed(2)}, y ${layout.y.toFixed(2)}, largeur ${layout.width.toFixed(2)}, identique chez le spectateur`;
+  });
+
+  await step("scènes : bandeau, enregistrement, et OBS comme source avec reprise automatique", async () => {
+    const saveScene = async (name: string) => {
+      await alice.page.getByRole("button", { name: "Enregistrer cette scène" }).click();
+      await alice.page.getByLabel("Nom de la scène").fill(name);
+      await alice.page.keyboard.press("Enter");
+      await alice.page.locator(".scene.is-on", { hasText: name }).waitFor();
+    };
+    await alice.page.getByLabel("Bandeau sur l'image").fill("Partie classée");
+    await alice.page.keyboard.press("Enter");
+    await bob.page.locator(".tile-banner", { hasText: "Partie classée" }).waitFor({ timeout: 5000 });
+    await phone!.locator("#banner", { hasText: "Partie classée" }).waitFor({ timeout: 5000 });
+    await saveScene("Jeu");
+
+    const info: { url: string; key: string } = await alice.page.evaluate(() => (window as any).spoka.obsInfo());
+    assert.equal((await fetch(info.url, { method: "POST", body: "v=0" })).status, 401);
+    // ffmpeg parle WHIP comme OBS : tests/e2e/obs.ts fait le même chemin avec le vrai logiciel.
+    const push = () =>
+      spawn("ffmpeg", ["-hide_banner", "-loglevel", "error", "-re", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", "sine=frequency=520", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-profile:v", "baseline", "-pix_fmt", "yuv420p", "-bf", "0", "-g", "30", "-b:v", "4M", "-c:a", "libopus", "-ar", "48000", "-ac", "2", "-b:a", "128k", "-f", "whip", "-whip_flags", "dtls_active", "-authorization", info.key, info.url], { stdio: ["pipe", "ignore", "inherit"] });
+    const obsConnected = () => alice.page.evaluate(() => (window as any).__store.useApp.getState().obs.connected as boolean);
+    const received = () => bob.page.evaluate(() => document.querySelector<HTMLVideoElement>(".tile-video")?.videoWidth ?? 0);
+    let sender = push();
+    try {
+      await poll("OBS connecté", obsConnected, Boolean, 20_000);
+      await alice.page.getByRole("button", { name: "Changer" }).click();
+      await alice.page.getByRole("tab", { name: "OBS" }).click();
+      await alice.page.locator(".obs-state.is-on").waitFor();
+      await shot(alice, "28-obs-connecte");
+      await alice.page.locator(".modal").getByRole("button", { name: "Changer", exact: true }).click();
+      await poll("image d'OBS", received, w => w === 1280, 20_000);
+      await alice.page.locator(".mix-row", { hasText: "OBS" }).waitFor();
+      const level = await poll(
+        "son d'OBS",
+        () => alice.page.evaluate(() => {
+          const w = window as any;
+          const mix = w.__store.useApp.getState().publish.mix.find((m: { label: string }) => m.label === "OBS");
+          return (mix ? w.__core.mixLevels()[mix.id] : 0) as number;
+        }),
+        v => v > 0.2,
+        10_000,
+      );
+      await saveScene("Depuis OBS");
+
+      await alice.page.locator(".scene", { hasText: "Jeu" }).getByRole("button", { name: "Jeu", exact: true }).click();
+      await poll("retour sur la fenêtre", received, w => w > 0 && w !== 1280, 15_000);
+      await bob.page.locator(".tile-banner", { hasText: "Partie classée" }).waitFor();
+      await alice.page.locator(".scene", { hasText: "Depuis OBS" }).getByRole("button", { name: "Depuis OBS", exact: true }).click();
+      await poll("retour sur OBS", received, w => w === 1280, 15_000);
+      const state = await bob.page.evaluate(() => Object.values<any>((window as any).__store.useApp.getState().subs)[0]?.state);
+      assert.equal(state, "connected", "changer de scène ne doit pas couper le stream");
+
+      // OBS s'arrête en plein direct : pause, puis reprise toute seule quand il revient.
+      sender.stdin!.write("q");
+      await bob.page.locator(".tile .live-pill", { hasText: "Pause" }).waitFor({ timeout: 15_000 });
+      await alice.page.evaluate(() => (window as any).__store.useApp.setState({ toasts: [] }));
+      sender = push();
+      await bob.page.locator(".tile .live-pill", { hasText: "En direct" }).waitFor({ timeout: 20_000 });
+      await poll("image d'OBS revenue", received, w => w === 1280, 15_000);
+
+      await alice.page.locator(".scene", { hasText: "Jeu" }).getByRole("button", { name: "Jeu", exact: true }).click();
+      await poll("fin de l'essai sur la mire", received, w => w > 0 && w !== 1280, 15_000);
+      await alice.page.getByRole("button", { name: "Couper la caméra" }).click();
+      await bob.page.locator(".tile-cam").waitFor({ state: "detached" });
+      await alice.page.getByLabel("Bandeau sur l'image").fill("");
+      await alice.page.keyboard.press("Enter");
+      return `image 1280x720 et son ${(level * 100).toFixed(0)} %, passages de scène sans coupure, reprise après un arrêt d'OBS`;
+    } finally {
+      sender.kill();
+    }
   });
 
   await step("regarder YouTube ensemble : même position, même pause", async () => {
@@ -635,7 +919,12 @@ try {
     await shot(bob, "08-membres-vocal");
     const bobId: string = await bob.page.evaluate(() => (window as any).__store.useApp.getState().userId);
     const level = await poll("voix reçue", () => alice.page.evaluate(id => (window as any).__core.voiceLevel(id) as number, bobId), v => v > 0.1, 20_000);
-    return `niveau de la voix reçue ${(level * 100).toFixed(0)} %`;
+    // Le téléphone parle aussi : le vocal du lecteur web est le même que celui de l'application.
+    await phone!.getByRole("button", { name: "Rejoindre le vocal" }).click();
+    await phone!.getByRole("button", { name: "Quitter le vocal" }).waitFor({ timeout: 8000 });
+    const phoneId = await alice.page.evaluate(() => (window as any).__store.useApp.getState().room.members.find((m: { name: string }) => m.name === "Téléphone").id as string);
+    const phoneLevel = await poll("voix du téléphone", () => alice.page.evaluate(id => (window as any).__core.voiceLevel(id) as number, phoneId), v => v > 0.05, 20_000);
+    return `niveau de la voix reçue ${(level * 100).toFixed(0)} %, téléphone ${(phoneLevel * 100).toFixed(0)} %`;
   });
 
   await step("raccourcis globaux et appuyer pour parler, sans le focus", async () => {
@@ -737,6 +1026,7 @@ try {
 } finally {
   await a?.app.close().catch(() => {});
   await b?.app.close().catch(() => {});
+  await edge?.close().catch(() => {});
   pattern.kill();
   await server.close();
   await wait(500);

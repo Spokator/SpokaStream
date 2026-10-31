@@ -4,5 +4,6 @@ import type { IceServer } from "@shared/protocol.ts";
 export const rtcConfig = (iceServers: IceServer[]): RTCConfiguration => ({
   iceServers,
   bundlePolicy: "max-bundle",
-  iceTransportPolicy: window.spoka.forceRelay ? "relay" : "all",
+  // Le lecteur web n'a pas de pont vers Electron.
+  iceTransportPolicy: window.spoka?.forceRelay ? "relay" : "all",
 });

@@ -1,4 +1,4 @@
-import { Bell, Clapperboard, Eye, Keyboard, Link2, LogOut, Mic, Monitor, Palette as PaletteIcon, Phone, Radio, Scissors, Search, Settings as SettingsIcon, TvMinimalPlay, Users, Volume2, Vote } from "lucide-react";
+import { Bell, Clapperboard, Eye, Gamepad2, Keyboard, Link2, LogOut, Mic, Monitor, Palette as PaletteIcon, Phone, Radio, Rewind, Scissors, Search, Settings as SettingsIcon, TvMinimalPlay, Users, Volume2, Vote } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { core } from "../engine/core.ts";
@@ -42,6 +42,9 @@ function commands(): Command[] {
     list.push(
       { id: "poll", group: "Actions", label: "Lancer un sondage", icon: <Vote size={16} />, run: () => set({ dialog: "poll", view: "room" }) },
       { id: "clip", group: "Actions", label: "Garder un clip", hint: settings!.hotkeys.saveClip, icon: <Scissors size={16} />, run: () => void core.saveClip() },
+      { id: "replay", group: "Actions", label: "Revoir les dernières secondes", hint: "R", icon: <Rewind size={16} />, run: () => void core.replay() },
+      ...(publish ? settings!.scenes.map(scene => ({ id: `scene:${scene.id}`, group: "Scènes", label: scene.name, icon: <Clapperboard size={16} />, run: () => void core.applyScene(scene.id) })) : []),
+      ...(publish?.controller ? [{ id: "hand", group: "Actions", label: "Reprendre la main", hint: settings!.hotkeys.control, icon: <Gamepad2 size={16} />, run: () => core.endControl() }] : []),
       { id: "cinema", group: "Actions", label: cinema ? "Quitter le mode cinéma" : "Mode cinéma", hint: "T", icon: <Clapperboard size={16} />, run: () => set({ cinema: !cinema, view: "room" }) },
       { id: "voice", group: "Actions", label: voiceJoined ? "Quitter le vocal" : "Rejoindre le vocal", icon: <Phone size={16} />, run: () => (voiceJoined ? core.voiceLeave() : void core.voiceJoin()) },
       { id: "mic", group: "Actions", label: muted ? "Réactiver le micro" : "Couper le micro", hint: settings!.hotkeys.toggleMic, icon: <Mic size={16} />, run: () => core.toggleMute() },
@@ -140,6 +143,7 @@ const SHORTCUTS: [string, string][] = [
   ["F", "Plein écran"],
   ["M", "Couper le son du stream"],
   ["Flèches haut et bas", "Volume du stream"],
+  ["R", "Revoir les dernières secondes, les couper, les envoyer"],
   ["C", "Garder un clip"],
   ["I", "Statistiques"],
   ["Ctrl + molette, + ou -", "Zoomer dans l'image"],
@@ -168,6 +172,7 @@ export function ShortcutsModal() {
           [hotkeys.toggleStream, "Lancer ou arrêter le stream"],
           [hotkeys.pauseStream, "Mettre le stream en pause"],
           [hotkeys.saveClip, "Garder un clip"],
+          [hotkeys.control, "Accepter une demande de main, ou la reprendre"],
         ]
           .filter(([keys]) => keys)
           .map(([keys, label]) => (

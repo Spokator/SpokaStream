@@ -27,6 +27,17 @@ export async function compressImage(file: Blob) {
   return shrink(canvas);
 }
 
+/** La vignette d'un clip passe par le serveur : petite, et sans transparence à garder. */
+export function clipThumb(video: HTMLVideoElement) {
+  if (!video.videoWidth) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = 360;
+  canvas.height = Math.round((360 * video.videoHeight) / video.videoWidth);
+  canvas.getContext("2d")!.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const data = canvas.toDataURL("image/jpeg", 0.7);
+  return data.length <= LIMITS.clipThumb ? data : null;
+}
+
 export async function frameForChat(video: HTMLVideoElement) {
   return video.videoWidth ? shrink(draw(video, video.videoWidth, video.videoHeight)) : null;
 }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { assembleClip, fragmentSpan, Mp4Splitter } from "../../src/renderer/src/engine/mp4.ts";
+import { assembleClip, fragmentSpan, fragmentTimes, Mp4Splitter } from "../../src/renderer/src/engine/mp4.ts";
+import { revealCandidates } from "../../src/renderer/src/engine/candidates.ts";
 import { test } from "node:test";
 import { DriftBuffer } from "../../src/renderer/src/engine/audio/driftBuffer.ts";
 import { preferredOrder, rankResults } from "../../src/renderer/src/engine/encoders.ts";
@@ -217,4 +218,25 @@ test("un clip repart de zéro en gardant l'image et le son alignés", () => {
   const tfdtOf = (track: number) => Number(view.getBigUint64(24 + 8 + 16 + 12 + (track - 1) * 44));
   assert.equal(tfdtOf(1), 48_000);
   assert.equal(tfdtOf(2), 30_000);
+});
+
+test("on sait où couper un clip, et une partie du milieu repart de zéro", () => {
+  const splitter = new Mp4Splitter();
+  const fragments = [0, 1, 2, 3].flatMap(index => splitter.push(fragment(index), index));
+  splitter.push(HEADER, 0);
+  assert.deepEqual(fragmentTimes(HEADER, fragments), [0, 1, 2, 3]);
+  const middle = assembleClip(HEADER, fragments.slice(1, 3));
+  const again = new Mp4Splitter();
+  const parts = again.push(middle, 0);
+  assert.equal(parts.length, 2);
+  assert.deepEqual(fragmentTimes(HEADER, parts), [0, 1]);
+});
+
+test("la réponse à OBS remplace les noms masqués par les adresses de ce PC", () => {
+  const sdp = "a=mid:0\r\na=candidate:1 1 udp 2122260223 4f2a-11.local 54000 typ host generation 0\r\na=end-of-candidates\r\n";
+  const answer = revealCandidates(sdp, ["192.168.1.20", "10.0.0.4"]);
+  assert.ok(!answer.includes(".local"));
+  assert.match(answer, /udp 2122260223 192\.168\.1\.20 54000 typ host/);
+  assert.match(answer, /udp 2122260223 10\.0\.0\.4 54000 typ host/);
+  assert.match(answer, /a=end-of-candidates/);
 });

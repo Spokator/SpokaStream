@@ -45,6 +45,10 @@
       osc.connect(gain).connect(audio.destination);
       osc.start();
       audio.resume();
+      const log = event => console.log(JSON.stringify({ type: event.type, code: event.code, button: event.button, x: event.clientX / innerWidth, y: event.clientY / innerHeight, delta: event.deltaY, moved: event.movementX }));
+      for (const type of ["keydown", "keyup", "mousedown", "mouseup", "wheel", "contextmenu"]) addEventListener(type, log);
+      addEventListener("mousemove", event => document.pointerLockElement && log(event));
+      addEventListener("contextmenu", event => event.preventDefault());
     </script>
   </body>
 </html>

@@ -1,5 +1,6 @@
 import type { CaptureSource } from "@shared/ipc.ts";
 import NativeVideoWorker from "./nativeVideo.worker.ts?worker&inline";
+import type { ObsIngest } from "./obs.ts";
 
 declare class MediaStreamTrackGenerator extends MediaStreamTrack {
   constructor(init: { kind: "video" });
@@ -10,7 +11,8 @@ export type VideoSource =
   | { kind: "screen"; source: CaptureSource }
   | { kind: "window"; source: CaptureSource }
   | { kind: "camera"; deviceId: string; label: string }
-  | { kind: "file"; file: File };
+  | { kind: "file"; file: File }
+  | { kind: "obs"; ingest: ObsIngest };
 
 export interface OpenedSource {
   track: MediaStreamTrack;
@@ -120,6 +122,20 @@ export async function openSource(source: VideoSource, fps: number, maxHeight: nu
     });
     const track = stream.getVideoTracks()[0]!;
     return fromTrack(track, source.source.name, source.kind);
+  }
+  if (source.kind === "obs") {
+    const { ingest } = source;
+    const track = ingest.videoTrack;
+    if (!track) throw new Error("OBS n'envoie rien pour l'instant. Clique sur Démarrer le streaming dans OBS.");
+    return {
+      ...fromTrack(track, "OBS", "obs"),
+      audio: ingest.audio,
+      ...ingest.size,
+      onEnded: listener => (ingest.onEnded = listener),
+      onResize: listener => (ingest.onResize = listener),
+      // Quitter cette source n'arrête pas OBS : il continue d'envoyer et on peut y revenir d'un clic.
+      stop: () => {},
+    };
   }
   if (source.kind === "camera") {
     const stream = await navigator.mediaDevices.getUserMedia({

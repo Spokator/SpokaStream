@@ -1,4 +1,4 @@
-import { Ban, Crown, Headphones, HeadphoneOff, Mic, MicOff, MoreHorizontal, Radio, UserX } from "lucide-react";
+import { Ban, Crown, Globe, Headphones, HeadphoneOff, Mic, MicOff, MoreHorizontal, Radio, UserX } from "lucide-react";
 import type { Member } from "@shared/protocol.ts";
 import { core } from "../engine/core.ts";
 import { useApp } from "../state/store.ts";
@@ -25,6 +25,7 @@ function MemberRow({ member }: { member: Member }) {
       </div>
       <div className="member-icons">
         {live && <Radio size={15} className="is-live" aria-label="En direct" />}
+        {member.web && <Globe size={15} aria-label="Dans un navigateur" />}
         {member.voice &&
           (member.voice.muted ? <MicOff size={15} className="is-off" aria-label="Micro coupé" /> : <Mic size={15} aria-label="Micro actif" />)}
         {member.voice &&

@@ -6,6 +6,7 @@ import { LIMITS } from "../src/shared/protocol.ts";
 import type { IceServer } from "../src/shared/protocol.ts";
 import { Hub } from "./hub.ts";
 import type { Store } from "./store.ts";
+import { VIEWER_HTML, VIEWER_JS } from "./viewer.gen.ts";
 
 export interface ServerOptions {
   port: number;
@@ -43,15 +44,22 @@ export function iceServersFor(userId: string, options: Pick<ServerOptions, "turn
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 
-/** Discord et les navigateurs ne rendent pas spokastream:// cliquable : l'invitation est donc une page web qui ouvre l'application. */
+/** Le lecteur web ne parle qu'à ce serveur. Les seules images extérieures sont les miniatures YouTube. */
+const VIEWER_CSP = ["default-src 'self'", "script-src 'self'", "style-src 'unsafe-inline'", "img-src 'self' data: https://i.ytimg.com", "media-src 'self' blob:", "connect-src 'self' ws: wss:", "frame-src 'self'", "base-uri 'none'", "form-action 'none'"].join("; ");
+
+/**
+ * Discord et les navigateurs ne rendent pas spokastream:// cliquable : l'invitation est donc une page web.
+ * Sur un PC, elle ouvre l'application. Sur un téléphone, il n'y a pas d'application : elle passe droit au lecteur web.
+ */
 function invitePage(code: string, downloadUrl: string) {
   const deepLink = `spokastream://join/${encodeURIComponent(code)}`;
+  const viewer = `/w/${encodeURIComponent(code)}`;
   const shown = escapeHtml(code);
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rejoindre sur SpokaStream</title>
-<meta property="og:title" content="Rejoins-moi sur SpokaStream"><meta property="og:description" content="Clique pour ouvrir le salon dans l'application.">
+<meta property="og:title" content="Rejoins-moi sur SpokaStream"><meta property="og:description" content="Regarde dans ton navigateur, ou ouvre le salon dans l'application.">
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1117;color:#f1f3f9;font:16px/1.5 system-ui,"Segoe UI",sans-serif}main{max-width:420px;padding:32px;text-align:center}h1{font-size:24px;margin:0 0 8px}p{color:#9aa3b8;margin:0 0 24px}a{display:block;padding:13px 18px;border-radius:12px;text-decoration:none;font-weight:600;margin-top:10px}.p{background:linear-gradient(135deg,#7c5cff,#22d3ee);color:#fff}.s{background:#1a1e2b;color:#f1f3f9;border:1px solid #2a3042}code{display:inline-block;margin-top:18px;padding:6px 12px;border-radius:8px;background:#1a1e2b;letter-spacing:.14em}</style></head>
-<body><main><h1>Tu es invité sur SpokaStream</h1><p>Ouvre l'application pour rejoindre le salon.</p><a class="p" href="${deepLink}">Ouvrir SpokaStream</a><a class="s" href="${escapeHtml(downloadUrl)}">Je n'ai pas encore l'application</a><code>${shown}</code></main>
-<script>location.href=${JSON.stringify(deepLink)}</script></body></html>`;
+<body><main><h1>Tu es invité sur SpokaStream</h1><p>Regarde tout de suite, ou ouvre l'application.</p><a class="p" href="${viewer}">Regarder dans le navigateur</a><a class="s" href="${deepLink}">Ouvrir SpokaStream</a><a class="s" href="${escapeHtml(downloadUrl)}">Installer l'application</a><code>${shown}</code></main>
+<script>if(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent))location.replace(${JSON.stringify(viewer)});else location.href=${JSON.stringify(deepLink)}</script></body></html>`;
 }
 
 /**
@@ -104,6 +112,15 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     if (invite) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return res.end(invitePage(invite[1]!, downloadUrl));
+    }
+    const watch = url.pathname.match(/^\/w\/([A-Za-z0-9]{4,16})$/);
+    if (watch) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": VIEWER_CSP, "cache-control": "no-cache", "referrer-policy": "no-referrer" });
+      return res.end(VIEWER_HTML);
+    }
+    if (url.pathname === "/w/app.js") {
+      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" });
+      return res.end(VIEWER_JS);
     }
     if (url.pathname === "/player") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

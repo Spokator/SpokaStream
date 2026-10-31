@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { iceServersFor } from "../../server/index.ts";
+import { iceServersFor, startServer } from "../../server/index.ts";
 import { Hub } from "../../server/hub.ts";
 import { MemoryStore } from "../../server/store.ts";
 import type { ClientMessage, RoomState, ServerMessage, StreamAnnounce } from "../../src/shared/protocol.ts";
@@ -8,7 +8,8 @@ import { LIMITS, PROTOCOL_VERSION, youtubeId } from "../../src/shared/protocol.t
 
 const ANNOUNCE: StreamAnnounce = {
   title: "Mon stream", kind: "screen", sourceName: "Écran 1", width: 1920, height: 1080, fps: 60,
-  audio: "system", audioLabel: "Tout le PC", paused: false, allowDraw: true, maxViewers: 0, camera: false,
+  audio: "system", audioLabel: "Tout le PC", paused: false, allowDraw: true, maxViewers: 0, camera: false, allowControl: true, controller: null,
+  cameraLayout: { x: 0.1, y: 0.2, width: 0.3, shape: "circle", mirror: true }, banner: "",
 };
 
 class Client {
@@ -48,7 +49,8 @@ class Client {
 }
 
 function setup() {
-  const hub = new Hub({ store: new MemoryStore(), iceServers: () => [], graceMs: 10 });
+  const store = new MemoryStore();
+  const hub = new Hub({ store, iceServers: () => [], graceMs: 10 });
   const a = new Client(hub);
   const b = new Client(hub, "5.6.7.8");
   const aId = a.hello("alice");
@@ -56,7 +58,7 @@ function setup() {
   a.send({ t: "room.create", name: "Les potes", rid: 1 });
   const room = a.last("room.state").room;
   b.send({ t: "room.join", code: room.code, rid: 2 });
-  return { hub, a, b, aId, bId, room };
+  return { hub, store, a, b, aId, bId, room };
 }
 
 test("un salon se crée et se rejoint avec son code, quelle que soit la casse", () => {
@@ -444,4 +446,75 @@ test("l'accueil reçoit qui est là et la vignette du stream", () => {
   const count = watcher.all("room.status").length;
   a.send({ t: "stream.thumb", data: PIXEL });
   assert.equal(watcher.all("room.status").length, count, "les vignettes ne partent pas à chaque image");
+});
+
+const CLIP = { id: "0123456789abcdef", title: "Le but", seconds: 12, bytes: 9_000_000, thumb: "data:image/jpeg;base64,AAAA" };
+
+test("un clip partagé n'annonce que sa vignette, et le fichier des salons ne la garde pas", () => {
+  const { store, a, b } = setup();
+  a.send({ t: "chat.send", text: "", clip: CLIP });
+  const message = b.last("chat").message;
+  assert.deepEqual(message.clip, CLIP);
+  assert.equal(message.text, "🎬 Clip de 12 s", "une application 1.1 affiche ce texte");
+  assert.equal(store.load()[0]!.history.find(m => m.clip)!.clip!.thumb, null);
+});
+
+test("un clip mal formé ne passe pas", () => {
+  const { a, b } = setup();
+  const before = b.all("chat").length;
+  for (const clip of [{ ...CLIP, id: "../../etc" }, { ...CLIP, bytes: 0 }, { ...CLIP, bytes: LIMITS.clipBytes + 1, id: "fedcba9876543210" }]) a.send({ t: "chat.send", text: "", clip });
+  const received = b.all("chat").slice(before);
+  assert.equal(received.filter(m => m.message.clip?.id === "0123456789abcdef").length, 0);
+  assert.ok(received.every(m => !m.message.clip || m.message.clip.bytes <= LIMITS.clipBytes));
+});
+
+test("un spectateur web est signalé au salon", () => {
+  const { hub, a } = setup();
+  const code = a.last("room.state").room.code;
+  const phone = new Client(hub, "9.9.9.9");
+  phone.send({ t: "hello", protocol: PROTOCOL_VERSION, token: "b".repeat(64), profile: { name: "Téléphone", color: "#112233", avatar: null }, client: "web" });
+  phone.send({ t: "room.join", code });
+  assert.equal(a.last("member.join").member.web, true);
+});
+
+test("le stream annonce qui a la main, et seul son diffuseur peut le dire", () => {
+  const { a, b } = setup();
+  a.send({ t: "stream.start", id: "s1", stream: ANNOUNCE });
+  assert.equal(b.last("stream.add").stream.allowControl, true);
+  b.send({ t: "stream.update", patch: { controller: "quelqu'un" } });
+  assert.equal(a.all("stream.update").length, 0);
+  a.send({ t: "stream.update", patch: { controller: "abc" } });
+  assert.equal(b.last("stream.update").patch.controller, "abc");
+  a.send({ t: "stream.update", patch: { controller: null } });
+  assert.equal(b.last("stream.update").patch.controller, null);
+});
+
+test("le lecteur web est servi avec sa politique de sécurité, et l'invitation y mène", async () => {
+  const server = await startServer({ port: 0, host: "127.0.0.1", store: new MemoryStore() });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const page = await fetch(`${base}/w/ABCD2345`);
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get("content-security-policy") ?? "", /script-src 'self'/);
+    assert.match(await page.text(), /\/w\/app\.js/);
+    const script = await fetch(`${base}/w/app.js`);
+    assert.match(script.headers.get("content-type") ?? "", /javascript/);
+    assert.ok((await script.text()).length > 1000);
+    assert.equal((await fetch(`${base}/w/a%3Cb`)).status, 404);
+    assert.match(await (await fetch(`${base}/j/ABCD2345`)).text(), /href="\/w\/ABCD2345"/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("la place de la caméra et le bandeau arrivent aux spectateurs, bornés", () => {
+  const { a, b } = setup();
+  a.send({ t: "stream.start", id: "s1", stream: { ...ANNOUNCE, kind: "obs" } });
+  const stream = b.last("stream.add").stream;
+  assert.equal(stream.kind, "obs");
+  assert.deepEqual(stream.cameraLayout, ANNOUNCE.cameraLayout);
+  a.send({ t: "stream.update", patch: { banner: "  Partie classée  ", cameraLayout: { x: 9, y: -1, width: 7, shape: "étoile" as "round", mirror: false } } });
+  const { patch } = b.last("stream.update");
+  assert.equal(patch.banner, "Partie classée");
+  assert.deepEqual(patch.cameraLayout, { x: 1, y: 0, width: 1, shape: "round", mirror: false });
 });

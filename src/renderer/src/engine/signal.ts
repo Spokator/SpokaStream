@@ -24,6 +24,7 @@ export class Signal {
   private url = "";
   private token = "";
   private profile: Profile | null = null;
+  private client: "web" | undefined;
   private attempt = 0;
   private rid = 1;
   /** Échecs d'affilée : au bout de quelques-uns, autant dire clairement que le serveur ne répond pas. */
@@ -41,11 +42,12 @@ export class Signal {
   /** Connexion établie et authentifiée, première fois ou retour après une coupure. */
   onReady: () => void = () => {};
 
-  start(url: string, token: string, profile: Profile) {
+  start(url: string, token: string, profile: Profile, client?: "web") {
     this.stop();
     this.url = url;
     this.token = token;
     this.profile = profile;
+    this.client = client;
     this.stopped = false;
     this.attempt = 0;
     this.open();
@@ -73,7 +75,7 @@ export class Signal {
     this.ws = ws;
     ws.onopen = () => {
       if (ws !== this.ws) return;
-      this.request({ t: "hello", protocol: PROTOCOL_VERSION, token: this.token, profile: this.profile! })
+      this.request({ t: "hello", protocol: PROTOCOL_VERSION, token: this.token, profile: this.profile!, client: this.client })
         .then(() => {
           this.attempt = 0;
           this.onState("online");

@@ -2,11 +2,11 @@ import { Menu, Tray, nativeImage } from "electron";
 import type { TrayState } from "../shared/ipc.ts";
 import { appIcon } from "./windows.ts";
 
-type TrayAction = "toggleMic" | "toggleDeafen" | "stopStream" | "pauseStream" | "leaveRoom";
+type TrayAction = "toggleMic" | "toggleDeafen" | "stopStream" | "pauseStream" | "leaveRoom" | "revokeControl";
 
 export class AppTray {
   private readonly tray: Tray;
-  private state: TrayState = { roomName: null, live: false, paused: false, muted: false, deafened: false, viewers: 0 };
+  private state: TrayState = { roomName: null, live: false, paused: false, muted: false, deafened: false, viewers: 0, controller: null };
   private readonly onShow: () => void;
   private readonly onQuit: () => void;
   private readonly onAction: (action: TrayAction) => void;
@@ -42,6 +42,7 @@ export class AppTray {
         { type: "separator" },
         { label: "Micro coupé", type: "checkbox", checked: s.muted, click: () => this.onAction("toggleMic") },
         { label: "Sourdine", type: "checkbox", checked: s.deafened, click: () => this.onAction("toggleDeafen") },
+        ...(s.controller ? ([{ type: "separator" }, { label: `Reprendre la main à ${s.controller}`, click: () => this.onAction("revokeControl") }] as const) : []),
         ...(s.live
           ? ([
               { type: "separator" },

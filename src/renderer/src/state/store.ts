@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import type { AudioEngineStatus, Settings, UpdateStatus } from "@shared/ipc.ts";
-import type { ChatMessage, IceServer, Member, RoomState, RoomStatus, StreamInfo, ViewerQuality } from "@shared/protocol.ts";
+import type { CameraLayout, ChatMessage, ControlScope, IceServer, Member, RoomState, RoomStatus, StreamInfo, ViewerQuality } from "@shared/protocol.ts";
 import type { MixSource } from "../engine/audio/mixer.ts";
 import type { BenchResult } from "../engine/encoders.ts";
+import type { ObsState } from "../engine/obs.ts";
 import type { EncodingTarget, ViewerView } from "../engine/publisher.ts";
 import type { ConnectionState } from "../engine/signal.ts";
 import type { ReceiveStats, SendStats } from "../engine/stats.ts";
@@ -51,6 +52,32 @@ export interface PublishView {
   maxViewers: number;
   /** La caméra envoyée en bulle à côté de l'image. */
   camera: MediaStream | null;
+  cameraLayout: CameraLayout;
+  banner: string;
+  /** La scène en cours, jusqu'à ce qu'on en change quelque chose. */
+  scene: string | null;
+  allowControl: boolean;
+  /** Ce que la main donnerait : rien pour une caméra ou un fichier. */
+  controlScope: ControlScope | null;
+  controlAsk: string | null;
+  controller: string | null;
+  controlBlocked: boolean;
+}
+
+/** La main demandée ou obtenue sur le stream de quelqu'un d'autre. */
+export interface HandView {
+  streamId: string;
+  state: "asking" | "granted";
+  blocked: boolean;
+}
+
+/** Le clip ouvert dans le lecteur. times n'existe que pour un clip qu'on vient de prendre : lui seul peut être coupé. */
+export interface ClipView {
+  url: string;
+  title: string;
+  seconds: number;
+  times: number[] | null;
+  path: string | null;
 }
 
 export type View = "home" | "room" | "settings";
@@ -96,6 +123,11 @@ interface AppState {
   dialog: "poll" | "together" | "shortcuts" | "palette" | null;
   lightbox: string | null;
   clipSaving: boolean;
+  clip: ClipView | null;
+  /** Clip en train d'arriver depuis le PC de son auteur. */
+  clipLoading: { id: string; share: number } | null;
+  hand: HandView | null;
+  obs: ObsState;
 }
 
 export const useApp = create<AppState>(() => ({
@@ -133,6 +165,10 @@ export const useApp = create<AppState>(() => ({
   dialog: null,
   lightbox: null,
   clipSaving: false,
+  clip: null,
+  clipLoading: null,
+  hand: null,
+  obs: { connected: false, width: 0, height: 0 },
 }));
 
 export const set = useApp.setState;

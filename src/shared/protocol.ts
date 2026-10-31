@@ -2,6 +2,7 @@
 // il présente les participants les uns aux autres, puis tout circule directement de PC à PC (ou par le relais TURN).
 
 // Version 2 : la bulle caméra ajoute un second flux vidéo, qu'une application 1.0 prendrait pour l'image du stream.
+// La 1.2 reste en version 2 : ses clips et sa prise en main sont des ajouts qu'une 1.1 ignore sans rien casser.
 export const PROTOCOL_VERSION = 2;
 
 export const LIMITS = {
@@ -23,6 +24,9 @@ export const LIMITS = {
   pollOptions: 6,
   reactionsPerMessage: 12,
   queue: 30,
+  /** Taille annoncée d'un clip : il voyage de PC à PC, le serveur ne garde que sa vignette. */
+  clipBytes: 120_000_000,
+  clipThumb: 96_000,
 } as const;
 
 export interface Profile {
@@ -43,10 +47,23 @@ export interface Member extends Profile {
   role: Role;
   online: boolean;
   voice: VoiceState | null;
+  /** Regarde depuis un navigateur : pas de diffusion ni de prise en main possible. */
+  web?: boolean;
 }
 
-export type SourceKind = "screen" | "window" | "camera" | "file";
+export type SourceKind = "screen" | "window" | "camera" | "file" | "obs";
 export type AudioKind = "none" | "system" | "apps" | "input" | "file";
+
+/** Place de la caméra sur l'image, en fractions de sa taille. Chaque spectateur la dessine lui-même au même endroit. */
+export interface CameraLayout {
+  x: number;
+  y: number;
+  width: number;
+  shape: "rect" | "round" | "circle";
+  mirror: boolean;
+}
+
+export const DEFAULT_CAMERA_LAYOUT: CameraLayout = { x: 0.78, y: 0.72, width: 0.2, shape: "round", mirror: false };
 
 export interface StreamInfo {
   id: string;
@@ -67,6 +84,13 @@ export interface StreamInfo {
   thumb: string | null;
   /** Le diffuseur envoie sa caméra en plus de l'image : les spectateurs l'affichent en bulle. */
   camera: boolean;
+  cameraLayout: CameraLayout;
+  /** Texte posé sur l'image. */
+  banner: string;
+  /** Les spectateurs peuvent demander la main. Rien ne se passe sans l'accord du diffuseur. */
+  allowControl: boolean;
+  /** La personne qui a la main en ce moment. */
+  controller: string | null;
 }
 
 export type StreamAnnounce = Omit<StreamInfo, "id" | "ownerId" | "startedAt" | "viewers" | "thumb">;
@@ -91,8 +115,18 @@ export interface ChatMessage {
   kind: "user" | "system";
   /** Image collée dans le chat. Disparaît au redémarrage du serveur ou quand de nouvelles arrivent. */
   image?: string | null;
+  /** Clip partagé : il reste chez son auteur et part de PC à PC quand quelqu'un l'ouvre. */
+  clip?: ClipInfo | null;
   /** Par émoji, les personnes qui ont réagi. */
   reactions?: Record<string, string[]>;
+}
+
+export interface ClipInfo {
+  id: string;
+  title: string;
+  seconds: number;
+  bytes: number;
+  thumb: string | null;
 }
 
 export interface Poll {
@@ -174,12 +208,26 @@ export type ErrorCode =
   | "viewer_limit"
   | "stream_not_found";
 
+/** Un geste de la personne qui a la main. Les coordonnées vont de 0 à 1 dans l'image. */
+export type ControlInput =
+  | { k: "move"; x: number; y: number }
+  | { k: "rel"; x: number; y: number }
+  | { k: "button"; button: 0 | 1 | 2; down: boolean }
+  | { k: "wheel"; delta: number }
+  | { k: "key"; code: string; down: boolean };
+
+export type ControlScope = "window" | "screen";
+
+/** Canal de contrôle, de PC à PC : le serveur de salons n'en voit rien. */
+export type ControlToHost = { t: "ask" } | { t: "release" } | { t: "alive" } | { t: "input"; events: ControlInput[] };
+export type ControlToViewer = { t: "granted"; scope: ControlScope } | { t: "refused" } | { t: "revoked" } | { t: "blocked"; blocked: boolean };
+
 interface Rid {
   rid?: number;
 }
 
 export type ClientMessage =
-  | ({ t: "hello"; protocol: number; token: string; profile: Profile } & Rid)
+  | ({ t: "hello"; protocol: number; token: string; profile: Profile; client?: "web" } & Rid)
   | ({ t: "room.create"; name: string } & Rid)
   | ({ t: "room.join"; code?: string; id?: string } & Rid)
   | { t: "room.leave" }
@@ -189,7 +237,7 @@ export type ClientMessage =
   | { t: "room.subscribe"; ids: string[] }
   | { t: "profile.update"; profile: Profile }
   | { t: "voice.set"; voice: VoiceState | null }
-  | { t: "chat.send"; text: string; replyTo?: string | null; image?: string | null }
+  | { t: "chat.send"; text: string; replyTo?: string | null; image?: string | null; clip?: ClipInfo | null }
   | { t: "chat.delete"; id: string }
   | { t: "chat.react"; id: string; emoji: string }
   | { t: "chat.pin"; id: string | null }

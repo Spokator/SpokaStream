@@ -41,7 +41,7 @@ function enginePath() {
 }
 
 /** Pilote du moteur natif. Le son ne transite pas par la page : il va droit du moteur au fil audio temps réel. */
-export class AudioEngine extends EventEmitter<{ status: [AudioEngineStatus]; key: [number, boolean]; videoEnded: [string] }> {
+export class AudioEngine extends EventEmitter<{ status: [AudioEngineStatus]; key: [number, boolean]; videoEnded: [string]; inputBlocked: [boolean] }> {
   private child: ChildProcessWithoutNullStreams | null = null;
   private buffer: Buffer = Buffer.alloc(0);
   private nextId = 1;
@@ -140,6 +140,7 @@ export class AudioEngine extends EventEmitter<{ status: [AudioEngineStatus]; key
     }
     if (message.evt === "key") return void this.emit("key", message.key as number, message.down as boolean);
     if (message.evt === "video.ended") return void this.emit("videoEnded", message.url as string);
+    if (message.evt === "input.blocked") return void this.emit("inputBlocked", message.blocked as boolean);
     if (message.evt === "capture.error") return console.error(`[audio] capture ${message.captureId} : ${message.message}`);
     const pending = this.pending.get(message.id as number);
     if (!pending) return;
@@ -190,6 +191,20 @@ export class AudioEngine extends EventEmitter<{ status: [AudioEngineStatus]; key
 
   stopVideo(url: string) {
     return this.request("video.stop", { url });
+  }
+
+  /** Un moteur relancé repart désarmé : une main donnée ne survit jamais à une panne. */
+  armInput(target: { hwnd: number } | { x: number; y: number }, appPid: number) {
+    return this.request("input.arm", { ...target, appPid });
+  }
+
+  /** Sans réponse attendue : à chaque déplacement de souris, un aller-retour ne servirait à rien. */
+  input(events: unknown[]) {
+    this.child?.stdin.write(`${JSON.stringify({ cmd: "input", events })}\n`);
+  }
+
+  disarmInput() {
+    return this.request("input.disarm");
   }
 
   /** Le port part vers la page, qui le confie au fil audio : le son continue même si l'interface rame. */

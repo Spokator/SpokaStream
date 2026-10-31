@@ -1,5 +1,12 @@
-import { assembleClip, fragmentSpan, Mp4Splitter } from "./mp4.ts";
+import { fragmentSpan, Mp4Splitter } from "./mp4.ts";
 import type { Fragment } from "./mp4.ts";
+
+/** Les fragments d'un clip, gardés tels quels : on peut encore le couper avant de l'assembler. */
+export interface ClipSource {
+  header: Uint8Array;
+  fragments: Fragment[];
+  seconds: number;
+}
 
 // avc3 : la définition voyage avec les images. avc1 casse dès qu'une fenêtre change de taille.
 const FORMAT = "video/mp4;codecs=avc3,mp4a.40.2";
@@ -14,7 +21,6 @@ export class ClipBuffer {
   private waiters: (() => void)[] = [];
   private readonly seconds: number;
   private queue: Promise<void> = Promise.resolve();
-  lastSeconds = 0;
 
   constructor(seconds: number) {
     this.seconds = seconds;
@@ -61,14 +67,13 @@ export class ClipBuffer {
   }
 
   /** Attend le fragment en cours : le clip doit contenir l'instant où on a appuyé. */
-  async save(): Promise<Uint8Array | null> {
+  async save(): Promise<ClipSource | null> {
     await Promise.race([new Promise<void>(resolve => this.waiters.push(resolve)), new Promise(resolve => setTimeout(resolve, FRAGMENT_MS * 2))]);
     const header = this.splitter.header;
     if (!header || !this.fragments.length) return null;
     const newest = this.fragments[this.fragments.length - 1]!.at;
-    const kept = this.fragments.filter(f => f.at >= newest - this.seconds * 1000);
-    this.lastSeconds = fragmentSpan(header, kept) + FRAGMENT_MS / 1000;
-    return assembleClip(header, kept);
+    const fragments = this.fragments.filter(f => f.at >= newest - this.seconds * 1000);
+    return { header, fragments, seconds: fragmentSpan(header, fragments) + FRAGMENT_MS / 1000 };
   }
 
   stop() {

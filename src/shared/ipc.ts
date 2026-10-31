@@ -1,4 +1,4 @@
-import type { Profile } from "./protocol.ts";
+import type { CameraLayout, ControlInput, Profile } from "./protocol.ts";
 
 export type Resolution = "source" | "720" | "1080" | "1440" | "2160";
 export type VideoPriority = "motion" | "detail";
@@ -18,6 +18,22 @@ export interface StreamDefaults {
   /** Durée gardée pour les clips, en secondes. 0 : pas de clips, donc pas d'encodage en plus. */
   clipSeconds: number;
   cameraId: string;
+  cameraLayout: CameraLayout;
+  /** Les spectateurs peuvent demander la main. Chaque demande attend l'accord du diffuseur. */
+  allowControl: boolean;
+}
+
+/** Ce qu'une scène sait retrouver. Un fichier n'y figure pas : le navigateur ne peut pas le rouvrir seul. */
+export type SceneSource = { kind: "screen" | "window"; id: string; name: string } | { kind: "camera"; deviceId: string; label: string } | { kind: "obs" };
+
+export interface Scene {
+  id: string;
+  name: string;
+  /** null : la scène garde la source en cours. */
+  source: SceneSource | null;
+  camera: boolean;
+  cameraLayout: CameraLayout;
+  banner: string;
 }
 
 export interface HotkeyMap {
@@ -26,6 +42,8 @@ export interface HotkeyMap {
   toggleStream: string;
   pauseStream: string;
   saveClip: string;
+  /** Accepte une demande de main, ou la reprend. */
+  control: string;
 }
 
 export interface OverlaySettings {
@@ -77,6 +95,9 @@ export interface Settings {
   uiScale: number;
   /** Les bandes autour de l'image prennent ses couleurs. */
   ambient: boolean;
+  scenes: Scene[];
+  /** Clé de l'entrée OBS : elle ne quitte jamais ce PC. */
+  obsKey: string;
 }
 
 export interface CaptureSource {
@@ -106,6 +127,8 @@ export interface TrayState {
   muted: boolean;
   deafened: boolean;
   viewers: number;
+  /** Nom de la personne qui a la main. */
+  controller: string | null;
 }
 
 export type UpdateStatus =
@@ -135,6 +158,7 @@ export type OverlayEvent =
   | { type: "chat"; name: string; color: string; text: string }
   | { type: "viewers"; count: number; names: string[] }
   | { type: "poll"; poll: { question: string; closed: boolean; options: { text: string; votes: number }[] } | null }
+  | { type: "control"; text: string | null }
   | { type: "stroke"; streamId: string; from: string; color: string; tool: "laser" | "pen"; id: string; points: number[]; end: boolean }
   | { type: "clear" }
   | { type: "settings"; settings: OverlaySettings };
@@ -143,6 +167,18 @@ export interface OverlayTarget {
   displayId?: string;
   hwnd?: string;
   settings: OverlaySettings;
+}
+
+export interface ControlTarget {
+  hwnd?: string;
+  displayId?: string;
+}
+
+export interface ObsInfo {
+  url: string | null;
+  key: string;
+  /** Adresses de ce PC, pour répondre à OBS sans passer par les noms masqués de Chromium. */
+  addresses: string[];
 }
 
 export interface NotifyRequest {
@@ -191,11 +227,19 @@ export interface SpokaApi {
   configureNativeVideo(fps: number, maxHeight: number): Promise<void>;
   stopNativeVideo(url: string): Promise<void>;
   onNativeVideoEnded(cb: (url: string) => void): () => void;
+  controlArm(target: ControlTarget): Promise<boolean>;
+  controlInput(events: ControlInput[]): void;
+  controlDisarm(): void;
+  onControlBlocked(cb: (blocked: boolean) => void): () => void;
+  obsInfo(): Promise<ObsInfo>;
+  obsAnswer(id: string, sdp: string | null): void;
+  onObsOffer(cb: (id: string, sdp: string) => void): () => void;
+  onObsEnd(cb: (id: string) => void): () => void;
 
   setTray(state: TrayState): void;
   showWindow(): void;
   onHotkey(cb: (action: keyof HotkeyMap) => void): () => void;
-  onTrayAction(cb: (action: "toggleMic" | "toggleDeafen" | "stopStream" | "pauseStream" | "leaveRoom") => void): () => void;
+  onTrayAction(cb: (action: "toggleMic" | "toggleDeafen" | "stopStream" | "pauseStream" | "leaveRoom" | "revokeControl") => void): () => void;
   onDeepLink(cb: (code: string) => void): () => void;
   onNotificationClick(cb: (roomId: string) => void): () => void;
   notify(request: NotifyRequest): void;
@@ -236,4 +280,5 @@ export const DEFAULT_HOTKEYS: HotkeyMap = {
   toggleStream: "Ctrl+Alt+S",
   pauseStream: "Ctrl+Alt+P",
   saveClip: "Ctrl+Alt+C",
+  control: "Ctrl+Alt+A",
 };

@@ -1,6 +1,6 @@
 import type { CodecChoice, VideoPriority } from "@shared/ipc.ts";
 import { DEFAULT_VIEWER_QUALITY } from "@shared/protocol.ts";
-import type { IceServer, ViewerQuality } from "@shared/protocol.ts";
+import type { ControlToHost, ControlToViewer, IceServer, ViewerQuality } from "@shared/protocol.ts";
 import { rtcConfig } from "./rtc.ts";
 import { codecPreferences } from "./encoders.ts";
 import type { BenchResult } from "./encoders.ts";
@@ -29,6 +29,8 @@ interface Viewer {
   audio: RTCRtpSender | null;
   /** Réservé dès la connexion : la caméra s'allume et s'éteint ensuite sans renégocier. */
   camera: RTCRtpSender;
+  /** Le canal de la prise en main : il ne transporte rien tant que personne ne la demande. */
+  control: RTCDataChannel;
   quality: ViewerQuality;
   meter: SendMeter;
   stats: SendStats | null;
@@ -58,6 +60,9 @@ export class Publisher {
   private target: EncodingTarget;
   private bench: BenchResult[];
   private sourceHeight: number;
+
+  onControl: (from: string, message: ControlToHost) => void = () => {};
+  onViewerGone: (id: string) => void = () => {};
 
   constructor(options: {
     session: string;
@@ -94,12 +99,15 @@ export class Publisher {
     const video = pc.addTrack(this.videoTrack, this.mediaStream);
     const audio = this.audioTrack ? pc.addTrack(this.audioTrack, this.mediaStream) : null;
     const cameraTransceiver = pc.addTransceiver("video", { direction: "sendonly" });
+    const control = pc.createDataChannel("control");
+    control.onmessage = event => this.onControl(id, JSON.parse(event.data as string) as ControlToHost);
     const viewer: Viewer = {
       id,
       pc,
       video,
       audio,
       camera: cameraTransceiver.sender,
+      control,
       quality: quality ?? DEFAULT_VIEWER_QUALITY,
       meter: new SendMeter(),
       stats: null,
@@ -127,6 +135,12 @@ export class Publisher {
     if (!viewer) return;
     viewer.pc.close();
     this.viewers.delete(id);
+    this.onViewerGone(id);
+  }
+
+  sendControl(id: string, message: ControlToViewer) {
+    const channel = this.viewers.get(id)?.control;
+    if (channel?.readyState === "open") channel.send(JSON.stringify(message));
   }
 
   async onSignal(from: string, data: { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit }) {

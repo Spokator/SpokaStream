@@ -3,12 +3,13 @@ import { appendFileSync, createWriteStream, mkdirSync, statSync, writeFileSync }
 import type { WriteStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AudioApp, CaptureSource, HotkeyMap, NativeVideoRequest, NotifyRequest, OverlayEvent, OverlayTarget, Settings, TrayState, YoutubeInfo } from "../shared/ipc.ts";
+import type { AudioApp, CaptureSource, ControlTarget, HotkeyMap, NativeVideoRequest, NotifyRequest, OverlayEvent, OverlayTarget, Settings, TrayState, YoutubeInfo } from "../shared/ipc.ts";
 import { AudioEngine } from "./audioEngine.ts";
 import { LocalHost } from "./host.ts";
 import { SettingsStore } from "./settings.ts";
 import { AppTray } from "./tray.ts";
 import { Updater } from "./updater.ts";
+import { WhipServer } from "./whip.ts";
 import { appIcon, createMainWindow, Overlay } from "./windows.ts";
 
 // Mesuré sur Electron 45 avec une RTX 5070 : sans WebRtcAV1HWEncode, AV1 reste sur le processeur (libaom) ; avec, il passe sur NVENC.
@@ -61,6 +62,7 @@ const engine = new AudioEngine();
 const overlay = new Overlay(engine);
 const updater = new Updater();
 const host = new LocalHost();
+const whip = new WhipServer(() => settings.current.obsKey);
 const iconCache = new Map<string, string | null>();
 const recordings = new Map<number, WriteStream>();
 let nextRecording = 1;
@@ -211,6 +213,28 @@ function wireIpc() {
   });
   ipcMain.handle("video:configure", (_e, fps: number, maxHeight: number) => engine.configureVideo(fps, maxHeight).catch(() => {}));
   ipcMain.handle("video:stop", (_e, url: string) => engine.stopVideo(url).catch(() => {}));
+  ipcMain.handle("control:arm", async (_e, target: ControlTarget) => {
+    const display = screen.getAllDisplays().find(d => String(d.id) === target.displayId) ?? screen.getPrimaryDisplay();
+    const center = screen.dipToScreenPoint({ x: display.bounds.x + display.bounds.width / 2, y: display.bounds.y + display.bounds.height / 2 });
+    const armed = await engine.armInput(target.hwnd ? { hwnd: Number(target.hwnd) } : { x: Math.round(center.x), y: Math.round(center.y) }, process.pid).then(() => true, () => false);
+    return armed;
+  });
+  ipcMain.on("control:input", (_e, events: unknown) => {
+    if (Array.isArray(events)) engine.input(events.slice(0, 256));
+  });
+  ipcMain.on("control:disarm", () => void engine.disarmInput().catch(() => {}));
+  engine.on("inputBlocked", blocked => toRenderer("control:blocked", blocked));
+  ipcMain.handle("obs:info", () => ({
+    url: whip.port ? `http://127.0.0.1:${whip.port}/whip` : null,
+    key: settings.current.obsKey,
+    addresses: Object.values(os.networkInterfaces())
+      .flatMap(entries => entries ?? [])
+      .filter(entry => entry.family === "IPv4" && !entry.internal)
+      .map(entry => entry.address),
+  }));
+  ipcMain.on("obs:answer", (_e, id: string, sdp: string | null) => whip.answer(id, sdp));
+  whip.on("offer", (id, sdp) => toRenderer("obs:offer", id, sdp));
+  whip.on("end", id => toRenderer("obs:end", id));
   engine.on("videoEnded", url => toRenderer("video:ended", url));
   engine.on("status", status => toRenderer("audio:status", status));
   engine.on("key", (key, down) => toRenderer("audio:key", key, down));
@@ -298,6 +322,7 @@ app.whenReady().then(() => {
 
   wireIpc();
   engine.start();
+  void whip.start();
   mainWindow = createMainWindow(process.argv.includes("--hidden"), e => {
     if (quitting || !settings.current.closeToTray) return;
     e.preventDefault();
@@ -333,6 +358,7 @@ app.on("before-quit", () => {
   engine.stop();
   overlay.close();
   void host.stop();
+  whip.stop();
   for (const stream of recordings.values()) stream.end();
   globalShortcut.unregisterAll();
   for (const contents of webContents.getAllWebContents()) contents.setBackgroundThrottling(false);

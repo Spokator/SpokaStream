@@ -86,6 +86,24 @@ La caméra est un second flux vidéo dans la connexion de chaque spectateur, ré
 
 **Ne pas appeler `setParameters` sur un flux réservé sans piste** : mesuré, la page du diffuseur se fige plusieurs secondes de plus à chaque redimensionnement.
 
+Sa place voyage avec le stream (`cameraLayout`), en fractions de l'image : chaque spectateur dessine la bulle lui-même. Rien n'est incrusté, donc rien n'est réencodé, et un téléphone la place aussi bien qu'un PC. Le prix : elle n'est pas dans les clips ni les enregistrements.
+
+### Scènes
+
+Une scène retient la source, la caméra, sa place et le bandeau, dans les réglages du diffuseur. Les passages utilisent `switchSource`, qui remplace la piste sans renégocier. Une fenêtre change d'identifiant quand le jeu redémarre : la scène la retrouve alors par son nom. Le mix audio n'en fait pas partie, et un fichier non plus, car une page ne peut pas rouvrir un fichier seule.
+
+### OBS
+
+OBS 30 sait pousser sa sortie en WHIP. L'application écoute donc sur `127.0.0.1:8189` (ou le port suivant libre), avec une clé propre à ce PC. Le processus principal ne fait que passer l'offre à la page : c'est elle qui reçoit l'image et le son, et ils deviennent une source comme une autre. Chaque spectateur a donc un réencodage de plus, ce qui justifie un débit généreux dans OBS.
+
+Trois détails, mesurés sur OBS 31 :
+
+- **OBS doit ouvrir le chiffrement** (`a=setup:passive` dans la réponse). Si c'est Chromium, OBS passe à `Failed` 2 ms après la connexion réseau, sans message. Cause probable, non prouvée : un premier message trop gros, découpé, qu'OBS ne recolle pas.
+- **L'offre d'OBS ne contient aucune adresse** : tout repose sur celles de la réponse, qui doit donc les porter toutes. `revealCandidates` remplace les noms en `.local` si Chromium en met.
+- **Une piste distante n'entre dans Web Audio que si un élément la lit aussi** : même détour que pour les spectateurs.
+
+`tests/e2e/obs.ts` lance le vrai OBS dans une copie portable. **Ne pas écrire `global.ini` à la main** : cette copie bloque alors avant même d'ouvrir son journal. On la laisse créer sa configuration, puis on ne change que `service.json` et les sources audio du PC.
+
 ### Overlay
 
 **Ne jamais redimensionner la fenêtre de l'overlay.** Elle couvre un écran entier et c'est son contenu qui se place sur la fenêtre capturée. La version qui suivait la fenêtre par `setBounds` figeait la page principale du diffuseur, avec le fil bloqué hors de JavaScript. Le mécanisme exact dans Chromium n'est pas élucidé, mais la bissection est nette : overlay coupé, plus de gel. Le parcours de bout en bout garde ce cas.
@@ -99,6 +117,29 @@ YouTube refuse une page sans origine web, et l'application est chargée depuis u
 Le serveur garde une position et l'instant où elle était vraie, et calcule la position réelle à chaque envoi : un arrivant reprend au bon endroit. Chaque client compare sa position toutes les 500 ms et ne se recale qu'au-delà de 1,5 s d'écart, sans jamais insister plus d'une fois toutes les 3 s : une publicité YouTube ne déclenche pas de rafale.
 
 Le lecteur est une page tierce : le gestionnaire de permissions lui refuse le micro, la caméra et l'écran.
+
+## Revoir et partager
+
+Le clip reste découpé en fragments tant qu'il est ouvert : couper revient à choisir des fragments, à la seconde près, sans réencoder. Partager n'envoie au salon qu'une vignette. Le fichier reste chez son auteur et part de PC à PC quand quelqu'un l'ouvre, sur une connexion qui ne vit que le temps de l'envoi. Les 6 derniers clips restent disponibles tant que leur auteur est là. Le texte du message n'est lu que par les versions qui ne savent pas afficher un clip.
+
+## Lecteur web
+
+Une page servie par le serveur (`/w/CODE`), construite par `scripts/build-viewer.mjs` et embarquée dans `server/viewer.gen.ts` : il n'y a toujours qu'un fichier à déployer. Elle réutilise `Signal`, `Subscription`, `Voice` et `ClipShare`, sans React : 26 ko de script. L'invitation `/j/CODE` y mène directement sur un téléphone.
+
+La politique de sécurité n'autorise que ce serveur. Le chat y est écrit en `textContent`, jamais en HTML. Un téléphone demande 720p par défaut, avec un encodage dédié chez le diffuseur comme tout spectateur.
+
+Un bannissement repose sur le jeton de l'appareil : depuis un navigateur, une nouvelle identité se crée en vidant ses données. Pour un salon qui doit rester fermé, c'est le verrou qui protège.
+
+## Prendre la main
+
+Les gestes passent par un canal de données dans la connexion du spectateur : le serveur n'en voit rien, et ce canal existe dès l'ouverture sans rien coûter tant que personne ne s'en sert. Ils traversent la page du diffuseur, le processus principal, puis `RemoteInput` dans SpokaAudio.
+
+**Les garde-fous sont dans le moteur natif**, pas dans l'interface : armement sur une seule cible, premier plan vérifié à chaque lot, table de touches fermée, signe de vie toutes les secondes. Les touches partent en code de position : c'est ce que lisent les jeux, et chacun garde sa disposition de clavier.
+
+- Ctrl+Alt+lettre est bloqué parce que c'est la forme des raccourcis globaux : un ami ne doit pas pouvoir couper le stream ni accepter à la place du diffuseur. E reste permis pour écrire € avec Alt Gr.
+- `SetForegroundWindow` n'est accordé qu'à qui vient de recevoir une entrée : le moteur presse Alt le temps de l'appel.
+- Le moteur se déclare sensible à l'échelle de l'écran, sinon Windows lui donne des positions fausses dès 125 %.
+- Un moteur relancé repart désarmé.
 
 ## Réseau
 
@@ -134,8 +175,9 @@ Si une connexion vidéo tombe vraiment, le spectateur en redemande une après 6 
 
 | Commande | Ce qu'elle prouve |
 | --- | --- |
-| `npm test` | 46 tests : serveur, SDP, choix du codec, tampon audio, découpe MP4 |
-| `npm run test:e2e` | 35 étapes avec deux instances, WebRTC réel, son réel, YouTube réel |
+| `npm test` | 54 tests : serveur, SDP, choix du codec, tampon audio, découpe MP4 |
+| `npm run test:e2e` | 40 étapes avec deux instances et un téléphone émulé : WebRTC, son, YouTube, gestes reçus par une vraie fenêtre, sortie WHIP de ffmpeg |
+| `npm run test:obs` | Le vrai OBS, dans une copie isolée, jusqu'à l'image reçue par un spectateur |
 | `node --experimental-strip-types tests/e2e/run.ts --packaged` | La même chose sur l'application empaquetée |
 | `npm run test:production` | Le vrai serveur, avec la vidéo forcée par le relais TURN : PC → VPS → PC |
 
@@ -161,8 +203,6 @@ Santé : `GET /health`. Invitation : `/j/CODE` ouvre l'application, parce que Di
 ## Pour la suite
 
 - **Relais vidéo (SFU)** optionnel pour les grands groupes.
-- **Contrôle à distance** avec accord du diffuseur : `SendInput` dans SpokaAudio.
-- **Partage des clips** dans le chat, de PC à PC : ils sont trop lourds pour passer par le serveur.
-- **Soundboard** dans le vocal et le stream.
+- **Manette** dans la prise en main : il faudrait un pilote de manette virtuelle.
 - **Rôle de modérateur** et mode lent, pour les salons nombreux.
 - **Signature du code**, pour retirer l'avertissement de Windows.

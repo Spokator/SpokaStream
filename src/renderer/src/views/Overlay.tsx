@@ -1,4 +1,4 @@
-import { Users } from "lucide-react";
+import { Gamepad2, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { OverlayEvent, OverlayRegion, OverlaySettings } from "@shared/ipc.ts";
 import { StrokeCanvas } from "../ui/strokes.ts";
@@ -26,6 +26,7 @@ export function OverlayView() {
   const [chat, setChat] = useState<ChatLine[]>([]);
   const [reactions, setReactions] = useState<Floating[]>([]);
   const [poll, setPoll] = useState<Extract<OverlayEvent, { type: "poll" }>["poll"]>(null);
+  const [control, setControl] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.style.background = "transparent";
@@ -42,6 +43,8 @@ export function OverlayView() {
           return setViewers(event.count);
         case "poll":
           return setPoll(event.poll);
+        case "control":
+          return setControl(event.text);
         case "stroke":
           return strokes.add(event.id, event.tool, event.color, event.points, event.end);
         case "clear":
@@ -69,6 +72,12 @@ export function OverlayView() {
   return (
     <div className="overlay" style={region ? { left: region.x, top: region.y, width: region.width, height: region.height, right: "auto", bottom: "auto" } : undefined}>
       <canvas ref={canvas} className="overlay-canvas" />
+      {control && (
+        <div className="overlay-control">
+          <Gamepad2 size={16} />
+          {control}
+        </div>
+      )}
       {settings && (
         <div className={`overlay-corner ${settings.corner}`}>
           {settings.viewers && (

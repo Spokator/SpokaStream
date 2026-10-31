@@ -334,6 +334,9 @@ function StreamSection({ s }: { s: Settings }) {
           onChange={clipSeconds => setStream({ clipSeconds })}
         />
       </Field>
+      <Field label="Prendre la main" hint="Un ami peut demander à jouer à ta place. Rien ne se passe sans ton accord">
+        <Toggle label="Accepter les demandes de main" checked={s.stream.allowControl} onChange={allowControl => setStream({ allowControl })} />
+      </Field>
       <Field label="Dossier des enregistrements" hint={s.recordingsDir}>
         <Button
           icon={<FolderOpen size={15} />}
@@ -414,6 +417,7 @@ const HOTKEY_LABELS: Record<keyof HotkeyMap, string> = {
   toggleStream: "Lancer / arrêter le stream",
   pauseStream: "Mettre le stream en pause",
   saveClip: "Garder un clip des dernières secondes",
+  control: "Accepter une demande de main, ou la reprendre",
 };
 
 function HotkeysSection({ s }: { s: Settings }) {

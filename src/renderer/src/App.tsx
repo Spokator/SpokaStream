@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { core } from "./engine/core.ts";
 import { get, set, useApp } from "./state/store.ts";
 import { isTyping } from "./ui/kit.tsx";
+import { ClipPlayer } from "./views/ClipPlayer.tsx";
 import { GoLiveModal } from "./views/GoLive.tsx";
+import { ControlRequest } from "./views/Hand.tsx";
 import { Home } from "./views/Home.tsx";
 import { Onboarding } from "./views/Onboarding.tsx";
 import { OverlayView } from "./views/Overlay.tsx";
@@ -66,6 +68,8 @@ function MainApp() {
       {dialog === "together" && <TogetherModal />}
       {dialog === "shortcuts" && <ShortcutsModal />}
       {dialog === "palette" && <Palette />}
+      <ClipPlayer />
+      <ControlRequest />
       <Lightbox />
       <Toasts />
     </div>

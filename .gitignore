@@ -4,6 +4,7 @@ dist/
 dist-test/
 data/
 server/dist/
+server/viewer.gen.ts
 tests/captures/
 native/publish/
 native/*/bin/

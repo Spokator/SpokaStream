@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -22,9 +23,14 @@ internal static class Program
     private static readonly Lock OutputLock = new();
     private static readonly Dictionary<int, ProcessLoopback> Captures = [];
     private static ScreenCapture? _video;
+    private static RemoteInput? _input;
 
     private static int Main()
     {
+        // Sans ça, Windows ment sur les positions dès que l'écran est mis à l'échelle : les clics tomberaient à côté.
+        SetProcessDpiAwarenessContext(new IntPtr(-4));
+        using var remote = new RemoteInput(blocked => SendEvent(new JsonObject { ["evt"] = "input.blocked", ["blocked"] = blocked }));
+        _input = remote;
         using var keys = new KeyWatcher((key, down) => SendEvent(new JsonObject { ["evt"] = "key", ["key"] = key, ["down"] = down }));
         SendEvent(new JsonObject { ["evt"] = "ready", ["version"] = 1, ["processLoopback"] = Environment.OSVersion.Version.Build >= 19041 });
 
@@ -38,11 +44,11 @@ internal static class Program
                 request = JsonNode.Parse(line)?.AsObject();
                 if (request is null) continue;
                 var result = Handle(request, keys);
-                Reply(request, result, null);
+                if (request["id"] is not null) Reply(request, result, null);
             }
             catch (Exception e)
             {
-                Reply(request, null, e.Message);
+                if (request?["id"] is not null) Reply(request, null, e.Message);
             }
         }
 
@@ -90,6 +96,15 @@ internal static class Program
                 var rect = Windows.RectOf((long)request["hwnd"]!);
                 return rect is null ? null : new JsonObject { ["x"] = rect.Value.X, ["y"] = rect.Value.Y, ["width"] = rect.Value.Width, ["height"] = rect.Value.Height };
             }
+            case "input":
+                _input!.Apply(request["events"]!.AsArray());
+                return null;
+            case "input.arm":
+                _input!.Arm((long?)request["hwnd"] ?? 0, (int?)request["x"] ?? 0, (int?)request["y"] ?? 0, (int)request["appPid"]!);
+                return null;
+            case "input.disarm":
+                _input!.Disarm();
+                return null;
             case "keys.watch":
                 keys.Watch(request["keys"]!.AsArray().Select(k => (int)k!));
                 return null;
@@ -121,6 +136,9 @@ internal static class Program
                 throw new InvalidOperationException($"commande inconnue : {request["cmd"]}");
         }
     }
+
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDpiAwarenessContext(IntPtr context);
 
     private static void StopCapture(int id)
     {

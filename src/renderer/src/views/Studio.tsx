@@ -1,4 +1,4 @@
-import { Circle, Copy, Eraser, FolderOpen, Monitor, Pause, Play, Plus, Scissors, Square, UserX, Video, VideoOff, Volume2, VolumeX, X } from "lucide-react";
+import { Circle, Copy, Eraser, FolderOpen, Gamepad2, Monitor, Pause, Play, Plus, Rewind, Scissors, Square, UserX, Video, VideoOff, Volume2, VolumeX, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AudioApp, Resolution } from "@shared/ipc.ts";
 import { core } from "../engine/core.ts";
@@ -6,8 +6,9 @@ import type { AudioChoice } from "../engine/core.ts";
 import { get, memberOf, set, toast, useApp } from "../state/store.ts";
 import type { PublishView } from "../state/store.ts";
 import { limitText, mbps, pathText, plural } from "../ui/format.ts";
-import { Avatar, Button, Field, IconButton, Meter, Popover, Select, Slider, Toggle, Uptime } from "../ui/kit.tsx";
+import { Avatar, Button, Field, IconButton, Meter, Popover, Segmented, Select, Slider, Toggle, Uptime } from "../ui/kit.tsx";
 import { BITRATES, FPS_OPTIONS, RESOLUTIONS } from "./GoLive.tsx";
+import { Scenes } from "./Scenes.tsx";
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: "warn" | "bad" }) {
   return (
@@ -40,6 +41,7 @@ function TitleInput({ title }: { title: string }) {
 
 function CameraField({ on }: { on: boolean }) {
   const saved = useApp(s => s.settings!.stream.cameraId);
+  const layout = useApp(s => s.publish!.cameraLayout);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   useEffect(() => {
     void navigator.mediaDevices.enumerateDevices().then(list => setCameras(list.filter(d => d.kind === "videoinput")));
@@ -48,12 +50,32 @@ function CameraField({ on }: { on: boolean }) {
   const options = cameras.map(c => ({ value: c.deviceId, label: c.label || "Caméra" }));
   const current = options.find(o => o.value === saved)?.value ?? options[0]!.value;
   return (
-    <div className="studio-camera">
-      <Button icon={on ? <VideoOff size={15} /> : <Video size={15} />} onClick={() => void core.setCamera(on ? null : current)}>
-        {on ? "Couper la caméra" : "Ajouter ma caméra"}
-      </Button>
-      {options.length > 1 && <Select label="Caméra" value={current} options={options} onChange={deviceId => void core.setCamera(on ? deviceId : null).then(() => core.updateSettings({ stream: { ...get().settings!.stream, cameraId: deviceId } }))} />}
-    </div>
+    <>
+      <div className="studio-camera">
+        <Button icon={on ? <VideoOff size={15} /> : <Video size={15} />} onClick={() => void core.setCamera(on ? null : current)}>
+          {on ? "Couper la caméra" : "Ajouter ma caméra"}
+        </Button>
+        {options.length > 1 && <Select label="Caméra" value={current} options={options} onChange={deviceId => void core.setCamera(on ? deviceId : null).then(() => core.updateSettings({ stream: { ...get().settings!.stream, cameraId: deviceId } }))} />}
+      </div>
+      {on && (
+        <>
+          <p className="muted-text">Glisse la caméra sur l'aperçu pour la placer, et sa poignée pour l'agrandir.</p>
+          <Segmented
+            label="Forme de la caméra"
+            value={layout.shape}
+            options={[
+              { value: "round", label: "Arrondie" },
+              { value: "rect", label: "Carrée" },
+              { value: "circle", label: "Ronde" },
+            ]}
+            onChange={shape => core.setCameraLayout({ ...layout, shape }, true)}
+          />
+          <Field label="Effet miroir">
+            <Toggle label="Effet miroir" checked={layout.mirror} onChange={mirror => core.setCameraLayout({ ...layout, mirror }, true)} />
+          </Field>
+        </>
+      )}
+    </>
   );
 }
 
@@ -146,12 +168,38 @@ export function Studio() {
           <Button icon={<Scissors size={15} />} disabled={clipSaving || !clipSeconds} title={clipSeconds ? `Garde les ${clipSeconds} dernières secondes` : "Les clips sont coupés dans les paramètres"} onClick={() => void core.saveClip()}>
             {clipSaving ? "Clip…" : "Clip"}
           </Button>
+          <Button icon={<Rewind size={15} />} disabled={clipSaving || !clipSeconds} title="Revoir, couper et envoyer les dernières secondes" onClick={() => void core.replay()}>
+            Revoir
+          </Button>
           <Button icon={<Eraser size={15} />} onClick={() => core.clearDrawings(publish.streamId)}>
             Effacer
           </Button>
         </div>
         <CameraField on={!!publish.camera} />
       </section>
+
+      <Scenes />
+
+      {publish.controlScope && (
+        <section className="studio-section">
+          <h3>Prendre la main</h3>
+          <Field label="Accepter les demandes" hint={publish.controlScope === "window" ? "Un ami peut jouer dans cette fenêtre, seulement si tu acceptes" : "Tu partages un écran entier : pour un jeu, partage plutôt sa fenêtre"}>
+            <Toggle label="Accepter les demandes" checked={publish.allowControl} onChange={allowControl => core.updateStreamInfo({ allowControl })} />
+          </Field>
+          {publish.controller && (
+            <div className="studio-control">
+              <Gamepad2 size={16} />
+              <span>
+                <b>{memberOf(publish.controller)?.name ?? "?"}</b> a la main
+                {publish.controlBlocked && <small>Ses gestes sont ignorés tant que tu es sur une autre fenêtre</small>}
+              </span>
+              <Button variant="danger" onClick={() => core.endControl()}>
+                Reprendre
+              </Button>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="studio-section">
         <div className="studio-head">

@@ -5,6 +5,9 @@ import { tuneOpusSdp } from "./sdp.ts";
 
 export const VOICE_SESSION = "voice";
 
+/** Le lecteur web n'a pas de réglages : il passe seulement ce dont la voix a besoin. */
+type VoiceSettings = Pick<Settings, "micId" | "noiseSuppression" | "echoCancellation" | "autoGain" | "voiceKbps">;
+
 interface Peer {
   pc: RTCPeerConnection;
   answered: boolean;
@@ -21,13 +24,13 @@ export class Voice {
   private readonly selfId: () => string;
   private readonly iceServers: () => IceServer[];
   private readonly sendSignal: (to: string, data: unknown) => void;
-  private settings: Settings;
+  private settings: VoiceSettings;
   private transmitting = true;
 
   onRemoteTrack: (userId: string, track: MediaStreamTrack) => void = () => {};
   onPeerGone: (userId: string) => void = () => {};
 
-  constructor(options: { selfId: () => string; iceServers: () => IceServer[]; sendSignal: (to: string, data: unknown) => void; settings: Settings }) {
+  constructor(options: { selfId: () => string; iceServers: () => IceServer[]; sendSignal: (to: string, data: unknown) => void; settings: VoiceSettings }) {
     this.selfId = options.selfId;
     this.iceServers = options.iceServers;
     this.sendSignal = options.sendSignal;

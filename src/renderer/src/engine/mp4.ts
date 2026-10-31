@@ -122,6 +122,15 @@ export function fragmentSpan(header: Uint8Array, fragments: Fragment[]) {
   return first && last && scale ? (last.time - first.time) / scale : 0;
 }
 
+/** Début de chaque fragment, en secondes depuis le premier : c'est là, et seulement là, qu'on peut couper. */
+export function fragmentTimes(header: Uint8Array, fragments: Fragment[]) {
+  const scales = timescales(header);
+  const first = tracksOf(fragments[0]!.bytes)[0];
+  const scale = first && scales.get(first.id);
+  if (!first || !scale) return fragments.map((_, index) => index);
+  return fragments.map(fragment => (tracksOf(fragment.bytes)[0]!.time - first.time) / scale);
+}
+
 /** Assemble un fichier autonome : le temps repart de zéro, en gardant l'écart exact entre l'image et le son. */
 export function assembleClip(header: Uint8Array, fragments: Fragment[]) {
   const scales = timescales(header);

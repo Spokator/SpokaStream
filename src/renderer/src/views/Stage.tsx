@@ -1,13 +1,15 @@
-import { Activity, Camera, Circle, Clapperboard, Eye, EyeOff, Gauge, Maximize, MousePointer2, Pencil, PictureInPicture2, Radio, Scissors, Smile, Square, TvMinimalPlay, Users, Volume2, VolumeX } from "lucide-react";
+import { Activity, Camera, Circle, Clapperboard, Eye, EyeOff, Gamepad2, Gauge, Maximize, MousePointer2, Pencil, PictureInPicture2, Radio, Rewind, Scissors, Smile, Square, TvMinimalPlay, Users, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { LatencyMode } from "@shared/ipc.ts";
-import type { DrawTool, Member, StreamInfo, ViewerQuality } from "@shared/protocol.ts";
+import { DEFAULT_CAMERA_LAYOUT } from "@shared/protocol.ts";
+import type { CameraLayout, DrawTool, Member, StreamInfo, ViewerQuality } from "@shared/protocol.ts";
 import { core } from "../engine/core.ts";
 import { get, set, TOGETHER, useApp } from "../state/store.ts";
 import { limitText, mbps, pathText, plural } from "../ui/format.ts";
 import { Avatar, Button, IconButton, isTyping, Popover, Slider, Uptime } from "../ui/kit.tsx";
 import { StrokeCanvas } from "../ui/strokes.ts";
 import { FloatingChat, toggleFullscreen, useFullscreen } from "./FloatingChat.tsx";
+import { HandLayer } from "./Hand.tsx";
 import { TogetherTile, useCanShare } from "./Together.tsx";
 
 export const REACTIONS = ["🔥", "😂", "😮", "❤️", "👏", "💀", "🎉", "👀"];
@@ -59,14 +61,56 @@ function Ambient({ video }: { video: React.RefObject<HTMLVideoElement | null> })
   return <canvas ref={canvas} className="tile-ambient" width={32} height={18} aria-hidden />;
 }
 
+interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+const cameraStyle = (layout: CameraLayout, box: Box) => ({ left: box.left + layout.x * box.width, top: box.top + layout.y * box.height, width: layout.width * box.width });
+const cameraClass = (layout: CameraLayout) => `tile-cam is-${layout.shape} ${layout.mirror ? "is-mirror" : ""}`;
+
 /** Bulle caméra du diffuseur, reçue à côté de l'image : chacun peut la masquer sans rien changer pour les autres. */
-function CameraBubble({ media }: { media: MediaStream }) {
+function CameraBubble({ media, layout, box }: { media: MediaStream; layout: CameraLayout; box: Box }) {
   const [hidden, setHidden] = useState(false);
   if (hidden) return null;
   return (
-    <button type="button" className="tile-cam" title="Masquer la caméra" onClick={() => setHidden(true)}>
+    <button type="button" className={cameraClass(layout)} style={cameraStyle(layout, box)} title="Masquer la caméra" onClick={() => setHidden(true)}>
       <Video media={media} />
     </button>
+  );
+}
+
+/** Sur l'aperçu du diffuseur : glisser pour placer, la poignée pour agrandir. Les spectateurs suivent en direct. */
+function CameraEditor({ media, layout, box }: { media: MediaStream; layout: CameraLayout; box: Box }) {
+  const gesture = useRef<{ mode: "move" | "size"; x: number; y: number; from: CameraLayout } | null>(null);
+  const place = (e: React.PointerEvent, commit: boolean) => {
+    const state = gesture.current;
+    if (!state || !box.width) return;
+    const dx = (e.clientX - state.x) / box.width;
+    const dy = (e.clientY - state.y) / box.height;
+    const { from } = state;
+    const width = state.mode === "size" ? Math.max(0.08, Math.min(0.9, from.width + dx, 1 - from.x)) : from.width;
+    const height = ((width * box.width) / box.height) * (from.shape === "circle" ? 1 : 9 / 16);
+    const x = state.mode === "move" ? Math.max(0, Math.min(1 - width, from.x + dx)) : from.x;
+    const y = state.mode === "move" ? Math.max(0, Math.min(1 - height, from.y + dy)) : Math.min(from.y, 1 - height);
+    core.setCameraLayout({ ...from, x, y, width }, commit);
+  };
+  const begin = (e: React.PointerEvent, mode: "move" | "size") => {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    gesture.current = { mode, x: e.clientX, y: e.clientY, from: layout };
+  };
+  const finish = (e: React.PointerEvent) => {
+    place(e, true);
+    gesture.current = null;
+  };
+  return (
+    <div className={`${cameraClass(layout)} is-editable`} style={cameraStyle(layout, box)} title="Glisse pour placer ta caméra" onPointerDown={e => begin(e, "move")} onPointerMove={e => place(e, false)} onPointerUp={finish}>
+      <Video media={media} />
+      <span className="tile-cam-handle" aria-label="Redimensionner la caméra" onPointerDown={e => begin(e, "size")} onPointerMove={e => place(e, false)} onPointerUp={finish} />
+    </div>
   );
 }
 
@@ -258,6 +302,8 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
   const latency = useApp(s => s.settings!.latency);
   const profileColor = useApp(s => s.settings!.profile.color);
   const recording = useApp(s => s.recording?.streamId === stream.id);
+  const hand = useApp(s => (s.hand?.streamId === stream.id ? s.hand : null));
+  const controllerName = useMember(stream.controller ?? "")?.name;
   const video = useRef<HTMLVideoElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const box = useContentBox(video);
@@ -312,7 +358,7 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
   useEffect(() => {
     if (!primary) return;
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e)) return;
+      if (isTyping(e) || get().hand?.state === "granted") return;
       const view = get().subs[stream.id];
       if (!view) return;
       const key = e.key.toLowerCase();
@@ -340,7 +386,7 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
 
   return (
     <div
-      className={`tile ${focused ? "is-focused" : ""} ${zoom.scale > 1 ? "is-zoomed" : ""}`}
+      className={`tile ${focused ? "is-focused" : ""} ${zoom.scale > 1 ? "is-zoomed" : ""} ${hand?.state === "granted" ? "is-hand" : ""}`}
       ref={root}
       onDoubleClick={() => toggleFullscreen(root.current)}
       onPointerDown={e => {
@@ -357,8 +403,9 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
       <div className="tile-canvas" style={zoom.scale > 1 ? { transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})` } : undefined}>
         <Video media={sub.media} videoRef={video} className="tile-video" />
         <DrawLayer streamId={stream.id} box={box} tool={stream.allowDraw ? tool : null} color={profileColor} />
+        {stream.camera && !hasNoVideo && <CameraBubble media={sub.camera} layout={stream.cameraLayout ?? DEFAULT_CAMERA_LAYOUT} box={box} />}
+        {stream.banner && !hasNoVideo && <div className="tile-banner">{stream.banner}</div>}
       </div>
-      {stream.camera && !hasNoVideo && <CameraBubble media={sub.camera} />}
       {hasNoVideo && (
         <div className="tile-audio-only">
           <Avatar name={owner?.name ?? "?"} color={owner?.color} src={owner?.avatar} size={72} />
@@ -368,6 +415,7 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
       <FloatingReactions streamId={stream.id} />
       {statusText && <div className="tile-status">{statusText}</div>}
       {(fullscreen || (cinema && primary)) && <FloatingChat />}
+      {hand?.state === "granted" && <HandLayer box={box} blocked={hand.blocked} ownerName={owner?.name ?? "Le diffuseur"} />}
 
       <div className="tile-top">
         <Pill stream={stream} paused={stream.paused} />
@@ -387,6 +435,11 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
         {recording && (
           <span className="tile-chip is-rec">
             <Circle size={9} fill="currentColor" /> REC
+          </span>
+        )}
+        {controllerName && hand?.state !== "granted" && (
+          <span className="tile-chip">
+            <Gamepad2 size={12} /> {controllerName} a la main
           </span>
         )}
         <span className="tile-spacer" />
@@ -446,6 +499,11 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
         </div>
 
         <div className="tile-bar-group">
+          {stream.allowControl && !stream.controller && !stream.paused && (
+            <IconButton label={hand ? "Demande envoyée" : "Demander la main : jouer à sa place"} active={!!hand} disabled={!!hand} onClick={() => core.askControl(stream.id)}>
+              <Gamepad2 size={18} />
+            </IconButton>
+          )}
           <Popover
             up
             align="right"
@@ -507,6 +565,9 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
           <IconButton label="Capture d'écran" onClick={() => video.current && void core.screenshot(video.current, owner?.name ?? "stream")}>
             <Camera size={18} />
           </IconButton>
+          <IconButton label="Revoir les dernières secondes" disabled={clipSaving} onClick={() => void core.replay()}>
+            <Rewind size={18} />
+          </IconButton>
           <IconButton label="Garder un clip des dernières secondes" disabled={clipSaving} onClick={() => void core.saveClip()}>
             <Scissors size={18} />
           </IconButton>
@@ -539,6 +600,7 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
 function OwnTile({ stream, focused, primary }: { stream: StreamInfo; focused: boolean; primary: boolean }) {
   const publish = useApp(s => s.publish);
   const cinema = useApp(s => s.cinema);
+  const controllerName = useMember(publish?.controller ?? "")?.name;
   const video = useRef<HTMLVideoElement>(null);
   const box = useContentBox(video);
   if (!publish) return null;
@@ -549,7 +611,8 @@ function OwnTile({ stream, focused, primary }: { stream: StreamInfo; focused: bo
       {publish.paused && <div className="tile-status">Stream en pause : les spectateurs ne voient plus ton écran</div>}
       <DrawLayer streamId={stream.id} box={box} tool={null} color="#ffffff" />
       <FloatingReactions streamId={stream.id} />
-      {publish.camera && <CameraBubble media={publish.camera} />}
+      {publish.camera && <CameraEditor media={publish.camera} layout={publish.cameraLayout} box={box} />}
+      {publish.banner && <div className="tile-banner">{publish.banner}</div>}
       {cinema && primary && <FloatingChat />}
       <div className="tile-top">
         <Pill stream={stream} paused={publish.paused} />
@@ -561,6 +624,11 @@ function OwnTile({ stream, focused, primary }: { stream: StreamInfo; focused: bo
           <Users size={12} />
           {stream.viewers.length}
         </span>
+        {controllerName && (
+          <span className="tile-chip">
+            <Gamepad2 size={12} /> {controllerName} a la main
+          </span>
+        )}
         <span className="tile-spacer" />
         {stats && (
           <span className="tile-chip">

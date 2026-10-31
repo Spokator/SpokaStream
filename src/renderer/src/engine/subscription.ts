@@ -1,5 +1,5 @@
 import type { LatencyMode } from "@shared/ipc.ts";
-import type { IceServer } from "@shared/protocol.ts";
+import type { ControlToHost, ControlToViewer, IceServer } from "@shared/protocol.ts";
 import { rtcConfig } from "./rtc.ts";
 import { tuneOpusSdp } from "./sdp.ts";
 import { ReceiveMeter } from "./stats.ts";
@@ -16,6 +16,7 @@ export class Subscription {
   readonly media = new MediaStream();
   readonly camera = new MediaStream();
   private pc: RTCPeerConnection | null = null;
+  private control: RTCDataChannel | null = null;
   private readonly iceServers: () => IceServer[];
   private readonly sendSignal: (data: unknown) => void;
   private readonly meter = new ReceiveMeter();
@@ -28,6 +29,7 @@ export class Subscription {
   onTrack: (track: MediaStreamTrack) => void = () => {};
   /** La connexion ne reviendra pas seule : il faut demander au diffuseur d'en ouvrir une nouvelle. */
   onLost: () => void = () => {};
+  onControl: (message: ControlToViewer) => void = () => {};
 
   constructor(streamId: string, ownerId: string, latency: LatencyMode, iceServers: () => IceServer[], sendSignal: (data: unknown) => void) {
     this.streamId = streamId;
@@ -69,6 +71,11 @@ export class Subscription {
         this.applyLatency();
         if (!isCamera) this.onTrack(e.track);
       };
+      pc.ondatachannel = event => {
+        if (event.channel.label !== "control") return;
+        this.control = event.channel;
+        event.channel.onmessage = message => this.onControl(JSON.parse(message.data as string) as ControlToViewer);
+      };
       pc.onconnectionstatechange = () => {
         if (pc !== this.pc) return;
         if (this.unstableTimer) clearTimeout(this.unstableTimer);
@@ -99,6 +106,10 @@ export class Subscription {
       if (this.ready && this.pc) await this.pc.addIceCandidate(data.candidate).catch(() => {});
       else this.pending.push(data.candidate);
     }
+  }
+
+  sendControl(message: ControlToHost) {
+    if (this.control?.readyState === "open") this.control.send(JSON.stringify(message));
   }
 
   async stats(): Promise<ReceiveStats | null> {

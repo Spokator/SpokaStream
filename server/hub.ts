@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
 import {
+  DEFAULT_CAMERA_LAYOUT,
   DEFAULT_ROOM_SETTINGS,
   DEFAULT_VIEWER_QUALITY,
   LIMITS,
@@ -7,8 +8,10 @@ import {
   youtubeId,
 } from "../src/shared/protocol.ts";
 import type {
+  CameraLayout,
   ChatMessage,
   ClientMessage,
+  ClipInfo,
   ErrorCode,
   IceServer,
   Member,
@@ -64,6 +67,7 @@ interface Conn {
   transport: Transport;
   userId: string | null;
   profile: Profile | null;
+  web: boolean;
   room: Room | null;
   subscriptions: Set<string>;
   buckets: Record<"chat" | "image" | "draw" | "reaction" | "signal" | "room" | "misc", Bucket>;
@@ -125,10 +129,21 @@ function cleanQuality(q: Partial<ViewerQuality> | undefined): ViewerQuality {
   };
 }
 
+function cleanLayout(l: Partial<CameraLayout> | undefined): CameraLayout {
+  const part = (v: unknown, min: number, max: number, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback);
+  return {
+    x: part(l?.x, 0, 1, DEFAULT_CAMERA_LAYOUT.x),
+    y: part(l?.y, 0, 1, DEFAULT_CAMERA_LAYOUT.y),
+    width: part(l?.width, 0.05, 1, DEFAULT_CAMERA_LAYOUT.width),
+    shape: l?.shape === "rect" || l?.shape === "circle" ? l.shape : "round",
+    mirror: l?.mirror === true,
+  };
+}
+
 function cleanAnnounce(s: Partial<StreamAnnounce>): StreamAnnounce {
   return {
     title: clean(s.title, LIMITS.title),
-    kind: s.kind === "window" || s.kind === "camera" || s.kind === "file" ? s.kind : "screen",
+    kind: s.kind === "window" || s.kind === "camera" || s.kind === "file" || s.kind === "obs" ? s.kind : "screen",
     sourceName: clean(s.sourceName, LIMITS.title),
     width: clampNumber(s.width, 0, 8192, 0),
     height: clampNumber(s.height, 0, 4320, 0),
@@ -139,7 +154,18 @@ function cleanAnnounce(s: Partial<StreamAnnounce>): StreamAnnounce {
     allowDraw: s.allowDraw !== false,
     maxViewers: clampNumber(s.maxViewers, 0, LIMITS.membersPerRoom, 0),
     camera: s.camera === true,
+    cameraLayout: cleanLayout(s.cameraLayout),
+    banner: clean(s.banner, LIMITS.title),
+    allowControl: s.allowControl === true,
+    controller: isString(s.controller, 32) && s.controller ? s.controller : null,
   };
+}
+
+function cleanClip(c: Partial<ClipInfo> | null | undefined): ClipInfo | null {
+  if (!c || typeof c !== "object" || typeof c.id !== "string" || !/^[0-9a-f]{16}$/.test(c.id)) return null;
+  const bytes = clampNumber(c.bytes, 0, LIMITS.clipBytes, 0);
+  if (!bytes) return null;
+  return { id: c.id, title: clean(c.title, LIMITS.title), seconds: clampNumber(c.seconds, 1, 600, 1), bytes, thumb: isDataImage(c.thumb, LIMITS.clipThumb) ? c.thumb : null };
 }
 
 export class Hub {
@@ -183,6 +209,7 @@ export class Hub {
       transport,
       userId: null,
       profile: null,
+      web: false,
       room: null,
       subscriptions: new Set(),
       buckets: {
@@ -271,8 +298,8 @@ export class Hub {
       }
       case "chat.send":
         if (!conn.buckets.chat.take(now)) return this.fail(conn, "rate_limited");
-        if (msg.image && !conn.buckets.image.take(now)) return this.fail(conn, "rate_limited");
-        return this.onChat(conn, msg.text, msg.replyTo ?? null, msg.image ?? null);
+        if ((msg.image || msg.clip) && !conn.buckets.image.take(now)) return this.fail(conn, "rate_limited");
+        return this.onChat(conn, msg.text, msg.replyTo ?? null, msg.image ?? null, msg.clip ?? null);
       case "chat.delete":
         return this.onChatDelete(conn, msg.id);
       case "chat.react":
@@ -381,6 +408,7 @@ export class Hub {
     // Pas de compte : le jeton aléatoire de l'appareil EST l'identité. Le serveur n'en garde que l'empreinte.
     conn.userId = createHash("sha256").update(msg.token).digest("hex").slice(0, 24);
     conn.profile = cleanProfile(msg.profile);
+    conn.web = msg.client === "web";
     this.send(conn, { t: "welcome", userId: conn.userId, iceServers: this.iceServers(conn.userId), serverName: this.serverName });
     this.reply(conn, msg, true);
   }
@@ -444,7 +472,7 @@ export class Hub {
       }
       existing.conn = conn;
       existing.member.online = true;
-      Object.assign(existing.member, conn.profile);
+      Object.assign(existing.member, conn.profile, { web: conn.web });
       conn.room = room;
       this.send(conn, { t: "room.state", room: this.snapshot(room) });
       this.broadcast(room, { t: "member.update", member: existing.member }, userId);
@@ -456,6 +484,7 @@ export class Hub {
       role: room.data.ownerId === userId ? "owner" : "member",
       online: true,
       voice: null,
+      web: conn.web,
     };
     room.members.set(userId, { member, conn, grace: null });
     conn.room = room;
@@ -533,11 +562,13 @@ export class Hub {
     this.removeMember(room, userId);
   }
 
-  private onChat(conn: Conn, rawText: unknown, replyTo: string | null, rawImage: unknown) {
+  private onChat(conn: Conn, rawText: unknown, replyTo: string | null, rawImage: unknown, rawClip: ClipInfo | null) {
     const room = conn.room;
     const live = this.liveOf(conn);
     if (!room || !live) return;
-    const text = typeof rawText === "string" ? rawText.trim().slice(0, LIMITS.chat) : "";
+    const clip = cleanClip(rawClip);
+    // Le texte d'un clip n'est lu que par les versions qui ne savent pas l'afficher.
+    const text = clip ? `🎬 Clip de ${clip.seconds} s` : typeof rawText === "string" ? rawText.trim().slice(0, LIMITS.chat) : "";
     const image = isDataImage(rawImage, LIMITS.image) ? rawImage : null;
     if (!text && !image) return;
     const message: ChatMessage = {
@@ -550,6 +581,7 @@ export class Hub {
       replyTo: isString(replyTo, 24) ? replyTo : null,
       kind: "user",
       image,
+      clip,
     };
     this.remember(room, message);
     this.broadcast(room, { t: "chat", message });
@@ -578,7 +610,7 @@ export class Hub {
     if (!room || room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
     const message = id ? room.data.history.find(m => m.id === id && m.kind === "user") : null;
     if (id && !message) return;
-    room.data.pinned = message ? { ...message, image: null } : null;
+    room.data.pinned = message ? { ...message, image: null, clip: null } : null;
     this.persist();
     this.broadcast(room, { t: "chat.pinned", message: room.data.pinned });
   }
@@ -710,6 +742,7 @@ export class Hub {
     for (let i = room.data.history.length - 1; i >= 0; i--) {
       const old = room.data.history[i]!;
       if (old.image && ++images > LIMITS.imagesPerRoom) old.image = null;
+      if (old.clip?.thumb && ++images > LIMITS.imagesPerRoom) old.clip.thumb = null;
     }
     room.data.lastActivity = message.at;
     this.persist();
@@ -850,7 +883,7 @@ export class Hub {
 
   /** Les images restent en mémoire : un fichier réécrit à chaque message ne doit pas en porter le poids. */
   private persist() {
-    this.store.save([...this.rooms.values()].map(r => ({ ...r.data, history: r.data.history.map(m => (m.image ? { ...m, image: null } : m)) })));
+    this.store.save([...this.rooms.values()].map(r => ({ ...r.data, history: r.data.history.map(m => (m.image || m.clip?.thumb ? { ...m, image: null, clip: m.clip && { ...m.clip, thumb: null } } : m)) })));
   }
 
   private broadcast(room: Room, msg: ServerMessage, exceptUserId?: string) {

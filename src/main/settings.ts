@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_HOTKEYS } from "../shared/ipc.ts";
+import { DEFAULT_CAMERA_LAYOUT } from "../shared/protocol.ts";
 import type { Settings } from "../shared/ipc.ts";
 
 const COLORS = ["#7c5cff", "#22d3ee", "#34d399", "#f59e0b", "#f472b6", "#fb7185", "#a78bfa", "#60a5fa"];
@@ -42,6 +43,8 @@ function defaults(): Settings {
       normalizeAudio: false,
       clipSeconds: 30,
       cameraId: "",
+      cameraLayout: DEFAULT_CAMERA_LAYOUT,
+      allowControl: true,
     },
     hotkeys: DEFAULT_HOTKEYS,
     overlay: { enabled: true, reactions: true, chat: true, viewers: true, corner: "top-right" },
@@ -51,6 +54,8 @@ function defaults(): Settings {
     accent: "#7c5cff",
     uiScale: 1,
     ambient: true,
+    scenes: [],
+    obsKey: randomBytes(16).toString("hex"),
   };
 }
 

@@ -1,16 +1,20 @@
-import type { HotkeyMap, Resolution, Settings } from "@shared/ipc.ts";
+import type { ControlTarget, HotkeyMap, Resolution, Scene, SceneSource, Settings } from "@shared/ipc.ts";
 import { DEFAULT_VIEWER_QUALITY, youtubeId } from "@shared/protocol.ts";
-import type { AudioKind, ChatMessage, ErrorCode, Poll, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
+import type { AudioKind, CameraLayout, ChatMessage, ControlInput, ControlToHost, ControlToViewer, ErrorCode, Poll, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
 import { get, memberOf, patchPublish, patchRoom, patchSub, set, toast, TOGETHER, useApp } from "../state/store.ts";
 import { mentionsName } from "../ui/format.ts";
-import { frameForChat } from "../ui/image.ts";
+import { clipThumb, frameForChat } from "../ui/image.ts";
 import { StreamMixer } from "./audio/mixer.ts";
 import { Playback } from "./audio/playback.ts";
 import { captureThumbnail, createPauseCard, openSource } from "./capture.ts";
 import type { OpenedSource, VideoSource } from "./capture.ts";
 import { ClipBuffer } from "./clips.ts";
+import type { ClipSource } from "./clips.ts";
+import { CLIP_SESSION, ClipShare } from "./clipShare.ts";
 import { benchClass, cachedBench, measureEncoders, rankResults } from "./encoders.ts";
 import type { BenchResult } from "./encoders.ts";
+import { assembleClip, fragmentTimes } from "./mp4.ts";
+import { ObsIngest } from "./obs.ts";
 import { Publisher } from "./publisher.ts";
 import type { EncodingTarget } from "./publisher.ts";
 import { Recorder, saveClipFile, saveVideoFrame } from "./recorder.ts";
@@ -55,6 +59,10 @@ const ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
   stream_not_found: "Ce stream vient de se terminer.",
 };
 
+const LAYOUT_SEND_MS = 80;
+const ASK_COOLDOWN_MS = 10_000;
+const ASK_TIMEOUT_MS = 30_000;
+
 const resolutionHeight = (r: Resolution) => (r === "source" ? 0 : Number(r));
 const savedVolume = (ownerId: string) => {
   try {
@@ -80,7 +88,16 @@ class Core {
   private clipBuffer: ClipBuffer | null = null;
   private clipSource: string | null = null;
   private clipHardware = true;
+  /** Le clip ouvert : ses fragments s'il vient d'être pris, ses octets s'il vient de quelqu'un d'autre. */
+  private openedClip: { source: ClipSource | null; bytes: Uint8Array | null } | null = null;
+  private readonly clipShares = new ClipShare(() => get().iceServers, (to, session, data) => this.signal.send({ t: "rtc", to, session, data }));
   private lastTyping = 0;
+  private readonly obs = new ObsIngest();
+  private currentSource: VideoSource | null = null;
+  private layoutSentAt = 0;
+  private controlTarget: ControlTarget | null = null;
+  private readonly askedAt = new Map<string, number>();
+  private askTimer: ReturnType<typeof setTimeout> | undefined;
   private cameraStream: MediaStream | null = null;
   private sourceMixId: string | null = null;
   private announce: StreamAnnounce | null = null;
@@ -109,7 +126,17 @@ class Core {
       else if (action === "toggleDeafen") this.toggleDeafen();
       else if (action === "stopStream") void this.stopLive();
       else if (action === "pauseStream") void this.setPaused(!get().publish?.paused);
+      else if (action === "revokeControl") this.endControl();
       else this.leaveRoom();
+    });
+    this.obs.onChange = obs => set({ obs });
+    api.onObsOffer((id, sdp) => void this.onObsOffer(id, sdp));
+    api.onObsEnd(id => this.obs.end(id));
+    api.onControlBlocked(blocked => {
+      const controller = get().publish?.controller;
+      if (!controller) return;
+      patchPublish({ controlBlocked: blocked });
+      this.publisher?.sendControl(controller, { t: "blocked", blocked });
     });
     api.onKey((key, down) => {
       if (key !== get().settings?.pttKey) return;
@@ -125,6 +152,7 @@ class Core {
     this.timers.push(setInterval(() => this.pollSpeaking(), 120));
     this.timers.push(setInterval(() => this.expireTyping(), 1000));
     this.timers.push(setInterval(() => this.followClips(), 1500));
+    this.timers.push(setInterval(() => get().hand?.state === "granted" && this.handSub()?.sendControl({ t: "alive" }), 1000));
 
     void ClipBuffer.hasHardwareEncoder().then(hardware => (this.clipHardware = hardware));
     if (settings.onboarded) this.connect();
@@ -255,6 +283,7 @@ class Core {
 
   private onRtc(from: string, session: string, data: unknown) {
     const signal = data as { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
+    if (session.startsWith(CLIP_SESSION)) return void this.clipShares.onSignal(from, session, signal).catch(e => console.warn("clip :", e));
     if (session === VOICE_SESSION) return void this.voice?.onSignal(from, signal).catch(e => console.error("voix :", e));
     if (session === this.publisher?.sessionId) return void this.publisher.onSignal(from, signal).catch(e => console.error("stream :", e));
     void this.subs.get(session)?.onSignal(signal).catch(e => console.error("réception :", e));
@@ -584,6 +613,7 @@ class Core {
       this.playback.add(streamId, "stream", track, view?.volume ?? 1, view?.muted ?? false);
       patchSub(streamId, { hasAudio: true });
     };
+    sub.onControl = message => this.onHandMessage(streamId, message);
     sub.onLost = () => {
       if (this.subs.has(streamId)) void this.signal.request({ t: "stream.watch", id: streamId, on: true, quality: get().subs[streamId]?.quality }).catch(() => {});
     };
@@ -604,6 +634,7 @@ class Core {
     const sub = this.subs.get(streamId);
     if (!sub) return;
     if (get().recording?.streamId === streamId) void this.stopRecording();
+    if (get().hand?.streamId === streamId) set({ hand: null });
     sub.close();
     this.subs.delete(streamId);
     this.playback.remove(streamId);
@@ -767,6 +798,15 @@ class Core {
       iceServers: () => get().iceServers,
       sendSignal: (to, data) => this.signal.send({ t: "rtc", to, session: streamId, data }),
     });
+    this.publisher.onControl = (from, message) => this.onHostControl(from, message);
+    this.publisher.onViewerGone = id => {
+      if (get().publish?.controller === id) this.endControl();
+      if (get().publish?.controlAsk === id) patchPublish({ controlAsk: null });
+    };
+    this.currentSource = config.source;
+    this.controlTarget = this.controlTargetOf(config.source);
+    const allowControl = !!this.controlTarget && get().settings!.stream.allowControl;
+    const { cameraLayout } = get().settings!.stream;
     const preview = new MediaStream([opened.track]);
     set({
       publish: {
@@ -785,6 +825,14 @@ class Core {
         allowDraw: config.allowDraw,
         maxViewers: config.maxViewers,
         camera: null,
+        cameraLayout,
+        banner: "",
+        scene: null,
+        allowControl,
+        controlScope: this.controlTarget?.hwnd ? "window" : this.controlTarget ? "screen" : null,
+        controlAsk: null,
+        controller: null,
+        controlBlocked: false,
       },
       panelTab: "studio",
     });
@@ -805,6 +853,10 @@ class Core {
       allowDraw: config.allowDraw,
       maxViewers: config.maxViewers,
       camera: false,
+      cameraLayout,
+      banner: "",
+      allowControl,
+      controller: null,
     };
     try {
       await this.signal.request({ t: "stream.start", id: streamId, stream: this.announce });
@@ -868,6 +920,13 @@ class Core {
     }
     const previous = this.opened;
     next.track.contentHint = priority === "detail" ? "detail" : "motion";
+    // La main donnée visait l'ancienne source : elle ne suit jamais un changement.
+    this.endControl();
+    this.currentSource = source;
+    this.controlTarget = this.controlTargetOf(source);
+    const allowControl = !!this.controlTarget && get().settings!.stream.allowControl;
+    patchPublish({ allowControl, controlScope: this.controlTarget?.hwnd ? "window" : this.controlTarget ? "screen" : null });
+    this.updateAnnounce({ allowControl });
     this.opened = next;
     this.sourceGone = false;
     this.watchSource(next);
@@ -893,6 +952,7 @@ class Core {
     const publish = get().publish;
     if (!publish || !this.publisher || publish.paused === paused) return;
     if (paused) {
+      this.endControl();
       this.pauseCard = createPauseCard();
       await this.publisher.replaceVideo(this.pauseCard.track, 720);
     } else {
@@ -918,7 +978,8 @@ class Core {
     await this.publisher.applyTarget(target, publish.bench);
   }
 
-  updateStreamInfo(patch: { title?: string; allowDraw?: boolean; maxViewers?: number }) {
+  updateStreamInfo(patch: { title?: string; allowDraw?: boolean; maxViewers?: number; allowControl?: boolean }) {
+    if (patch.allowControl === false) this.endControl();
     patchPublish(patch);
     this.updateAnnounce(patch);
     if (patch.allowDraw === false && get().publish) this.clearDrawings(get().publish!.streamId);
@@ -933,6 +994,9 @@ class Core {
     const publish = get().publish;
     if (!publish && !this.publisher) return;
     if (get().recording?.streamId === publish?.streamId) await this.stopRecording();
+    this.endControl();
+    this.controlTarget = null;
+    this.currentSource = null;
     this.stopClips();
     this.cameraStream?.getTracks().forEach(t => t.stop());
     this.cameraStream = null;
@@ -1014,26 +1078,328 @@ class Core {
     this.clipSource = null;
   }
 
-  async saveClip() {
+  private async takeClip() {
     const buffer = this.clipBuffer;
-    if (get().clipSaving) return;
+    if (get().clipSaving) return null;
     if (!buffer) {
       const reason = !this.clipHardware ? "Ce PC n'a pas d'encodeur matériel H.264 : les clips restent coupés pour ne pas ralentir le stream." : get().settings?.stream.clipSeconds ? "Rien à garder pour l'instant : diffuse ou regarde un stream." : "Les clips sont coupés dans Paramètres, Diffusion.";
-      return toast(reason, "info");
+      toast(reason, "info");
+      return null;
     }
     set({ clipSaving: true });
     try {
-      const data = await buffer.save();
-      if (!data) return toast("Clip trop court : réessaie dans quelques secondes.", "info");
-      const publish = get().publish;
-      const name = publish ? publish.title || publish.sourceName : memberOf(get().subs[get().focused ?? ""]?.ownerId ?? "")?.name ?? "stream";
-      const file = await saveClipFile(data, name);
-      playSound("unmute", get().settings!.soundEffects);
-      toast(`Clip gardé : ${Math.round(buffer.lastSeconds)} s`, "success", 7000, { label: "Voir le fichier", run: () => api.reveal(file) });
-    } catch (e) {
-      this.reportError(e);
+      const source = await buffer.save();
+      if (!source) toast("Clip trop court : réessaie dans quelques secondes.", "info");
+      return source;
     } finally {
       set({ clipSaving: false });
+    }
+  }
+
+  private clipTitle() {
+    const publish = get().publish;
+    return publish ? publish.title || publish.sourceName : memberOf(get().subs[get().focused ?? ""]?.ownerId ?? "")?.name ?? "Stream";
+  }
+
+  async saveClip() {
+    try {
+      const source = await this.takeClip();
+      if (!source) return;
+      const title = this.clipTitle();
+      const file = await saveClipFile(assembleClip(source.header, source.fragments), title);
+      playSound("unmute", get().settings!.soundEffects);
+      toast(`Clip gardé : ${Math.round(source.seconds)} s`, "success", 7000, { label: "Revoir", run: () => this.showTaken(source, title, file) });
+    } catch (e) {
+      this.reportError(e);
+    }
+  }
+
+  /** Revoir ce qui vient de se passer : rien n'est écrit tant qu'on ne le demande pas. */
+  async replay() {
+    const title = this.clipTitle();
+    const source = await this.takeClip().catch(e => (this.reportError(e), null));
+    if (source) this.showTaken(source, title, null);
+  }
+
+  private showClip(view: { title: string; seconds: number; times: number[] | null; path: string | null }, bytes: Uint8Array, opened: { source: ClipSource | null; bytes: Uint8Array | null }) {
+    this.closeClip();
+    this.openedClip = opened;
+    set({ clip: { ...view, url: URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "video/mp4" })) } });
+  }
+
+  private showTaken(source: ClipSource, title: string, path: string | null) {
+    const bytes = assembleClip(source.header, source.fragments);
+    this.showClip({ title, seconds: source.seconds, times: fragmentTimes(source.header, source.fragments), path }, bytes, { source, bytes: null });
+  }
+
+  closeClip() {
+    const clip = get().clip;
+    if (clip) URL.revokeObjectURL(clip.url);
+    this.openedClip = null;
+    set({ clip: null });
+  }
+
+  private clipRange(start: number, end: number) {
+    const source = this.openedClip?.source;
+    return source ? assembleClip(source.header, source.fragments.slice(start, end)) : null;
+  }
+
+  /** Rend le chemin du fichier écrit. */
+  async keepClip(start: number, end: number) {
+    const bytes = this.clipRange(start, end) ?? this.openedClip?.bytes;
+    const title = get().clip?.title;
+    if (!bytes || !title) return null;
+    try {
+      const file = await saveClipFile(bytes, title);
+      toast("Clip enregistré", "success");
+      return file;
+    } catch (e) {
+      this.reportError(e);
+      return null;
+    }
+  }
+
+  /** Le clip reste ici : le salon n'en reçoit que la vignette, et chacun le demande en l'ouvrant. */
+  async shareClip(start: number, end: number, video: HTMLVideoElement) {
+    const source = this.openedClip?.source;
+    const bytes = this.clipRange(start, end);
+    const clip = get().clip;
+    if (!source || !bytes || !clip) return;
+    const times = clip.times!;
+    const seconds = Math.max(1, Math.round((times[end] ?? clip.seconds) - times[start]!));
+    const id = [...crypto.getRandomValues(new Uint8Array(8))].map(b => b.toString(16).padStart(2, "0")).join("");
+    this.clipShares.hold(id, bytes);
+    this.signal.send({ t: "chat.send", text: "", clip: { id, title: clip.title, seconds, bytes: bytes.length, thumb: clipThumb(video) } });
+  }
+
+  async openClip(message: ChatMessage) {
+    const clip = message.clip;
+    if (!clip || get().clipLoading) return;
+    const own = this.clipShares.get(clip.id);
+    if (own) return this.showClip({ title: clip.title, seconds: clip.seconds, times: null, path: null }, own, { source: null, bytes: own });
+    set({ clipLoading: { id: clip.id, share: 0 } });
+    try {
+      const bytes = await this.clipShares.fetch(message.authorId, clip.id, clip.bytes, share => set({ clipLoading: { id: clip.id, share } }));
+      this.showClip({ title: clip.title, seconds: clip.seconds, times: null, path: null }, bytes, { source: null, bytes });
+    } catch (e) {
+      toast((e as Error).message, "warning");
+    } finally {
+      set({ clipLoading: null });
+    }
+  }
+
+  // ---------------------------------------------------------------- obs
+
+  private async onObsOffer(id: string, sdp: string) {
+    const wasLive = this.currentSource?.kind === "obs";
+    try {
+      const { addresses } = await api.obsInfo();
+      api.obsAnswer(id, await this.obs.accept(id, sdp, addresses));
+    } catch (e) {
+      console.warn("obs :", e);
+      return api.obsAnswer(id, null);
+    }
+    await this.waitForObs();
+    // OBS relancé en plein direct : le stream reprend tout seul là où il s'était arrêté.
+    if (wasLive && this.publisher) {
+      await this.switchSource({ kind: "obs", ingest: this.obs }, []);
+      return void this.setPaused(false);
+    }
+    if (get().room && !get().publish) toast("OBS est connecté.", "success", 8000, { label: "Diffuser", run: () => set({ goLiveOpen: true, view: "room" }) });
+  }
+
+  private async waitForObs() {
+    for (let i = 0; i < 40 && !this.obs.connected; i++) await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  obsSource(): VideoSource {
+    return { kind: "obs", ingest: this.obs };
+  }
+
+  obsPreview() {
+    const track = this.obs.videoTrack;
+    return track ? new MediaStream([track]) : null;
+  }
+
+  // ---------------------------------------------------------------- caméra et scènes
+
+  /** Pendant un glissement, le salon suit sans être noyé. commit : fin du geste, on garde cette place pour la prochaine fois. */
+  setCameraLayout(cameraLayout: CameraLayout, commit: boolean) {
+    patchPublish({ cameraLayout, scene: null });
+    const now = performance.now();
+    if (commit || now - this.layoutSentAt >= LAYOUT_SEND_MS) {
+      this.layoutSentAt = now;
+      this.updateAnnounce({ cameraLayout });
+    }
+    if (commit) void this.updateSettings({ stream: { ...get().settings!.stream, cameraLayout } });
+  }
+
+  setBanner(banner: string) {
+    patchPublish({ banner, scene: null });
+    this.updateAnnounce({ banner });
+  }
+
+
+  async saveScene(name: string) {
+    const publish = get().publish;
+    if (!publish) return;
+    const scene: Scene = { id: crypto.randomUUID(), name, source: this.currentSource && this.sceneSourceOf(this.currentSource), camera: !!publish.camera, cameraLayout: publish.cameraLayout, banner: publish.banner };
+    await this.updateSettings({ scenes: [...get().settings!.scenes, scene] });
+    patchPublish({ scene: scene.id });
+  }
+
+  deleteScene(id: string) {
+    void this.updateSettings({ scenes: get().settings!.scenes.filter(s => s.id !== id) });
+    if (get().publish?.scene === id) patchPublish({ scene: null });
+  }
+
+  /** Une fenêtre change d'identifiant quand on relance le jeu : son nom sert alors à la retrouver. */
+  private async resolveScene(source: SceneSource): Promise<VideoSource | null> {
+    if (source.kind === "obs") return this.obs.connected ? this.obsSource() : null;
+    if (source.kind === "camera") return source;
+    const sources = await api.listSources();
+    const found = sources.find(s => s.id === source.id) ?? sources.find(s => s.kind === source.kind && s.name === source.name);
+    return found ? ({ kind: source.kind, source: found } as VideoSource) : null;
+  }
+
+  async applyScene(id: string) {
+    const scene = get().settings!.scenes.find(s => s.id === id);
+    if (!scene || !this.publisher) return;
+    if (scene.source) {
+      const next = await this.resolveScene(scene.source);
+      if (!next) return toast(`La source de « ${scene.name} » n'est plus disponible.`, "warning");
+      const same = this.currentSource && JSON.stringify(this.sceneSourceOf(this.currentSource)) === JSON.stringify(this.sceneSourceOf(next));
+      if (!same) await this.switchSource(next, next.kind === "obs" ? [] : null);
+    }
+    const stream = get().settings!.stream;
+    if (scene.camera && !this.cameraStream) await this.setCamera(stream.cameraId);
+    else if (!scene.camera && this.cameraStream) await this.setCamera(null);
+    patchPublish({ cameraLayout: scene.cameraLayout, banner: scene.banner, scene: id });
+    this.updateAnnounce({ cameraLayout: scene.cameraLayout, banner: scene.banner });
+  }
+
+  private sceneSourceOf(source: VideoSource): SceneSource | null {
+    if (source.kind === "screen" || source.kind === "window") return { kind: source.kind, id: source.source.id, name: source.source.name };
+    if (source.kind === "camera") return { kind: "camera", deviceId: source.deviceId, label: source.label };
+    return source.kind === "obs" ? { kind: "obs" } : null;
+  }
+
+  // ---------------------------------------------------------------- prendre la main
+
+  private controlTargetOf(source: VideoSource): ControlTarget | null {
+    if (source.kind === "window") return { hwnd: source.source.id.split(":")[1] };
+    if (source.kind === "screen") return { displayId: source.source.displayId };
+    return null;
+  }
+
+  private onHostControl(from: string, message: ControlToHost) {
+    const publish = get().publish;
+    if (!publish || !this.publisher) return;
+    const hasHand = publish.controller === from;
+    if (message.t === "input") {
+      if (hasHand && Array.isArray(message.events)) api.controlInput(message.events);
+    } else if (message.t === "alive") {
+      if (hasHand) api.controlInput([]);
+    } else if (message.t === "release") {
+      if (hasHand) this.endControl();
+      else if (publish.controlAsk === from) this.clearAsk();
+    } else if (message.t === "ask") {
+      this.onAsk(from);
+    }
+  }
+
+  private onAsk(from: string) {
+    const publish = get().publish!;
+    const now = performance.now();
+    const refused = !publish.allowControl || !publish.controlScope || publish.paused || !!memberOf(from)?.web || !!publish.controller || !!publish.controlAsk;
+    if (refused || now - (this.askedAt.get(from) ?? -ASK_COOLDOWN_MS) < ASK_COOLDOWN_MS) return this.publisher!.sendControl(from, { t: "refused" });
+    this.askedAt.set(from, now);
+    patchPublish({ controlAsk: from });
+    const name = memberOf(from)?.name ?? "Quelqu'un";
+    const hotkey = get().settings!.hotkeys.control;
+    playSound("live", get().settings!.soundEffects);
+    // En plein jeu, le diffuseur ne voit pas la fenêtre : l'overlay et la notification le préviennent. Un écran entier se décide dans l'application.
+    api.overlaySend({ type: "control", text: publish.controlScope === "window" && hotkey ? `${name} demande la main · ${hotkey} pour accepter` : `${name} demande la main : réponds dans SpokaStream` });
+    if (!document.hasFocus()) api.notify({ title: `${name} demande la main`, body: "Ouvre SpokaStream pour répondre.", roomId: get().room?.id });
+  }
+
+  private clearAsk() {
+    patchPublish({ controlAsk: null });
+    api.overlaySend({ type: "control", text: null });
+  }
+
+  async acceptControl() {
+    const asker = get().publish?.controlAsk;
+    const scope = get().publish?.controlScope;
+    const target = this.controlTarget;
+    if (!asker || !scope || !target || !this.publisher) return;
+    this.clearAsk();
+    if (!(await api.controlArm(target))) return toast("Le moteur n'a pas pu préparer la prise en main.", "error");
+    patchPublish({ controller: asker, controlBlocked: false });
+    this.updateAnnounce({ controller: asker });
+    this.publisher.sendControl(asker, { t: "granted", scope });
+    const name = memberOf(asker)?.name ?? "";
+    const hotkey = get().settings!.hotkeys.control;
+    api.overlaySend({ type: "control", text: `${name} a la main${hotkey ? ` · ${hotkey} pour la reprendre` : ""}` });
+    this.pushTray();
+  }
+
+  refuseControl() {
+    const asker = get().publish?.controlAsk;
+    if (!asker) return;
+    this.clearAsk();
+    this.publisher?.sendControl(asker, { t: "refused" });
+  }
+
+  /** Reprendre la main : le moteur est désarmé d'abord, le spectateur n'est prévenu qu'ensuite. */
+  endControl() {
+    const controller = get().publish?.controller;
+    if (!controller) return;
+    api.controlDisarm();
+    patchPublish({ controller: null, controlBlocked: false });
+    this.updateAnnounce({ controller: null });
+    this.publisher?.sendControl(controller, { t: "revoked" });
+    api.overlaySend({ type: "control", text: null });
+    this.pushTray();
+  }
+
+  private handSub() {
+    return this.subs.get(get().hand?.streamId ?? "");
+  }
+
+  askControl(streamId: string) {
+    this.subs.get(streamId)?.sendControl({ t: "ask" });
+    set({ hand: { streamId, state: "asking", blocked: false } });
+    clearTimeout(this.askTimer);
+    this.askTimer = setTimeout(() => {
+      if (get().hand?.state !== "asking") return;
+      this.subs.get(streamId)?.sendControl({ t: "release" });
+      set({ hand: null });
+      toast("Pas de réponse pour l'instant.", "info");
+    }, ASK_TIMEOUT_MS);
+  }
+
+  releaseControl() {
+    this.handSub()?.sendControl({ t: "release" });
+    set({ hand: null });
+  }
+
+  sendControlInput(events: ControlInput[]) {
+    this.handSub()?.sendControl({ t: "input", events });
+  }
+
+  private onHandMessage(streamId: string, message: ControlToViewer) {
+    const hand = get().hand;
+    if (hand?.streamId !== streamId) return;
+    if (message.t === "granted") {
+      clearTimeout(this.askTimer);
+      set({ hand: { ...hand, state: "granted" } });
+    } else if (message.t === "blocked") {
+      set({ hand: { ...hand, blocked: message.blocked } });
+    } else {
+      clearTimeout(this.askTimer);
+      set({ hand: null });
+      toast(message.t === "refused" ? "Demande refusée." : "Le diffuseur a repris la main.", "info");
     }
   }
 
@@ -1141,11 +1507,21 @@ class Core {
     if (action === "toggleDeafen") return this.toggleDeafen();
     if (action === "pauseStream") return void this.setPaused(!get().publish?.paused);
     if (action === "saveClip") return void this.saveClip();
+    if (action === "control") return this.onControlHotkey();
     if (get().publish) return void this.stopLive();
     if (get().room) {
       api.showWindow();
       set({ goLiveOpen: true, view: "room" });
     }
+  }
+
+  /** Accepter au clavier n'existe que pour une fenêtre : donner un écran entier mérite de lire l'avertissement. */
+  private onControlHotkey() {
+    const publish = get().publish;
+    if (publish?.controller) return this.endControl();
+    if (!publish?.controlAsk) return;
+    if (publish.controlScope === "window") void this.acceptControl();
+    else api.showWindow();
   }
 
   // ---------------------------------------------------------------- suivi
@@ -1189,7 +1565,7 @@ class Core {
 
   private pushTray() {
     const { room, publish, muted, deafened } = get();
-    api.setTray({ roomName: room?.name ?? null, live: !!publish, paused: !!publish?.paused, muted, deafened, viewers: room?.streams.find(s => s.id === publish?.streamId)?.viewers.length ?? 0 });
+    api.setTray({ roomName: room?.name ?? null, live: !!publish, paused: !!publish?.paused, muted, deafened, viewers: room?.streams.find(s => s.id === publish?.streamId)?.viewers.length ?? 0, controller: publish?.controller ? (memberOf(publish.controller)?.name ?? "?") : null });
   }
 
   // ---------------------------------------------------------------- diagnostic
