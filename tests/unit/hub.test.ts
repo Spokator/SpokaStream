@@ -502,6 +502,12 @@ test("le lecteur web est servi avec sa politique de sécurité, et l'invitation 
     assert.ok((await script.text()).length > 1000);
     assert.equal((await fetch(`${base}/w/a%3Cb`)).status, 404);
     assert.match(await (await fetch(`${base}/j/ABCD2345`)).text(), /href="\/w\/ABCD2345"/);
+    assert.match(await (await fetch(`${base}/`)).text(), /action="\/w"/);
+    const typed = await fetch(`${base}/w?code=${encodeURIComponent(" abcd-2345 ")}`, { redirect: "manual" });
+    assert.equal(typed.status, 302);
+    assert.equal(typed.headers.get("location"), "/w/ABCD2345");
+    const empty = await fetch(`${base}/w?code=${encodeURIComponent("<b>")}`, { redirect: "manual" });
+    assert.equal(empty.headers.get("location"), "/");
   } finally {
     await server.close();
   }

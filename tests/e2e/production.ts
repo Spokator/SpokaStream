@@ -91,7 +91,9 @@ try {
   // Le vrai lien d'invitation, en HTTPS, tel qu'un ami l'ouvre sur son téléphone.
   const edge = await chromium.launch({ channel: "msedge", headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
   const phone = await (await edge.newContext(devices["Pixel 7"])).newPage();
-  await phone.goto(`${serverUrl.replace(/^ws/, "http").replace(/\/ws$/, "")}/j/${code}`);
+  await phone.goto(`${serverUrl.replace(/^ws/, "http").replace(/\/ws$/, "")}/`);
+  await phone.getByLabel("Code du salon").fill(code.toLowerCase());
+  await phone.getByRole("button", { name: "Regarder" }).click();
   await phone.waitForURL(/\/w\//);
   await phone.getByLabel("Ton nom").fill("Essai téléphone");
   await phone.getByRole("button", { name: "Regarder" }).click();

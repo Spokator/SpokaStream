@@ -124,7 +124,7 @@ Le clip reste découpé en fragments tant qu'il est ouvert : couper revient à c
 
 ## Lecteur web
 
-Une page servie par le serveur (`/w/CODE`), construite par `scripts/build-viewer.mjs` et embarquée dans `server/viewer.gen.ts` : il n'y a toujours qu'un fichier à déployer. Elle réutilise `Signal`, `Subscription`, `Voice` et `ClipShare`, sans React : 26 ko de script. L'invitation `/j/CODE` y mène directement sur un téléphone.
+Une page servie par le serveur (`/w/CODE`), construite par `scripts/build-viewer.mjs` et embarquée dans `server/viewer.gen.ts` : il n'y a toujours qu'un fichier à déployer. Elle réutilise `Signal`, `Subscription`, `Voice` et `ClipShare`, sans React : 26 ko de script. L'invitation `/j/CODE` y mène directement sur un téléphone, et l'accueil `/` y mène depuis un code tapé à la main.
 
 La politique de sécurité n'autorise que ce serveur. Le chat y est écrit en `textContent`, jamais en HTML. Un téléphone demande 720p par défaut, avec un encodage dédié chez le diffuseur comme tout spectateur.
 

@@ -47,6 +47,16 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0
 /** Le lecteur web ne parle qu'à ce serveur. Les seules images extérieures sont les miniatures YouTube. */
 const VIEWER_CSP = ["default-src 'self'", "script-src 'self'", "style-src 'unsafe-inline'", "img-src 'self' data: https://i.ytimg.com", "media-src 'self' blob:", "connect-src 'self' ws: wss:", "frame-src 'self'", "base-uri 'none'", "form-action 'none'"].join("; ");
 
+const PAGE_STYLE = `body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1117;color:#f1f3f9;font:16px/1.5 system-ui,"Segoe UI",sans-serif}main{width:100%;max-width:420px;box-sizing:border-box;padding:32px;text-align:center}h1{font-size:24px;margin:0 0 8px}p{color:#9aa3b8;margin:0 0 24px}a,button{display:block;box-sizing:border-box;width:100%;padding:13px 18px;border:0;border-radius:12px;font:inherit;font-weight:600;text-decoration:none;margin-top:10px;cursor:pointer}.p{background:linear-gradient(135deg,#7c5cff,#22d3ee);color:#fff}.s{background:#1a1e2b;color:#f1f3f9;border:1px solid #2a3042}code{display:inline-block;margin-top:18px;padding:6px 12px;border-radius:8px;background:#1a1e2b;letter-spacing:.14em}input{box-sizing:border-box;width:100%;padding:13px 14px;border:1px solid #2a3042;border-radius:12px;background:#1a1e2b;color:#f1f3f9;font:inherit;font-size:20px;font-weight:600;letter-spacing:.14em;text-align:center;text-transform:uppercase}input::placeholder{color:#6c758a;font-size:16px;font-weight:400;letter-spacing:normal;text-transform:none}`;
+
+/** L'adresse du site : sur un téléphone il n'y a pas d'application, c'est ici qu'un code reçu devient un salon. Sans script, pour marcher partout. */
+function homePage(downloadUrl: string) {
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SpokaStream</title>
+<meta property="og:title" content="SpokaStream"><meta property="og:description" content="Entre le code d'un salon et regarde le stream dans ton navigateur.">
+<style>${PAGE_STYLE}</style></head>
+<body><main><h1>Rejoindre un salon</h1><p>Entre le code du salon : le stream démarre ici, sans rien installer.</p><form action="/w" method="get"><input name="code" required maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Code du salon" aria-label="Code du salon"><button class="p" type="submit">Regarder</button></form><a class="s" href="${escapeHtml(downloadUrl)}">Installer l'application pour diffuser</a></main></body></html>`;
+}
+
 /**
  * Discord et les navigateurs ne rendent pas spokastream:// cliquable : l'invitation est donc une page web.
  * Sur un PC, elle ouvre l'application. Sur un téléphone, il n'y a pas d'application : elle passe droit au lecteur web.
@@ -57,7 +67,7 @@ function invitePage(code: string, downloadUrl: string) {
   const shown = escapeHtml(code);
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rejoindre sur SpokaStream</title>
 <meta property="og:title" content="Rejoins-moi sur SpokaStream"><meta property="og:description" content="Regarde dans ton navigateur, ou ouvre le salon dans l'application.">
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1117;color:#f1f3f9;font:16px/1.5 system-ui,"Segoe UI",sans-serif}main{max-width:420px;padding:32px;text-align:center}h1{font-size:24px;margin:0 0 8px}p{color:#9aa3b8;margin:0 0 24px}a{display:block;padding:13px 18px;border-radius:12px;text-decoration:none;font-weight:600;margin-top:10px}.p{background:linear-gradient(135deg,#7c5cff,#22d3ee);color:#fff}.s{background:#1a1e2b;color:#f1f3f9;border:1px solid #2a3042}code{display:inline-block;margin-top:18px;padding:6px 12px;border-radius:8px;background:#1a1e2b;letter-spacing:.14em}</style></head>
+<style>${PAGE_STYLE}</style></head>
 <body><main><h1>Tu es invité sur SpokaStream</h1><p>Regarde tout de suite, ou ouvre l'application.</p><a class="p" href="${viewer}">Regarder dans le navigateur</a><a class="s" href="${deepLink}">Ouvrir SpokaStream</a><a class="s" href="${escapeHtml(downloadUrl)}">Installer l'application</a><code>${shown}</code></main>
 <script>if(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent))location.replace(${JSON.stringify(viewer)});else location.href=${JSON.stringify(deepLink)}</script></body></html>`;
 }
@@ -113,6 +123,16 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return res.end(invitePage(invite[1]!, downloadUrl));
     }
+    if (url.pathname === "/") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return res.end(homePage(downloadUrl));
+    }
+    // Le formulaire de l'accueil : un code tapé à la main peut contenir des espaces ou des tirets.
+    if (url.pathname === "/w") {
+      const code = (url.searchParams.get("code") ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+      res.writeHead(302, { location: /^[A-Z0-9]{4,16}$/.test(code) ? `/w/${code}` : "/" });
+      return res.end();
+    }
     const watch = url.pathname.match(/^\/w\/([A-Za-z0-9]{4,16})$/);
     if (watch) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": VIEWER_CSP, "cache-control": "no-cache", "referrer-policy": "no-referrer" });
@@ -126,7 +146,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return res.end(PLAYER_PAGE);
     }
-    res.writeHead(url.pathname === "/" ? 200 : 404, { "content-type": "text/plain; charset=utf-8" });
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     res.end("SpokaStream\n");
   });
 

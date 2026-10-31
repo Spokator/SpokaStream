@@ -30,7 +30,7 @@ La watch party de PinoyBot a montré sa limite : un navigateur sait capter un on
 | 🔊 **Le son que tu veux** | Une application, plusieurs, ou tout le PC **sauf SpokaStream** : plus d'écho. Partage une fenêtre et son son est choisi tout seul. Table de mixage en direct, avec un volume et un niveau par source. |
 | 🎬 **Toutes les sources** | Écran, fenêtre, caméra ou carte d'acquisition, fichier vidéo de ton PC, et **OBS** avec ses scènes et son mix. Changement de source en plein direct, sans couper. |
 | 🎛️ **Ton stream, ta régie** | Scènes en un clic, caméra placée où tu veux sur l'image, bandeau de texte, table de mixage. |
-| 📱 **Sans rien installer** | Le lien d'invitation s'ouvre dans un navigateur, téléphone compris : image, son, chat, sondages, clips, vocal. |
+| 📱 **Sans rien installer** | Le lien d'invitation s'ouvre dans un navigateur, téléphone compris, ou entre le code sur [stream.chretieno.fr](https://stream.chretieno.fr) : image, son, chat, sondages, clips, vocal. |
 | 🎮 **Prendre la main** | Un ami joue à ta place depuis chez lui, avec ton accord, dans la seule fenêtre partagée. Tu la reprends d'une touche. |
 | ⚡ **La meilleure image** | Capture native à 60 i/s et plus, là où un navigateur plafonne à 48 sur un écran 144 Hz. Mesure réelle des encodeurs de ta machine, puis choix du codec le plus efficace qui tient la cadence : AV1, H265 ou H264, sur la carte graphique. Débit et cadence réglables à chaud. |
 | 👥 **Streamer à plusieurs** | Chacun peut diffuser en même temps. Vignettes en direct, grille ou grand écran. Personne ne regarde ? Rien n'est encodé. |
