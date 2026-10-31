@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Accounts } from "../../server/accounts.ts";
+import { AdminAuth, totpCode } from "../../server/adminAuth.ts";
 import { Hub } from "../../server/hub.ts";
-import { startServer } from "../../server/index.ts";
+import { clientIp, startServer } from "../../server/index.ts";
 import { MemoryStore } from "../../server/store.ts";
 import { isVirtualInput } from "../../src/shared/ipc.ts";
 import type { ClientMessage, ServerMessage } from "../../src/shared/protocol.ts";
@@ -167,12 +168,141 @@ async function panel() {
   return { running, base, post, ticket: () => running.hub.onTicket!("admin-compte") };
 }
 
+test("le dernier maillon de X-Forwarded-For est la seule adresse fiable", () => {
+  const req = (header: string) => ({ headers: { "x-forwarded-for": header }, socket: { remoteAddress: "127.0.0.1" } }) as never;
+  assert.equal(clientIp(req("1.1.1.1, 8.8.4.4"), { trustProxy: true }), "8.8.4.4", "le début de la liste est écrit par le client");
+  assert.equal(clientIp(req("8.8.4.4"), { trustProxy: false }), "127.0.0.1", "sans proxy, l'en-tête ne vaut rien");
+});
+
+test("le code à 6 chiffres suit la RFC 6238", () => {
+  // Vecteurs de la RFC, secret ASCII 12345678901234567890, tronqués à 6 chiffres.
+  const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  assert.equal(totpCode(secret, 1), "287082");
+  assert.equal(totpCode(secret, 37037036), "081804");
+  assert.equal(totpCode(secret, 37037037), "050471");
+});
+
+const PASSWORD = "un-long-mot-de-passe";
+
+async function firstOwner() {
+  const auth = new AdminAuth();
+  const { user } = await auth.completeInvite(auth.ownerInvite(), "spoka", PASSWORD);
+  return { auth, id: user!.id };
+}
+
+const status = async (auth: AdminAuth, ...args: [unknown, unknown, unknown, number?]) => (await auth.login(...args)).result;
+
+test("un accès se crée une fois, avec un lien qui ne ressert pas", async () => {
+  const auth = new AdminAuth();
+  assert.equal(auth.state.configured, false);
+  const code = auth.ownerInvite();
+  assert.match((await auth.completeInvite(code, "spoka", "court")).problem!, /12 caractères/);
+  assert.equal((await auth.completeInvite("faux", "spoka", PASSWORD)).problem, "Ce lien n'est plus valable.");
+  assert.equal((await auth.completeInvite(code, "spoka", PASSWORD)).problem, null);
+  assert.equal(auth.state.configured, true);
+  assert.equal((await auth.completeInvite(code, "pirate", "un-autre-mot-de-passe")).problem, "Ce lien n'est plus valable.");
+  assert.equal(await status(auth, "spoka", PASSWORD, ""), "ok");
+  assert.equal(await status(auth, "SPOKA", PASSWORD, ""), "ok", "l'identifiant ne dépend pas de la casse");
+  assert.equal(await status(auth, "spoka", "mauvais", ""), "bad");
+  assert.equal(await status(auth, "autre", PASSWORD, ""), "bad");
+});
+
+test("un lien expiré ne crée rien", async () => {
+  const auth = new AdminAuth();
+  const code = auth.invite({ role: "owner" }, 1000);
+  assert.equal((await auth.completeInvite(code, "spoka", PASSWORD, 1000 + 25 * 3600_000)).problem, "Ce lien n'est plus valable.");
+});
+
+test("avec le code à 6 chiffres, le mot de passe seul n'ouvre plus rien", async () => {
+  const { auth, id } = await firstOwner();
+  const now = Date.now();
+  const counter = Math.floor(now / 30_000);
+  const { secret } = auth.startTotp(id);
+  assert.equal(auth.confirmTotp(id, "000000x", now), null, "un mauvais code n'active rien");
+  const recovery = auth.confirmTotp(id, totpCode(secret, counter), now)!;
+  assert.equal(recovery.length, 8);
+  assert.equal(await status(auth, "spoka", PASSWORD, ""), "code");
+  assert.equal(await status(auth, "spoka", "mauvais", ""), "bad", "un mauvais mot de passe ne révèle pas qu'un code est demandé");
+  assert.equal(await status(auth, "spoka", PASSWORD, "123456", now), "bad");
+  const fresh = totpCode(secret, counter + 1);
+  assert.equal(await status(auth, "spoka", PASSWORD, fresh, now), "ok");
+  assert.equal(await status(auth, "spoka", PASSWORD, fresh, now), "bad", "un code ne ressert pas");
+  assert.equal(await status(auth, "spoka", PASSWORD, recovery[0]!, now), "ok");
+  assert.equal(await status(auth, "spoka", PASSWORD, recovery[0]!, now), "bad", "un code de secours ne ressert pas");
+  assert.equal(await auth.disableTotp(id, "mauvais"), false);
+  assert.equal(await auth.disableTotp(id, PASSWORD), true);
+  assert.equal(await status(auth, "spoka", PASSWORD, ""), "ok");
+});
+
+test("changer le mot de passe demande l'ancien", async () => {
+  const { auth, id } = await firstOwner();
+  assert.match((await auth.changePassword(id, "faux", "un-nouveau-mot-de-passe"))!, /faux/);
+  assert.equal(await auth.changePassword(id, PASSWORD, "un-nouveau-mot-de-passe"), null);
+  assert.equal(await status(auth, "spoka", PASSWORD, ""), "bad");
+  assert.equal(await status(auth, "spoka", "un-nouveau-mot-de-passe", ""), "ok");
+});
+
+test("un lien de secours redonne l'accès du propriétaire, sans en créer un autre", async () => {
+  const { auth, id } = await firstOwner();
+  const { secret } = auth.startTotp(id);
+  auth.confirmTotp(id, totpCode(secret, Math.floor(Date.now() / 30_000)));
+  const { problem, user } = await auth.completeInvite(auth.ownerInvite(), "ignoré", "un-autre-long-mot-de-passe");
+  assert.equal(problem, null);
+  assert.equal(user!.username, "spoka");
+  assert.equal(auth.list().length, 1);
+  assert.equal(await status(auth, "spoka", "un-autre-long-mot-de-passe", ""), "ok", "le téléphone perdu ne bloque plus");
+});
+
+test("il reste toujours un propriétaire", async () => {
+  const { auth, id } = await firstOwner();
+  assert.match(auth.setRole(id, "moderator")!, /propriétaire/);
+  assert.match(auth.setDisabled(id, true)!, /propriétaire/);
+  assert.match(auth.remove(id)!, /propriétaire/);
+  const { user } = await auth.completeInvite(auth.invite({ role: "owner" }), "second", PASSWORD);
+  assert.equal(auth.setRole(id, "moderator"), null, "avec un second propriétaire, c'est possible");
+  assert.match(auth.remove(user!.id)!, /propriétaire/);
+});
+
+test("un identifiant ne se prend pas deux fois, et un accès désactivé n'entre plus", async () => {
+  const { auth } = await firstOwner();
+  assert.match((await auth.completeInvite(auth.invite({ role: "moderator" }), "SPOKA", PASSWORD)).problem!, /déjà pris/);
+  const { user } = await auth.completeInvite(auth.invite({ role: "moderator" }), "modo", PASSWORD);
+  auth.setDisabled(user!.id, true);
+  assert.equal(await status(auth, "modo", PASSWORD, ""), "bad");
+});
+
+test("gérer les comptes : renommer partout, supprimer, donner un salon", () => {
+  const hub = newHub();
+  const { pc, phone } = linked(hub);
+  pc.request({ t: "room.create", name: "Soirée" });
+  const roomId = pc.last("room.state")!.room.id;
+  assert.equal(hub.adminProfile(pc.accountId, { name: "Nouveau nom" }), true);
+  assert.equal(phone.last("account.sync")!.profile.name, "Nouveau nom", "le téléphone suit");
+  assert.equal(pc.last("member.update")!.member.name, "Nouveau nom", "le salon suit");
+
+  const friend = new Device(hub, "c", "Ami");
+  friend.request({ t: "room.join", id: roomId });
+  assert.equal(hub.adminTransferRoom(roomId, friend.accountId), true);
+  assert.equal(friend.last("room.state")!.room.ownerId, friend.accountId);
+  assert.equal(pc.last("room.state")!.room.ownerId, friend.accountId);
+
+  assert.equal(hub.adminMessage(friend.accountId, "Bonjour"), true);
+  assert.equal(friend.last("announce")!.text, "Bonjour");
+  assert.equal(pc.last("announce"), undefined, "le message ne va qu'à cette personne");
+
+  assert.equal(hub.adminDeleteAccount(friend.accountId, true), true);
+  assert.equal(friend.closed, 4002);
+  assert.equal(hub.adminRooms().length, 0, "son salon part avec lui");
+  assert.equal(hub.accounts.list().some(a => a.id === friend.accountId), false);
+});
+
 test("le panneau refuse tout sans session", async () => {
   const { running, base, post } = await panel();
   try {
     for (const path of ["overview", "rooms", "users", "logs", "reports", "backup"]) assert.equal((await fetch(`${base}/admin/api/${path}`)).status, 401, path);
     assert.equal((await post("action", { action: "restart" })).status, 401);
-    assert.equal((await post("login", { token: "f".repeat(64) })).status, 403, "un appareil quelconque n'entre pas");
+    assert.equal((await post("login", { username: "spoka", password: "faux" })).status, 403);
+    assert.equal((await post("login", { token: "f".repeat(64) })).status, 403, "un jeton d'appareil n'ouvre plus rien");
     assert.equal((await post("login", { ticket: "faux" })).status, 403);
   } finally {
     await running.close();
@@ -208,12 +338,87 @@ test("une action venue d'un autre site est refusée", async () => {
   }
 });
 
-test("le panneau ne se laisse pas essayer en boucle", async () => {
-  const { running, post } = await panel();
+test("le panneau bloque une adresse après 5 échecs, même avec le bon mot de passe ensuite", async () => {
+  const adminAuth = new AdminAuth();
+  await adminAuth.completeInvite(adminAuth.ownerInvite(), "spoka", "un-long-mot-de-passe");
+  const running = await startServer({ port: 0, host: "127.0.0.1", store: new MemoryStore(), adminAuth });
+  const post = (body: unknown) => fetch(`http://127.0.0.1:${running.port}/admin/api/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   try {
-    let last = 0;
-    for (let i = 0; i < 16; i++) last = (await post("login", { ticket: "faux" })).status;
-    assert.equal(last, 429);
+    assert.equal((await post({ username: "spoka", password: "un-long-mot-de-passe" })).status, 200);
+    for (let i = 0; i < 5; i++) assert.equal((await post({ username: "spoka", password: "faux" })).status, 403);
+    assert.equal((await post({ username: "spoka", password: "un-long-mot-de-passe" })).status, 429);
+  } finally {
+    await running.close();
+  }
+});
+
+async function roles() {
+  const adminAuth = new AdminAuth();
+  await adminAuth.completeInvite(adminAuth.ownerInvite(), "chef", PASSWORD);
+  await adminAuth.completeInvite(adminAuth.invite({ role: "admin" }), "second", PASSWORD);
+  await adminAuth.completeInvite(adminAuth.invite({ role: "moderator" }), "modo", PASSWORD);
+  const running = await startServer({ port: 0, host: "127.0.0.1", store: new MemoryStore(), adminAuth });
+  const base = `http://127.0.0.1:${running.port}/admin/api`;
+  const session = async (username: string) => {
+    const login = await fetch(`${base}/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password: PASSWORD }) });
+    assert.equal(login.status, 200, username);
+    const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+    return {
+      post: (path: string, body: unknown) => fetch(`${base}/${path}`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify(body) }).then(r => r.status),
+      get: (path: string) => fetch(`${base}/${path}`, { headers: { cookie } }).then(r => r.status),
+    };
+  };
+  return { running, session, adminAuth };
+}
+
+test("les droits sont appliqués par le serveur, pas par l'interface", async () => {
+  const { running, session } = await roles();
+  try {
+    const modo = await session("modo");
+    assert.equal(await modo.post("action", { action: "announce", text: "x" }), 403);
+    assert.equal(await modo.post("action", { action: "restart" }), 403);
+    assert.equal(await modo.post("action", { action: "deleteRoom", roomId: "x" }), 403);
+    assert.equal(await modo.post("action", { action: "deleteUser", accountId: "x" }), 403);
+    assert.equal(await modo.get("backup"), 403);
+    assert.equal(await modo.get("admins"), 403);
+    assert.equal(await modo.post("admins/invite", { role: "owner" }), 403, "un modérateur ne se nomme pas propriétaire");
+    assert.equal(await modo.post("action", { action: "stopStream", roomId: "x", ownerId: "y" }), 400, "son rôle le permet, l'action échoue juste faute de stream");
+    const admin = await session("second");
+    assert.equal(await admin.post("action", { action: "announce", text: "ok" }), 200);
+    assert.equal(await admin.get("backup"), 403);
+    assert.equal(await admin.post("admins/invite", { role: "owner" }), 403, "un administrateur ne touche pas aux accès");
+    const owner = await session("chef");
+    assert.equal(await owner.get("backup"), 200);
+    assert.equal(await owner.get("admins"), 200);
+    assert.equal(await owner.post("admins/invite", { role: "moderator" }), 200);
+  } finally {
+    await running.close();
+  }
+});
+
+test("retirer un droit agit tout de suite, sans attendre une nouvelle connexion", async () => {
+  const { running, session, adminAuth } = await roles();
+  try {
+    const admin = await session("second");
+    const owner = await session("chef");
+    const target = adminAuth.list().find(u => u.username === "second")!;
+    assert.equal(await admin.post("action", { action: "announce", text: "ok" }), 200);
+    assert.equal(await owner.post("admins/role", { id: target.id, role: "moderator" }), 200);
+    assert.equal(await admin.post("action", { action: "announce", text: "non" }), 403);
+    assert.equal(await owner.post("admins/disable", { id: target.id, disabled: true }), 200);
+    assert.equal(await admin.get("overview"), 401, "sa session est coupée");
+  } finally {
+    await running.close();
+  }
+});
+
+test("le propriétaire ne peut pas se couper lui-même", async () => {
+  const { running, session, adminAuth } = await roles();
+  try {
+    const owner = await session("chef");
+    const self = adminAuth.list().find(u => u.username === "chef")!;
+    assert.equal(await owner.post("admins/disable", { id: self.id, disabled: true }), 400);
+    assert.equal(await owner.post("admins/remove", { id: self.id }), 400);
   } finally {
     await running.close();
   }

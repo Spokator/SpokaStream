@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { _electron as electron, chromium, devices } from "playwright";
 import type { Browser, ElectronApplication, Page } from "playwright";
+import type { AdminAuth } from "../../server/adminAuth.ts";
+import { totpCode } from "../../server/adminAuth.ts";
 import { startServer } from "../../server/index.ts";
 import { MemoryStore } from "../../server/store.ts";
 
@@ -177,15 +179,86 @@ try {
     assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "le panneau déborde sur un téléphone");
     await shot(mobile, "70-admin-telephone");
 
-    await admin.getByRole("button", { name: "Se déconnecter" }).click();
-    await admin.getByRole("heading", { name: "Panneau d'administration" }).waitFor();
     return "billet à usage unique, journal, retour reçu, annonce, stream coupé";
   });
 
-  await step("un téléphone lié à l'administrateur ouvre le panneau sans billet", async () => {
-    const page = await context.newPage();
+  await step("identifiant et mot de passe, sans l'application, puis code à 6 chiffres", async () => {
+    const auth = (server as any).admin.auth as AdminAuth;
+    const setup = await context.browser()!.newContext({ viewport: { width: 1360, height: 860 } });
+    const page = await setup.newPage();
     await page.goto(`${base}/admin`);
+    await page.getByText("L'accès n'a pas encore été créé").waitFor();
+
+    await page.goto(`${base}/admin#setup=${auth.ownerInvite()}`);
+    await page.reload();
+    await page.getByRole("heading", { name: "Crée ton accès" }).waitFor();
+    assert.equal(page.url().includes("setup="), false, "le lien ne reste pas dans l'adresse");
+    await shot(page, "71-admin-creer-acces");
+    await page.getByLabel("Identifiant").fill("spoka");
+    await page.getByLabel("Mot de passe (12 caractères ou plus)").fill("un-long-mot-de-passe");
+    await page.getByLabel("Encore une fois").fill("un-long-mot-de-passe");
+    await page.getByRole("button", { name: "Créer mon accès" }).click();
     await page.getByRole("heading", { name: "Vue d'ensemble" }).waitFor();
+
+    await page.getByRole("button", { name: "Sécurité" }).click();
+    await page.locator(".card", { hasText: "Conseillé" }).getByRole("button", { name: "Activer" }).click();
+    const secret = (await page.locator(".enrol code").textContent())!.trim();
+    await shot(page, "72-admin-code-6-chiffres");
+    const counter = Math.floor(Date.now() / 30_000);
+    await page.getByLabel("Le code affiché par l'application").fill(totpCode(secret, counter));
+    await page.getByRole("button", { name: "Activer" }).click();
+    await page.locator(".recovery").waitFor();
+    await shot(page, "73-admin-codes-de-secours");
+    await page.getByRole("button", { name: "C'est noté" }).click();
+
+    await page.getByRole("button", { name: "Se déconnecter" }).click();
+    await page.getByLabel("Identifiant").waitFor();
+    await shot(page, "74-admin-connexion");
+    await page.getByLabel("Identifiant").fill("spoka");
+    await page.getByLabel("Mot de passe").fill("mauvais-mot-de-passe");
+    await page.getByRole("button", { name: "Se connecter" }).click();
+    await page.getByRole("alert").waitFor();
+    await page.getByLabel("Mot de passe").fill("un-long-mot-de-passe");
+    await page.getByRole("button", { name: "Se connecter" }).click();
+    await page.getByLabel("Code à 6 chiffres, ou code de secours").fill(totpCode(secret, counter + 1));
+    await page.getByRole("button", { name: "Se connecter" }).click();
+    await page.getByRole("heading", { name: "Vue d'ensemble" }).waitFor();
+
+    await page.getByRole("button", { name: "Administrateurs" }).click();
+    await page.getByLabel("Identifiant du nouvel accès").fill("modo");
+    await page.getByRole("button", { name: "Créer le lien" }).click();
+    const invite = await page.getByLabel("Lien à usage unique").inputValue();
+    await shot(page, "75-admin-acces");
+    const modContext = await context.browser()!.newContext({ viewport: { width: 1360, height: 860 } });
+    const modo = await modContext.newPage();
+    await modo.goto(invite);
+    await modo.getByRole("heading", { name: "Crée ton accès" }).waitFor();
+    assert.equal(await modo.getByLabel("Identifiant").inputValue(), "modo");
+    await modo.getByLabel("Mot de passe (12 caractères ou plus)").fill("un-mot-de-passe-modo");
+    await modo.getByLabel("Encore une fois").fill("un-mot-de-passe-modo");
+    await modo.getByRole("button", { name: "Créer mon accès" }).click();
+    await modo.getByRole("heading", { name: "Vue d'ensemble" }).waitFor();
+    assert.equal(await modo.getByRole("button", { name: "Administrateurs" }).count(), 0, "un modérateur ne voit pas les accès");
+    assert.equal(await modo.getByRole("button", { name: "Serveur" }).count(), 0);
+
+    await page.getByRole("button", { name: "Comptes" }).click();
+    await page.getByRole("button", { name: "Gérer" }).first().click();
+    await page.getByLabel("Nouveau pseudo de Spoka").fill("Patron");
+    await page.getByRole("button", { name: "Renommer" }).click();
+    await page.getByText("Pseudo changé partout.").waitFor();
+    await poll("le PC suit", () => pc.evaluate(() => (window as any).__store.useApp.getState().settings.profile.name), name => name === "Patron");
+    await page.getByLabel("Message pour Patron").fill("Coucou de l'admin");
+    await page.getByRole("button", { name: "Envoyer" }).click();
+    await pc.getByText("Coucou de l'admin").first().waitFor({ timeout: 8000 });
+    await shot(page, "76-admin-gerer-un-compte");
+
+    await page.getByRole("button", { name: "Journal" }).click();
+    await page.getByText("spoka : renomme").first().waitFor();
+
+    const linked = await context.newPage();
+    await linked.goto(`${base}/admin`);
+    await linked.getByLabel("Identifiant").waitFor();
+    return "création, double facteur, reconnexion, invitation d'un modérateur limité par son rôle, compte renommé partout, message, journal";
   });
 
   console.log(`${passed} étapes réussies`);

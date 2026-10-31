@@ -220,7 +220,9 @@ export class Hub {
   private readonly bootedAt: number;
   readonly accounts: Accounts;
   private readonly admins: Set<string>;
-  /** Rend le billet à usage unique qui ouvre le panneau d'administration. */
+  /** Les comptes de l'application rattachés à un accès du panneau. */
+  linkedAdmin: ((accountId: string) => boolean) | null = null;
+  /** Rend le billet à usage unique qui ouvre le panneau depuis l'application. */
   onTicket: ((accountId: string) => string) | null = null;
   readonly logs: LogEntry[] = [];
   readonly reports: Report[] = [];
@@ -283,7 +285,7 @@ export class Hub {
     const online = new Set([...this.conns].map(c => c.userId));
     return this.accounts.list().map(account => ({
       ...account,
-      admin: this.admins.has(account.id),
+      admin: this.isAdminAccount(account.id),
       online: account.devices.some(d => online.has(d.id)),
       rooms: [...this.rooms.values()].filter(r => r.data.ownerId === account.id).length,
     }));
@@ -345,9 +347,93 @@ export class Hub {
     return true;
   }
 
-  adminBan(accountId: string, banned: boolean) {
-    if (this.admins.has(accountId) || !this.accounts.setBanned(accountId, banned)) return false;
-    if (banned) for (const conn of this.conns) if (conn.accountId === accountId) conn.transport.close(4003, "banned");
+  adminBan(accountId: string, banned: boolean, reason = "") {
+    if ((banned && this.isAdminAccount(accountId)) || !this.accounts.setBanned(accountId, banned, reason)) return false;
+    if (banned) this.adminDisconnect(accountId, 4003);
+    return true;
+  }
+
+  adminDisconnect(accountId: string, code = 4002) {
+    let count = 0;
+    for (const conn of this.conns) {
+      if (conn.accountId !== accountId) continue;
+      conn.transport.close(code, "admin");
+      count++;
+    }
+    return count > 0;
+  }
+
+  adminMessage(accountId: string, text: string) {
+    let count = 0;
+    for (const conn of this.conns) {
+      if (conn.accountId !== accountId) continue;
+      this.send(conn, { t: "announce", text, level: "info" });
+      count++;
+    }
+    return count > 0;
+  }
+
+  /** Change le profil d'un compte partout où il est en ce moment : salons ouverts et appareils reliés. */
+  adminProfile(accountId: string, patch: Partial<Profile>) {
+    const current = this.accounts.profileOf(accountId);
+    if (!current) return false;
+    const profile = cleanProfile({ ...current, ...patch });
+    this.accounts.setProfile(accountId, profile);
+    for (const conn of this.conns) {
+      if (conn.accountId !== accountId) continue;
+      conn.profile = profile;
+      this.send(conn, { t: "account.sync", profile });
+      const live = this.liveOf(conn);
+      if (live) {
+        Object.assign(live.member, profile);
+        this.broadcast(conn.room!, { t: "member.update", member: live.member });
+      }
+    }
+    return true;
+  }
+
+  adminDetachDevice(accountId: string, deviceId: string) {
+    if (!this.accounts.revoke(accountId, deviceId)) return false;
+    for (const conn of this.conns) if (conn.userId === deviceId) conn.transport.close(4001, "revoked");
+    return true;
+  }
+
+  adminDeleteAccount(accountId: string, withRooms: boolean) {
+    if (this.isAdminAccount(accountId)) return false;
+    this.adminDisconnect(accountId);
+    if (withRooms) for (const room of [...this.rooms.values()]) if (room.data.ownerId === accountId) this.adminDeleteRoom(room.data.id);
+    return this.accounts.remove(accountId);
+  }
+
+  adminRenameRoom(roomId: string, rawName: string) {
+    const room = this.rooms.get(roomId);
+    const name = clean(rawName, LIMITS.roomName);
+    if (!room || !name) return false;
+    room.data.name = name;
+    this.persist();
+    this.broadcast(room, { t: "room.updated", name, settings: room.data.settings });
+    this.touchStatus(room);
+    return true;
+  }
+
+  /** Donne un salon à un autre compte, par exemple quand son propriétaire n'est plus là. */
+  adminTransferRoom(roomId: string, accountId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room || !this.accounts.profileOf(accountId)) return false;
+    room.data.ownerId = accountId;
+    this.persist();
+    for (const live of room.members.values()) {
+      live.member.role = (live.member.account ?? live.member.id) === accountId ? "owner" : "member";
+      if (live.conn) this.send(live.conn, { t: "room.state", room: this.snapshot(room) });
+    }
+    return true;
+  }
+
+  adminClearBans(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    room.data.bans = [];
+    this.persist();
     return true;
   }
 
@@ -628,11 +714,11 @@ export class Hub {
   }
 
   private isAdmin(accountId: string) {
-    return this.admins.has(accountId);
+    return this.isAdminAccount(accountId);
   }
 
   isAdminAccount(accountId: string) {
-    return this.admins.has(accountId);
+    return this.admins.has(accountId) || !!this.linkedAdmin?.(accountId);
   }
 
   /** Les autres appareils allumés de la même personne. */

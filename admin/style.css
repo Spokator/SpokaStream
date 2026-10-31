@@ -591,3 +591,195 @@ summary {
     grid-column: 1 / -1;
   }
 }
+
+.login form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  margin-top: 8px;
+  text-align: left;
+}
+
+.login button.primary {
+  padding: 11px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.form-field span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.form-field input {
+  width: 100%;
+  margin: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.form-problem {
+  padding: 9px 12px;
+  border: 1px solid var(--bad);
+  border-radius: 8px;
+}
+
+.enrol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.enrol img {
+  width: 176px;
+  height: 176px;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+.enrol code {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+.recovery {
+  font-size: 15px;
+  letter-spacing: 0.1em;
+}
+
+.me {
+  display: flex;
+  flex-direction: column;
+  padding: 0 10px 12px;
+  font-weight: 600;
+}
+
+.me small {
+  font-weight: 400;
+}
+
+.card.is-banned {
+  opacity: 0.75;
+}
+
+.user h2 {
+  display: block;
+}
+
+.manage,
+.tool-row button,
+.tools summary {
+  flex: none;
+}
+
+.manage,
+.tool-row button {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tool-row button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.tool-row button.is-danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.tool-row button svg {
+  vertical-align: -2px;
+}
+
+.tools {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.tool-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tool-row > span {
+  flex: 1;
+  min-width: 180px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tool-row input:not([type="checkbox"]),
+.tool-row select,
+.link-box {
+  flex: 1;
+  min-width: 170px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: inherit;
+  font: inherit;
+}
+
+.card header select {
+  flex: none;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: inherit;
+  font: inherit;
+}
+
+.link-box {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.tool-check {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tool-note {
+  padding: 6px 10px;
+  border: 1px solid var(--ok);
+  border-radius: 8px;
+  font-size: 13px;
+}

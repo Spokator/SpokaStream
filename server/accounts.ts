@@ -25,6 +25,7 @@ export interface AccountRecord extends Profile {
   firstSeen: number;
   lastSeen: number;
   banned?: boolean;
+  banReason?: string;
 }
 
 interface AccountsData {
@@ -132,11 +133,30 @@ export class Accounts {
     return true;
   }
 
-  setBanned(accountId: string, banned: boolean) {
+  setBanned(accountId: string, banned: boolean, reason = "") {
     const account = this.data.accounts[accountId];
     if (!account) return false;
-    if (banned) account.banned = true;
-    else delete account.banned;
+    if (banned) {
+      account.banned = true;
+      account.banReason = reason;
+    } else {
+      delete account.banned;
+      delete account.banReason;
+    }
+    this.save();
+    return true;
+  }
+
+  profileOf(accountId: string): Profile | null {
+    const account = this.data.accounts[accountId];
+    return account ? { name: account.name, color: account.color, avatar: account.avatar } : null;
+  }
+
+  /** Efface le compte et ses appareils. Un appareil qui revient repart de zéro : pour l'en empêcher, il faut bannir. */
+  remove(accountId: string) {
+    if (!this.data.accounts[accountId]) return false;
+    delete this.data.accounts[accountId];
+    for (const [id, device] of Object.entries(this.data.devices)) if (device.accountId === accountId) delete this.data.devices[id];
     this.save();
     return true;
   }

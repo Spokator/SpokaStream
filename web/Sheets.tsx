@@ -77,7 +77,6 @@ async function pictureToAvatar(file: File) {
 function LinkField() {
   const accountId = useApp(s => s.accountId);
   const userId = useApp(s => s.userId);
-  const admin = useApp(s => s.admin);
   const [code, setCode] = useState("");
   const [problem, setProblem] = useState("");
   if (accountId && accountId !== userId) {
@@ -85,11 +84,6 @@ function LinkField() {
       <div class="field">
         <span>Compte</span>
         <p class="sheet-note">Ce téléphone est lié à ton PC : même profil, mêmes salons, et il devient ta régie quand ton PC diffuse.</p>
-        {admin && (
-          <a class="wide" href="/admin">
-            Ouvrir le panneau d'administration
-          </a>
-        )}
       </div>
     );
   }

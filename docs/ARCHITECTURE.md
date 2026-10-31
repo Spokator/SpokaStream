@@ -186,7 +186,15 @@ La régie à distance passe par le serveur, sans WebRTC : le PC pousse `remote.s
 
 ## Panneau d'administration
 
-`server/admin.ts` et `admin/` : une page servie par le serveur, sous `/admin`. Les comptes autorisés sont dans `ADMIN_ACCOUNTS`, dans le `.env` du serveur. Il n'y a pas de mot de passe à voler : l'application demande un billet à usage unique valable 60 s, ou un téléphone lié présente son jeton. La session est un cookie `HttpOnly`, `SameSite=Strict`, de 12 h, et toute écriture vérifie aussi son origine.
+`server/admin.ts`, `server/adminAuth.ts` et `admin/` : une page servie par le serveur, sous `/admin`. On y entre avec un identifiant et un mot de passe, indépendants de tout compte d'appareil : le panneau doit rester accessible sans l'application, c'est même là qu'il sert le plus. Le mot de passe est gardé en empreinte scrypt dans `admin-auth.json`, le code à 6 chiffres suit la RFC 6238, et un code déjà utilisé ne ressert pas. Après 5 échecs, une adresse est bloquée 15 minutes.
+
+Chaque accès a son rôle : propriétaire, administrateur, modérateur. Le rang de chaque action est dans `ACTION_RANK`, côté serveur : l'interface ne fait que masquer ce qui serait refusé. Le rôle se relit à chaque requête, donc retirer un droit agit tout de suite. Il reste toujours un propriétaire actif, sinon plus personne ne pourrait gérer les accès.
+
+Un accès se crée avec un lien à usage unique valable 24 h. Le premier, et la porte de secours en cas d'oubli, vient de `sudo bash deploy/admin-setup.sh` sur le VPS : ce lien vise l'accès du propriétaire et retire son code à 6 chiffres, puisque c'est ce qu'on a pu perdre. Les comptes de `ADMIN_ACCOUNTS`, et ceux rattachés à un accès, gardent un raccourci depuis l'application : un billet valable 60 s. Un téléphone lié n'a aucun passe-droit : un téléphone volé ne doit pas ouvrir le panneau.
+
+La session est un cookie `HttpOnly`, `SameSite=Strict`, de 12 h, et toute écriture vérifie aussi son origine.
+
+Derrière nginx, l'adresse du client est le **dernier** maillon de `X-Forwarded-For` : le début de la liste est écrit par le client, et s'y fier rendrait tout blocage inutile.
 
 Le panneau ne montre ni le contenu du chat ni l'image : il compte, il ne lit pas. La sauvegarde contient en revanche l'historique du chat, puisque c'est son rôle. Le journal et les retours vivent en mémoire : ils repartent de zéro à chaque redémarrage, et journald garde le reste.
 

@@ -16,10 +16,13 @@ Le téléphone, ta régie
 
 Panneau d'administration
 
-- **Une adresse, /admin**, sur PC comme sur téléphone, réservée à ton compte.
+- **Une adresse, /admin**, depuis n'importe quel navigateur, avec un identifiant et un mot de passe. L'application n'est pas nécessaire : elle ajoute seulement un raccourci.
+- **Code à 6 chiffres** en option, avec une application d'authentification, et 8 codes de secours.
+- **Après 5 échecs**, une adresse est bloquée 15 minutes. Mot de passe perdu : un lien à usage unique se crée depuis le serveur.
 - **Vue d'ensemble** : qui est en ligne, streams, spectateurs, courbes sur 24 heures, services, processeur, mémoire, disque, certificat HTTPS, dernière version et téléchargements, versions connectées, alertes.
-- **Salons** : voir qui est où, arrêter un stream, retirer quelqu'un, verrouiller, supprimer.
-- **Comptes** : tous les comptes et leurs appareils, recherche, bannissement du serveur.
+- **Salons** : voir qui est où, arrêter un stream, retirer quelqu'un, verrouiller, renommer, donner le salon à quelqu'un, lever les bannissements, supprimer.
+- **Comptes** : tous les comptes et leurs appareils, recherche et filtres. Renommer, retirer une photo, écrire à quelqu'un, le déconnecter, détacher un appareil, bannir avec un motif, supprimer le compte et ses salons.
+- **Administrateurs** : plusieurs accès, avec trois rôles (propriétaire, administrateur, modérateur), des invitations par lien, un nouveau mot de passe en un clic, désactiver ou supprimer. Un droit retiré agit à la seconde.
 - **Journal** et **Retours** : les erreurs des applications remontent toutes seules, et chacun peut signaler un problème depuis À propos, diagnostic joint.
 - **Serveur** : annonce à tout le monde, mode maintenance, sauvegarde, redémarrage.
 - Le contenu du chat et des streams ne s'affiche pas dans le panneau.

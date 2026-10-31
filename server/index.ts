@@ -6,6 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { LIMITS } from "../src/shared/protocol.ts";
 import type { IceServer } from "../src/shared/protocol.ts";
 import { AdminPanel } from "./admin.ts";
+import type { AdminAuth } from "./adminAuth.ts";
 import type { Accounts } from "./accounts.ts";
 import { Hub } from "./hub.ts";
 import type { PushService } from "./push.ts";
@@ -32,11 +33,13 @@ export interface ServerOptions {
   dataDir?: string;
   /** Sous systemd, quitter revient à redémarrer. */
   canRestart?: boolean;
+  adminAuth?: AdminAuth;
 }
 
 export interface RunningServer {
   port: number;
   hub: Hub;
+  admin: AdminPanel;
   close(): Promise<void>;
 }
 
@@ -53,6 +56,15 @@ export function iceServersFor(userId: string, options: Pick<ServerOptions, "turn
     list.push({ urls: [`turn:${host}:3478?transport=udp`, `turn:${host}:443?transport=udp`, `turn:${host}:3478?transport=tcp`, `turns:${host}:5349?transport=tcp`], username, credential });
   }
   return list;
+}
+
+/**
+ * nginx ajoute la vraie adresse à la fin de X-Forwarded-For, après ce que le client a pu écrire lui-même.
+ * Seule la dernière valeur est fiable : lire la première laisserait contourner tout blocage avec un en-tête inventé.
+ */
+export function clientIp(req: http.IncomingMessage, options: Pick<ServerOptions, "trustProxy">) {
+  const forwarded = options.trustProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",").pop()?.trim() : "";
+  return forwarded || req.socket.remoteAddress || "?";
 }
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
@@ -260,12 +272,11 @@ send({ type: "ready" });
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const downloadUrl = options.downloadUrl ?? "https://github.com/Spokator/SpokaStream/releases/latest";
   const hub = new Hub({ store: options.store, serverName: options.serverName, push: options.push, accounts: options.accounts, admins: options.admins, iceServers: userId => iceServersFor(userId, options) });
-  const admin = new AdminPanel({ hub, store: options.store, push: options.push, dataDir: options.dataDir, canRestart: options.canRestart });
+  const admin = new AdminPanel({ hub, store: options.store, push: options.push, dataDir: options.dataDir, canRestart: options.canRestart, auth: options.adminAuth });
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    const forwarded = options.trustProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",")[0]?.trim() : "";
-    if (url.pathname.startsWith("/admin") && admin.handle(req, res, url, forwarded || req.socket.remoteAddress || "?")) return;
+    if (url.pathname.startsWith("/admin") && admin.handle(req, res, url, clientIp(req, options))) return;
     if (url.pathname === "/health") {
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify({ ok: true, uptime: Math.round(process.uptime()), ...hub.stats }));
@@ -332,9 +343,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   });
 
   wss.on("connection", (ws: WebSocket & { alive?: boolean }, req) => {
-    const forwarded = options.trustProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",")[0]?.trim() : "";
     const conn = hub.connect({
-      ip: forwarded || req.socket.remoteAddress || "?",
+      ip: clientIp(req, options),
       send: data => {
         if (ws.readyState === ws.OPEN) ws.send(data);
       },
@@ -366,6 +376,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       resolve({
         port: (server.address() as AddressInfo).port,
         hub,
+        admin,
         close: () =>
           new Promise(done => {
             clearInterval(heartbeat);
