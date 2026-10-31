@@ -436,6 +436,24 @@ $("unmute").onclick = () => {
   $("unmute").hidden = true;
 };
 
+/**
+ * Un téléphone met la vidéo en pause en sortant du plein écran, ou quand la page revient au premier plan.
+ * Ce lecteur est un direct, sans bouton lecture : la reprise est automatique, et à portée de doigt si le navigateur la refuse.
+ */
+function resume() {
+  if (!video.srcObject || !video.paused) return;
+  void video.play().catch(() => {
+    $("unmute").textContent = "Toucher pour reprendre";
+    $("unmute").hidden = false;
+  });
+}
+
+const resumeSoon = () => setTimeout(resume, 150);
+for (const type of ["pause", "webkitendfullscreen"]) video.addEventListener(type, resumeSoon);
+document.addEventListener("fullscreenchange", resumeSoon);
+document.addEventListener("visibilitychange", () => !document.hidden && resumeSoon());
+$("stage").addEventListener("click", resume);
+
 $<HTMLInputElement>("volume").oninput = e => {
   video.volume = Number((e.target as HTMLInputElement).value);
   video.muted = false;
