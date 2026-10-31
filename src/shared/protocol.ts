@@ -1,7 +1,8 @@
 // Protocole entre l'application et le serveur de salons. Le serveur ne voit jamais passer la vidéo ni le son :
 // il présente les participants les uns aux autres, puis tout circule directement de PC à PC (ou par le relais TURN).
 
-export const PROTOCOL_VERSION = 1;
+// Version 2 : la bulle caméra ajoute un second flux vidéo, qu'une application 1.0 prendrait pour l'image du stream.
+export const PROTOCOL_VERSION = 2;
 
 export const LIMITS = {
   name: 32,

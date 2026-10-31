@@ -2120,13 +2120,12 @@ a {
 }
 
 .studio-buttons {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
-  flex-wrap: wrap;
 }
 
 .studio-buttons .btn {
-  flex: 1;
   padding: 0 10px;
 }
 
@@ -2965,7 +2964,7 @@ kbd {
   font-size: 12.5px;
 }
 
-.chat-pinned span {
+.chat-pinned > span {
   flex: 1;
   min-width: 0;
   display: -webkit-box;
@@ -3268,6 +3267,35 @@ kbd {
 
 .room.is-cinema .stage {
   padding: 0;
+}
+
+.room.is-cinema .room-main {
+  position: relative;
+}
+
+.cinema-exit {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 3;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 9px;
+  background: rgba(8, 10, 16, 0.78);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 560;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.room.is-cinema:hover .cinema-exit,
+.cinema-exit:focus-visible {
+  opacity: 1;
 }
 
 .room.is-cinema .tile {

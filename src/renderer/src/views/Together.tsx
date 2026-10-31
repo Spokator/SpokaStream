@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { core } from "../engine/core.ts";
 import { get, set, useApp } from "../state/store.ts";
 import { duration } from "../ui/format.ts";
-import { Button, IconButton, Modal, Popover, Slider } from "../ui/kit.tsx";
+import { Button, IconButton, isTyping, Modal, Popover, Slider } from "../ui/kit.tsx";
+import { FloatingChat, toggleFullscreen, useFullscreen } from "./FloatingChat.tsx";
 
 const DRIFT_SECONDS = 1.5;
 const SEEK_PAUSE_MS = 3000;
@@ -78,8 +79,9 @@ export function TogetherModal() {
   );
 }
 
-export function TogetherTile({ focused, onFocus }: { focused: boolean; onFocus: () => void }) {
+export function TogetherTile({ focused, primary, onFocus }: { focused: boolean; primary: boolean; onFocus: () => void }) {
   const together = useApp(s => s.room!.together!);
+  const cinema = useApp(s => s.cinema);
   const togetherAt = useApp(s => s.togetherAt);
   const deafened = useApp(s => s.deafened);
   const canShare = useCanShare();
@@ -94,6 +96,7 @@ export function TogetherTile({ focused, onFocus }: { focused: boolean; onFocus: 
   const [error, setError] = useState<string | null>(null);
   const [volume, setVolume] = useState(savedVolume);
   const [muted, setMuted] = useState(false);
+  const fullscreen = useFullscreen(root);
 
   const post = (message: Record<string, unknown>) => frame.current?.contentWindow?.postMessage({ spoka: true, ...message }, "*");
 
@@ -149,11 +152,27 @@ export function TogetherTile({ focused, onFocus }: { focused: boolean; onFocus: 
     }
   }, [ready, volume, muted, deafened]);
 
+  useEffect(() => {
+    if (!primary) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e)) return;
+      const key = e.key.toLowerCase();
+      if (key === "m") setMuted(on => !on);
+      else if (key === "f") toggleFullscreen(root.current);
+      else if (key === "arrowup") setVolume(v => Math.min(100, v + 10));
+      else if (key === "arrowdown") setVolume(v => Math.max(0, v - 10));
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [primary]);
+
   const shownTime = dragging ?? time;
   const percent = length ? (shownTime / length) * 100 : 0;
 
   return (
-    <div className={`tile tile-together ${focused ? "is-focused" : ""}`} ref={root} onDoubleClick={() => void (document.fullscreenElement ? document.exitFullscreen() : root.current?.requestFullscreen())}>
+    <div className={`tile tile-together ${focused ? "is-focused" : ""}`} ref={root} onDoubleClick={() => toggleFullscreen(root.current)}>
       <iframe ref={frame} className="together-frame" src={core.playerUrl()} title="Lecteur YouTube" allow="autoplay; encrypted-media" referrerPolicy="strict-origin-when-cross-origin" tabIndex={-1} />
       {error && (
         <div className="tile-status together-error">
@@ -161,6 +180,7 @@ export function TogetherTile({ focused, onFocus }: { focused: boolean; onFocus: 
           {canShare && <Button onClick={() => core.togetherNext(together.videoId)}>Passer</Button>}
         </div>
       )}
+      {(fullscreen || (cinema && primary)) && <FloatingChat />}
       <div className="tile-top">
         <span className="live-pill is-together">Ensemble</span>
         <span className="tile-title">
@@ -252,7 +272,7 @@ export function TogetherTile({ focused, onFocus }: { focused: boolean; onFocus: 
                 <TvMinimalPlay size={18} />
               </IconButton>
             )}
-            <IconButton label="Plein écran" onClick={() => void (document.fullscreenElement ? document.exitFullscreen() : root.current?.requestFullscreen())}>
+            <IconButton label="Plein écran" onClick={() => toggleFullscreen(root.current)}>
               <Maximize size={18} />
             </IconButton>
           </div>

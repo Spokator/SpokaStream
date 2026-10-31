@@ -79,6 +79,7 @@ class Core {
   private recorder: Recorder | null = null;
   private clipBuffer: ClipBuffer | null = null;
   private clipSource: string | null = null;
+  private clipHardware = true;
   private lastTyping = 0;
   private cameraStream: MediaStream | null = null;
   private sourceMixId: string | null = null;
@@ -125,6 +126,7 @@ class Core {
     this.timers.push(setInterval(() => this.expireTyping(), 1000));
     this.timers.push(setInterval(() => this.followClips(), 1500));
 
+    void ClipBuffer.hasHardwareEncoder().then(hardware => (this.clipHardware = hardware));
     if (settings.onboarded) this.connect();
     this.applyPttWatch();
     this.pushTray();
@@ -995,7 +997,7 @@ class Core {
     const key = media?.getVideoTracks()[0] && !publish?.paused && seconds ? `${media.getVideoTracks()[0]!.id}:${seconds}` : null;
     if (key === this.clipSource) return;
     this.stopClips();
-    if (!key || !media || !ClipBuffer.supported) return;
+    if (!key || !media || !ClipBuffer.supported || !this.clipHardware) return;
     this.clipSource = key;
     this.clipBuffer = new ClipBuffer(seconds);
     try {
@@ -1015,7 +1017,10 @@ class Core {
   async saveClip() {
     const buffer = this.clipBuffer;
     if (get().clipSaving) return;
-    if (!buffer) return toast(get().settings?.stream.clipSeconds ? "Rien à garder pour l'instant : diffuse ou regarde un stream." : "Les clips sont coupés dans Paramètres, Diffusion.", "info");
+    if (!buffer) {
+      const reason = !this.clipHardware ? "Ce PC n'a pas d'encodeur matériel H.264 : les clips restent coupés pour ne pas ralentir le stream." : get().settings?.stream.clipSeconds ? "Rien à garder pour l'instant : diffuse ou regarde un stream." : "Les clips sont coupés dans Paramètres, Diffusion.";
+      return toast(reason, "info");
+    }
     set({ clipSaving: true });
     try {
       const data = await buffer.save();

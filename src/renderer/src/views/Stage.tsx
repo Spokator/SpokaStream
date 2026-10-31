@@ -7,7 +7,7 @@ import { get, set, TOGETHER, useApp } from "../state/store.ts";
 import { limitText, mbps, pathText, plural } from "../ui/format.ts";
 import { Avatar, Button, IconButton, isTyping, Popover, Slider, Uptime } from "../ui/kit.tsx";
 import { StrokeCanvas } from "../ui/strokes.ts";
-import { MessageText } from "./Chat.tsx";
+import { FloatingChat, toggleFullscreen, useFullscreen } from "./FloatingChat.tsx";
 import { TogetherTile, useCanShare } from "./Together.tsx";
 
 export const REACTIONS = ["🔥", "😂", "😮", "❤️", "👏", "💀", "🎉", "👀"];
@@ -26,7 +26,6 @@ const LATENCIES: { value: LatencyMode; label: string; hint: string }[] = [
 ];
 
 const MAX_ZOOM = 6;
-const CHAT_SHOWN_MS = 12_000;
 const AMBIENT_INTERVAL_MS = 200;
 
 function useMember(id: string): Member | undefined {
@@ -58,69 +57,6 @@ function Ambient({ video }: { video: React.RefObject<HTMLVideoElement | null> })
     return () => clearInterval(timer);
   }, [video]);
   return <canvas ref={canvas} className="tile-ambient" width={32} height={18} aria-hidden />;
-}
-
-function useFullscreen(root: React.RefObject<HTMLElement | null>) {
-  const [fullscreen, setFullscreen] = useState(false);
-  useEffect(() => {
-    const update = () => setFullscreen(!!root.current && document.fullscreenElement === root.current);
-    document.addEventListener("fullscreenchange", update);
-    return () => document.removeEventListener("fullscreenchange", update);
-  }, [root]);
-  return fullscreen;
-}
-
-const toggleFullscreen = (element: HTMLElement | null) => void (document.fullscreenElement ? document.exitFullscreen() : element?.requestFullscreen());
-
-/** Quand le panneau n'est plus là, le chat vient sur l'image : on continue à lire et à répondre sans sortir du plein écran. */
-function FloatingChat() {
-  const history = useApp(s => s.room?.history);
-  const [now, setNow] = useState(Date.now());
-  const [writing, setWriting] = useState(false);
-  const [text, setText] = useState("");
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Enter" || isTyping(e)) return;
-      e.preventDefault();
-      setWriting(true);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, []);
-
-  const recent = (history ?? []).filter(m => m.kind === "user" && (writing || now - m.at < CHAT_SHOWN_MS)).slice(-6);
-  return (
-    <div className="floating-chat">
-      {recent.map(m => (
-        <div key={m.id} className="floating-line">
-          <b style={{ color: m.authorColor }}>{m.authorName}</b> {m.text ? <MessageText text={m.text} /> : "a envoyé une image"}
-        </div>
-      ))}
-      {writing && (
-        <input
-          className="floating-input"
-          autoFocus
-          value={text}
-          placeholder="Écris un message, Entrée pour envoyer"
-          aria-label="Message rapide"
-          onChange={e => setText(e.target.value)}
-          onBlur={() => setWriting(false)}
-          onKeyDown={e => {
-            if (e.key === "Escape") setWriting(false);
-            if (e.key !== "Enter") return;
-            if (text.trim()) core.sendChat(text.trim());
-            setText("");
-            setWriting(false);
-          }}
-        />
-      )}
-    </div>
-  );
 }
 
 /** Bulle caméra du diffuseur, reçue à côté de l'image : chacun peut la masquer sans rien changer pour les autres. */
@@ -708,7 +644,7 @@ export function Stage({ layout }: { layout: "focus" | "grid" }) {
   if (layout === "grid" || (!main && !together)) {
     return (
       <section className={`stage stage-grid n${Math.min(streams.length + Number(together), 6)}`}>
-        {together && <TogetherTile focused={false} onFocus={() => focus(TOGETHER)} />}
+        {together && <TogetherTile focused={false} primary onFocus={() => focus(TOGETHER)} />}
         {shown.map((s, i) => tile(s, false, i === 0 && !together))}
         {others.map(s => (
           <StreamCard key={s.id} stream={s} onWatch={() => void core.watch(s.id)} />
@@ -720,12 +656,12 @@ export function Stage({ layout }: { layout: "focus" | "grid" }) {
   const rest = shown.filter(s => togetherFirst || s !== main);
   return (
     <section className="stage stage-focus">
-      <div className="stage-main">{togetherFirst ? <TogetherTile focused onFocus={() => {}} /> : tile(main!, true, true)}</div>
+      <div className="stage-main">{togetherFirst ? <TogetherTile focused primary onFocus={() => {}} /> : tile(main!, true, true)}</div>
       {rest.length + others.length + Number(together && !togetherFirst) > 0 && (
         <div className="stage-strip">
           {together && !togetherFirst && (
             <div className="strip-item">
-              <TogetherTile focused={false} onFocus={() => focus(TOGETHER)} />
+              <TogetherTile focused={false} primary={false} onFocus={() => focus(TOGETHER)} />
             </div>
           )}
           {rest.map(s => (

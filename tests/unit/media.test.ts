@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assembleClip, fragmentSpan, Mp4Splitter } from "../../src/renderer/src/engine/mp4.ts";
 import { test } from "node:test";
 import { DriftBuffer } from "../../src/renderer/src/engine/audio/driftBuffer.ts";
 import { preferredOrder, rankResults } from "../../src/renderer/src/engine/encoders.ts";
@@ -153,4 +154,67 @@ test("quand le son s'arrête, le tampon se tait proprement puis repart", () => {
   assert.equal(buffer.isPrimed, false);
   buffer.push(new Float32Array(960).fill(0.5));
   assert.equal(buffer.isPrimed, true);
+});
+
+// Un MP4 fragmenté réduit au strict nécessaire : la piste 1 compte à 48 kHz, la piste 2 à 30 kHz.
+function box(type: string, ...parts: Uint8Array[]) {
+  const size = 8 + parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(size);
+  new DataView(out.buffer).setUint32(0, size);
+  out.set(new TextEncoder().encode(type), 4);
+  let offset = 8;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+const u32 = (...values: number[]) => {
+  const out = new Uint8Array(values.length * 4);
+  values.forEach((v, i) => new DataView(out.buffer).setUint32(i * 4, v));
+  return out;
+};
+const u64 = (value: number) => {
+  const out = new Uint8Array(8);
+  new DataView(out.buffer).setBigUint64(0, BigInt(value));
+  return out;
+};
+function trak(id: number, scale: number) {
+  return box("trak", box("tkhd", u32(0, 0, 0, id)), box("mdia", box("mdhd", u32(0, 0, 0, scale))));
+}
+function moof(sequence: number, audio: number, video: number) {
+  const traf = (track: number, time: number) => box("traf", box("tfhd", u32(0, track)), box("tfdt", u32(0x01000000), u64(time)));
+  return box("moof", box("mfhd", u32(0, sequence)), traf(1, audio), traf(2, video));
+}
+const concat = (...parts: Uint8Array[]) => Uint8Array.from(parts.flatMap(p => [...p]));
+const HEADER = concat(box("ftyp", u32(1)), box("moov", trak(1, 48_000), trak(2, 30_000)));
+const fragment = (index: number) => concat(moof(index + 1, index * 48_000, index * 30_000), box("mdat", u32(index)));
+
+test("le flux MP4 se découpe en fragments, quelle que soit la taille des morceaux", () => {
+  const stream = concat(HEADER, fragment(0), fragment(1), fragment(2));
+  for (const size of [1, 7, 64, stream.length]) {
+    const splitter = new Mp4Splitter();
+    const fragments = [];
+    for (let i = 0; i < stream.length; i += size) fragments.push(...splitter.push(stream.subarray(i, i + size), i));
+    assert.deepEqual(splitter.header, HEADER, `morceaux de ${size} octets`);
+    assert.equal(fragments.length, 3);
+    assert.deepEqual(fragments[1]!.bytes, fragment(1));
+  }
+});
+
+test("un clip repart de zéro en gardant l'image et le son alignés", () => {
+  const splitter = new Mp4Splitter();
+  const all = splitter.push(concat(HEADER, fragment(10), fragment(11), fragment(12)), 0);
+  assert.equal(fragmentSpan(HEADER, all), 2);
+  const clip = assembleClip(HEADER, all.slice(1));
+  const again = new Mp4Splitter();
+  const kept = again.push(clip, 0);
+  assert.deepEqual(again.header, HEADER);
+  assert.equal(kept.length, 2);
+  const view = new DataView(kept[1]!.bytes.buffer, kept[1]!.bytes.byteOffset);
+  // mfhd : numéro de séquence ; puis pour chaque piste, le temps de début.
+  assert.equal(view.getUint32(20), 2);
+  const tfdtOf = (track: number) => Number(view.getBigUint64(24 + 8 + 16 + 12 + (track - 1) * 44));
+  assert.equal(tfdtOf(1), 48_000);
+  assert.equal(tfdtOf(2), 30_000);
 });

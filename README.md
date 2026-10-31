@@ -30,14 +30,16 @@ La watch party de PinoyBot a montré sa limite : un navigateur sait capter un on
 | ⚡ **La meilleure image** | Capture native à 60 i/s et plus, là où un navigateur plafonne à 48 sur un écran 144 Hz. Mesure réelle des encodeurs de ta machine, puis choix du codec le plus efficace qui tient la cadence : AV1, H265 ou H264, sur la carte graphique. Débit et cadence réglables à chaud. |
 | 👥 **Streamer à plusieurs** | Chacun peut diffuser en même temps. Vignettes en direct, grille ou grand écran. Personne ne regarde ? Rien n'est encodé. |
 | 🎚️ **Chaque spectateur choisit** | Qualité pour lui seul, son seul pour économiser, volume jusqu'à 300 %, latence ultra faible ou stable. |
-| ✏️ **Interagir** | Chat, réactions, pointeur laser et dessin sur le stream. Le diffuseur voit tout sur son écran grâce à l'overlay, que les spectateurs ne voient pas en double. |
-| 📌 **Pratique** | Fenêtre flottante toujours au-dessus, plein écran, capture d'écran, enregistrement en `.mkv`, statistiques détaillées. |
+| 📺 **Regarder ensemble** | Colle un lien YouTube : chacun lit la vidéo chez lui en pleine qualité, et tout le salon reste synchronisé, pause et file d'attente comprises. |
+| ✏️ **Interagir** | Chat avec réactions, mentions, images et message épinglé, sondages en direct, pointeur laser et dessin sur le stream. Le diffuseur voit tout sur son écran grâce à l'overlay, que les spectateurs ne voient pas en double. |
+| ✂️ **Clips** | Une touche garde les 30 dernières secondes dans un MP4 prêt à partager, que tu diffuses ou que tu regardes. |
+| 📌 **Pratique** | Mode cinéma avec le chat sur l'image, zoom dans le stream, bulle caméra, fenêtre flottante toujours au-dessus, capture d'écran, enregistrement en `.mkv`, statistiques détaillées, recherche Ctrl+K. |
 | 🎙️ **Vocal intégré** | Micro ouvert ou appuyer pour parler, même en jeu, réduction du bruit, volume par personne. Le micro reste séparé du son du stream. |
 | 🖥️ **Un vrai logiciel Windows** | Zone de notification, lancement avec Windows, raccourcis globaux, notifications quand un ami passe en direct, mises à jour automatiques, liens d'invitation. |
 | 🔒 **Privé** | Pas de compte. La vidéo et le son vont de PC à PC : le serveur ne les voit jamais. Pause qui coupe vraiment l'image et le son. |
 
 <div align="center">
-<img src="docs/screenshots/spectateur.png" alt="Réactions et dessin côté spectateur" width="420" /> <img src="docs/screenshots/accueil.png" alt="Accueil" width="420" />
+<img src="docs/screenshots/ensemble.png" alt="Une vidéo YouTube regardée ensemble" width="420" /> <img src="docs/screenshots/spectateur.png" alt="Réactions et dessin côté spectateur" width="420" />
 </div>
 
 ## Installation

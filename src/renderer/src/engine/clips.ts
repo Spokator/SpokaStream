@@ -24,6 +24,13 @@ export class ClipBuffer {
     return typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(FORMAT);
   }
 
+  /** Sans encodeur matériel, un flux de plus en permanence ralentirait le stream ou le jeu. */
+  static async hasHardwareEncoder() {
+    // mediaCapabilities répond « pas efficace » même avec NVENC : seul WebCodecs interroge vraiment le matériel.
+    const info = await VideoEncoder.isConfigSupported({ codec: "avc1.640028", width: 1920, height: 1080, bitrate: 8_000_000, framerate: 60, hardwareAcceleration: "prefer-hardware" }).catch(() => null);
+    return info?.supported === true;
+  }
+
   get bufferedSeconds() {
     return this.splitter.header ? fragmentSpan(this.splitter.header, this.fragments) : 0;
   }

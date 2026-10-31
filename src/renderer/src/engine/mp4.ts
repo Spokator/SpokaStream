@@ -46,7 +46,8 @@ export class Mp4Splitter {
     joined.set(chunk, this.pending.length);
     const done: Fragment[] = [];
     let offset = 0;
-    while (joined.length - offset >= 16) {
+    while (joined.length - offset >= 8) {
+      if (u32(joined, offset) === 1 && joined.length - offset < 16) break;
       const size = boxSize(joined, offset);
       if (size < 8 || offset + size > joined.length) break;
       const box = joined.subarray(offset, offset + size);

@@ -1,4 +1,4 @@
-import { Check, Clapperboard, Headphones, HeadphoneOff, LayoutGrid, Link2, LogOut, Lock, Mic, MicOff, PanelRightClose, PanelRightOpen, PhoneCall, PhoneOff, Radio, Settings2, Square, Trash2, TvMinimalPlay, Unlock } from "lucide-react";
+import { Check, Clapperboard, Headphones, HeadphoneOff, LayoutGrid, Link2, LogOut, Lock, Mic, MicOff, PanelRightClose, PanelRightOpen, PhoneCall, PhoneOff, Radio, Settings2, Square, Trash2, TvMinimalPlay, Unlock, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { core } from "../engine/core.ts";
 import { get, set, useApp } from "../state/store.ts";
@@ -81,6 +81,11 @@ export function Room() {
 
         <Stage layout={layout} />
         <Dock />
+        {cinema && (
+          <button type="button" className="cinema-exit" onClick={() => set({ cinema: false })}>
+            <X size={14} /> Quitter le mode cinéma
+          </button>
+        )}
       </div>
 
       {panelOpen && !cinema && (

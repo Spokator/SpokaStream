@@ -72,9 +72,33 @@ Un spectateur qui ne décode pas le codec préféré n'est pas bloqué : le SDP 
 
 Chrome plafonne l'encodeur d'après le SDP distant. On négocie donc 300 Mb/s une fois pour toutes dans la réponse du spectateur, puis `setParameters` pilote le débit réel : il change à chaud, sans renégocier ni couper, contrairement à la party.
 
+### Clips
+
+Une seule mémoire tourne à la fois : son propre stream, sinon celui qu'on regarde en grand. MediaRecorder y écrit un MP4 fragmenté avec une image clé par seconde, et `mp4.ts` ne garde que l'en-tête et les derniers fragments. Couper ne réencode rien : il suffit de remettre le temps à zéro dans chaque fragment, avec le même décalage en secondes pour l'image et le son, sinon ils se décalent.
+
+- **`avc3`, pas `avc1`** : avec `avc1`, la définition n'est écrite qu'une fois dans l'en-tête, et Chromium se plaint dès qu'une fenêtre change de taille.
+- **MP4 plutôt que MKV** : H.264 et AAC, le seul mélange que Discord et tous les lecteurs acceptent.
+- **Coût mesuré** à 946x532 : +1 point de processeur chez le diffuseur, +4 chez le spectateur, qui doit réencoder ce qu'il reçoit. Sans encodeur matériel H.264, les clips restent coupés.
+
+### Bulle caméra
+
+La caméra est un second flux vidéo dans la connexion de chaque spectateur, réservé dès l'ouverture : l'allumer ne renégocie rien et ne touche pas à l'image principale. Elle reste chez le spectateur : ni dans les clips ni dans les enregistrements. Les mesures ne regardent que `mid` 0, sinon elles suivraient la caméra.
+
+**Ne pas appeler `setParameters` sur un flux réservé sans piste** : mesuré, la page du diffuseur se fige plusieurs secondes de plus à chaque redimensionnement.
+
 ### Overlay
 
 **Ne jamais redimensionner la fenêtre de l'overlay.** Elle couvre un écran entier et c'est son contenu qui se place sur la fenêtre capturée. La version qui suivait la fenêtre par `setBounds` figeait la page principale du diffuseur, avec le fil bloqué hors de JavaScript. Le mécanisme exact dans Chromium n'est pas élucidé, mais la bissection est nette : overlay coupé, plus de gel. Le parcours de bout en bout garde ce cas.
+
+Quand une fenêtre capturée change de taille, l'encodeur matériel se réinitialise et la page du diffuseur marque 2 à 4 s d'arrêt. Le spectateur n'en voit rien. C'est mesuré à l'identique en 1.0.1, sans overlay en cause ; une temporisation de `setSourceHeight` n'y change rien.
+
+## Regarder ensemble
+
+YouTube refuse une page sans origine web, et l'application est chargée depuis un fichier. Le serveur sert donc `/player`, une page minuscule que l'application affiche en cadre et pilote par `postMessage`. Le cadre ne reçoit aucun clic : toutes les commandes sont les nôtres, et un geste passe toujours par le serveur avant de s'appliquer, chez celui qui l'a fait comme chez les autres. Aucune boucle possible, parce que l'état du lecteur n'est jamais renvoyé au salon.
+
+Le serveur garde une position et l'instant où elle était vraie, et calcule la position réelle à chaque envoi : un arrivant reprend au bon endroit. Chaque client compare sa position toutes les 500 ms et ne se recale qu'au-delà de 1,5 s d'écart, sans jamais insister plus d'une fois toutes les 3 s : une publicité YouTube ne déclenche pas de rafale.
+
+Le lecteur est une page tierce : le gestionnaire de permissions lui refuse le micro, la caméra et l'écran.
 
 ## Réseau
 
@@ -110,8 +134,8 @@ Si une connexion vidéo tombe vraiment, le spectateur en redemande une après 6 
 
 | Commande | Ce qu'elle prouve |
 | --- | --- |
-| `npm test` | 33 tests : serveur, SDP, choix du codec, tampon audio |
-| `npm run test:e2e` | 26 étapes avec deux instances, WebRTC réel, son réel |
+| `npm test` | 46 tests : serveur, SDP, choix du codec, tampon audio, découpe MP4 |
+| `npm run test:e2e` | 35 étapes avec deux instances, WebRTC réel, son réel, YouTube réel |
 | `node --experimental-strip-types tests/e2e/run.ts --packaged` | La même chose sur l'application empaquetée |
 | `npm run test:production` | Le vrai serveur, avec la vidéo forcée par le relais TURN : PC → VPS → PC |
 
@@ -137,7 +161,8 @@ Santé : `GET /health`. Invitation : `/j/CODE` ouvre l'application, parce que Di
 ## Pour la suite
 
 - **Relais vidéo (SFU)** optionnel pour les grands groupes.
-- **Vidéo synchronisée** YouTube, déjà écrite dans la party.
 - **Contrôle à distance** avec accord du diffuseur : `SendInput` dans SpokaAudio.
-- **Clips** des 30 dernières secondes.
+- **Partage des clips** dans le chat, de PC à PC : ils sont trop lourds pour passer par le serveur.
+- **Soundboard** dans le vocal et le stream.
+- **Rôle de modérateur** et mode lent, pour les salons nombreux.
 - **Signature du code**, pour retirer l'avertissement de Windows.
