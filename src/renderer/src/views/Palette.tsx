@@ -38,7 +38,7 @@ function commands(): Command[] {
     }
     if (publish) list.push({ id: "stop", group: "Actions", label: "Arrêter le stream", icon: <Radio size={16} />, run: () => void core.stopLive() });
     else if (canShare) list.push({ id: "live", group: "Actions", label: "Lancer un stream", icon: <Radio size={16} />, run: () => set({ goLiveOpen: true, view: "room" }) });
-    if (canShare) list.push({ id: "together", group: "Actions", label: "Regarder une vidéo ensemble", icon: <TvMinimalPlay size={16} />, run: () => set({ dialog: "together", view: "room" }) });
+    if (canShare) list.push({ id: "together", group: "Actions", label: "Lancer une Watch Party", icon: <TvMinimalPlay size={16} />, run: () => set({ dialog: "together", view: "room" }) });
     list.push(
       { id: "poll", group: "Actions", label: "Lancer un sondage", icon: <Vote size={16} />, run: () => set({ dialog: "poll", view: "room" }) },
       { id: "clip", group: "Actions", label: "Garder un clip", hint: settings!.hotkeys.saveClip, icon: <Scissors size={16} />, run: () => void core.saveClip() },

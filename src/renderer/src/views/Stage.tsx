@@ -1,13 +1,15 @@
-import { Activity, Camera, Circle, Clapperboard, Eye, EyeOff, Gamepad2, Gauge, Maximize, MousePointer2, Pencil, PictureInPicture2, Radio, Rewind, Scissors, Smile, Square, TvMinimalPlay, Users, Volume2, VolumeX } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Activity, AudioLines, Camera, Circle, Clapperboard, Eye, EyeOff, Gamepad2, Gauge, GripHorizontal, Maximize, MousePointer2, Pause, Pencil, PictureInPicture2, Play, Radio, Repeat, Rewind, Scissors, Smile, Square, TvMinimalPlay, Users, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { LatencyMode } from "@shared/ipc.ts";
 import { DEFAULT_CAMERA_LAYOUT } from "@shared/protocol.ts";
 import type { CameraLayout, DrawTool, Member, StreamInfo, ViewerQuality } from "@shared/protocol.ts";
 import { core } from "../engine/core.ts";
-import { get, set, TOGETHER, useApp } from "../state/store.ts";
-import { limitText, mbps, pathText, plural } from "../ui/format.ts";
+import { get, set, soloOf, TOGETHER, useApp } from "../state/store.ts";
+import { duration, limitText, mbps, pathText, plural } from "../ui/format.ts";
 import { Avatar, Button, IconButton, isTyping, Popover, Slider, Uptime } from "../ui/kit.tsx";
 import { StrokeCanvas } from "../ui/strokes.ts";
+import { layoutWall, snapRect } from "../ui/wall.ts";
+import type { Rect } from "../ui/wall.ts";
 import { FloatingChat, toggleFullscreen, useFullscreen } from "./FloatingChat.tsx";
 import { HandLayer } from "./Hand.tsx";
 import { TogetherTile, useCanShare } from "./Together.tsx";
@@ -214,7 +216,7 @@ function DrawLayer({ streamId, box, tool, color }: { streamId: string; box: { le
   );
 }
 
-function FloatingReactions({ streamId }: { streamId: string }) {
+export function FloatingReactions({ streamId }: { streamId: string }) {
   const [items, setItems] = useState<{ id: number; emoji: string; left: number; name: string }[]>([]);
   useEffect(() => {
     let next = 0;
@@ -238,8 +240,9 @@ function FloatingReactions({ streamId }: { streamId: string }) {
   );
 }
 
-function openPopout(media: MediaStream, title: string) {
-  const child = window.open("", "spoka-popout");
+function openPopout(streamId: string, media: MediaStream, title: string) {
+  // Une fenêtre par stream : on peut garder plusieurs amis à l'œil pendant qu'on joue.
+  const child = window.open("", `spoka-popout-${streamId}`);
   if (!child) return;
   child.document.title = title;
   const body = child.document.body;
@@ -303,6 +306,8 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
   const profileColor = useApp(s => s.settings!.profile.color);
   const recording = useApp(s => s.recording?.streamId === stream.id);
   const hand = useApp(s => (s.hand?.streamId === stream.id ? s.hand : null));
+  const solo = useApp(soloOf);
+  const pickedSolo = useApp(s => s.solo === stream.id);
   const controllerName = useMember(stream.controller ?? "")?.name;
   const video = useRef<HTMLVideoElement>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -377,8 +382,18 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
     return () => window.removeEventListener("keydown", onKey);
   }, [primary, stream.id, zoom]);
 
+  const tileReady = !!sub;
+  useEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => core.fitSub(stream.id, element.clientHeight));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [tileReady, stream.id]);
+
   if (!sub) return null;
 
+  const silenced = solo !== null && solo !== stream.id;
   const hasNoVideo = !sub.quality.video;
   const sendQuality = (quality: Omit<ViewerQuality, "video">) => core.setSubQuality(stream.id, { ...quality, video: sub.quality.video });
   const qualityIndex = QUALITIES.findIndex(q => q.quality.maxHeight === sub.quality.maxHeight);
@@ -437,6 +452,11 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
             <Circle size={9} fill="currentColor" /> REC
           </span>
         )}
+        {silenced && !sub.muted && (
+          <span className="tile-chip" title="Le son d'un autre stream est choisi">
+            <VolumeX size={12} /> Muet
+          </span>
+        )}
         {controllerName && hand?.state !== "granted" && (
           <span className="tile-chip">
             <Gamepad2 size={12} /> {controllerName} a la main
@@ -458,6 +478,9 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
           </IconButton>
           <Slider label="Volume du stream" className="tile-volume" value={sub.muted ? 0 : sub.volume} min={0} max={3} step={0.05} onChange={v => core.setSubVolume(stream.id, v)} />
           <span className="tile-percent">{Math.round((sub.muted ? 0 : sub.volume) * 100)} %</span>
+          <IconButton label={pickedSolo ? "Écouter tous les streams" : "N'écouter que ce stream"} active={pickedSolo} onClick={() => core.toggleSolo(stream.id)}>
+            <AudioLines size={18} />
+          </IconButton>
         </div>
 
         <div className="tile-bar-group tile-reactions">
@@ -577,7 +600,7 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
           <IconButton label={cinema ? "Quitter le mode cinéma" : "Mode cinéma"} active={cinema} onClick={() => set({ cinema: !cinema })}>
             <Clapperboard size={18} />
           </IconButton>
-          <IconButton label="Fenêtre flottante, toujours au-dessus" onClick={() => openPopout(sub.media, owner?.name ?? "Stream")}>
+          <IconButton label="Fenêtre flottante, toujours au-dessus" onClick={() => openPopout(stream.id, sub.media, owner?.name ?? "Stream")}>
             <PictureInPicture2 size={18} />
           </IconButton>
           {!focused && (
@@ -597,23 +620,60 @@ function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; 
   );
 }
 
-function OwnTile({ stream, focused, primary }: { stream: StreamInfo; focused: boolean; primary: boolean }) {
+/** Un film ou une vidéo diffusée se pilote comme un lecteur : c'est ce qui permet de faire une pause au milieu d'un film. */
+export function FileTransport() {
+  const file = useApp(s => s.publish?.file ?? null);
+  const [dragging, setDragging] = useState<number | null>(null);
+  if (!file) return null;
+  const shown = dragging ?? file.time;
+  return (
+    <div className="file-transport">
+      <IconButton label={file.playing ? "Mettre le fichier en pause" : "Reprendre le fichier"} onClick={() => core.fileControl({ playing: !file.playing })}>
+        {file.playing ? <Pause size={17} /> : <Play size={17} />}
+      </IconButton>
+      <input
+        type="range"
+        className="slider"
+        aria-label="Position dans le fichier"
+        min={0}
+        max={Math.max(1, Math.floor(file.duration))}
+        value={Math.floor(shown)}
+        style={{ "--fill": `${file.duration ? (shown / file.duration) * 100 : 0}%` } as React.CSSProperties}
+        onChange={e => setDragging(Number(e.target.value))}
+        onPointerUp={() => {
+          if (dragging !== null) core.fileControl({ time: dragging });
+          setDragging(null);
+        }}
+      />
+      <span className="tile-percent">
+        {duration(shown * 1000)} / {duration(file.duration * 1000)}
+      </span>
+      <IconButton label={file.loop ? "Ne plus répéter" : "Répéter le fichier"} active={file.loop} onClick={() => core.fileControl({ loop: !file.loop })}>
+        <Repeat size={16} />
+      </IconButton>
+    </div>
+  );
+}
+
+function OwnTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; focused: boolean; primary: boolean; onFocus: () => void }) {
   const publish = useApp(s => s.publish);
   const cinema = useApp(s => s.cinema);
   const controllerName = useMember(publish?.controller ?? "")?.name;
   const video = useRef<HTMLVideoElement>(null);
+  const root = useRef<HTMLDivElement>(null);
   const box = useContentBox(video);
+  const fullscreen = useFullscreen(root);
   if (!publish) return null;
   const stats = publish.stats;
   return (
-    <div className={`tile tile-own ${focused ? "is-focused" : ""}`}>
+    <div className={`tile tile-own ${focused ? "is-focused" : ""}`} ref={root} onDoubleClick={e => !(e.target as HTMLElement).closest(".tile-cam, .tile-bar") && toggleFullscreen(root.current)}>
       <Video media={publish.preview} videoRef={video} className="tile-video" />
       {publish.paused && <div className="tile-status">Stream en pause : les spectateurs ne voient plus ton écran</div>}
       <DrawLayer streamId={stream.id} box={box} tool={null} color="#ffffff" />
       <FloatingReactions streamId={stream.id} />
       {publish.camera && <CameraEditor media={publish.camera} layout={publish.cameraLayout} box={box} />}
       {publish.banner && <div className="tile-banner">{publish.banner}</div>}
-      {cinema && primary && <FloatingChat />}
+      {(fullscreen || (cinema && primary)) && <FloatingChat />}
       <div className="tile-top">
         <Pill stream={stream} paused={publish.paused} />
         <span className="tile-title">
@@ -637,6 +697,24 @@ function OwnTile({ stream, focused, primary }: { stream: StreamInfo; focused: bo
         )}
       </div>
       {stats && limitText(stats.limit) && <div className="tile-warning">{limitText(stats.limit)}</div>}
+      <div className="tile-bar">
+        <div className="tile-bar-group tile-bar-grow">
+          <FileTransport />
+        </div>
+        <div className="tile-bar-group">
+          {!focused && (
+            <IconButton label="Mettre en grand" onClick={onFocus}>
+              <Eye size={18} />
+            </IconButton>
+          )}
+          <IconButton label="Masquer mon retour : les spectateurs continuent de te voir" onClick={() => core.updateWall({ showOwn: false })}>
+            <EyeOff size={18} />
+          </IconButton>
+          <IconButton label="Plein écran" onClick={() => toggleFullscreen(root.current)}>
+            <Maximize size={18} />
+          </IconButton>
+        </div>
+      </div>
     </div>
   );
 }
@@ -678,7 +756,7 @@ function EmptyStage() {
             Lancer un stream
           </Button>
           <Button icon={<TvMinimalPlay size={17} />} onClick={() => set({ dialog: "together" })}>
-            Regarder YouTube ensemble
+            Lancer une Watch Party
           </Button>
         </div>
       )}
@@ -689,61 +767,165 @@ function EmptyStage() {
   );
 }
 
-export function Stage({ layout }: { layout: "focus" | "grid" }) {
+interface WallItem {
+  /** Identifiant de ce qui s'affiche. */
+  id: string;
+  /** La personne : son stream change d'identifiant à chaque direct, sa place dans l'arrangement ne doit pas changer. */
+  place: string;
+  stream: StreamInfo | null;
+}
+
+type Drag = { id: string; mode: "move" | "size"; x: number; y: number; from: Rect; rect: Rect; target: string | null };
+
+/** Dernières positions affichées : la disposition libre part de là. */
+let lastShown: Record<string, { x: number; y: number; w: number; h: number }> = {};
+export const wallSnapshot = () => lastShown;
+
+const SMALL_TILE = 340;
+
+export function Stage() {
   const streams = useApp(s => s.room!.streams);
   const subs = useApp(s => s.subs);
   const userId = useApp(s => s.userId);
   const focusedId = useApp(s => s.focused);
   const publishId = useApp(s => s.publish?.streamId);
   const together = useApp(s => !!s.room!.together);
+  const wall = useApp(s => s.settings!.wall);
+  const root = useRef<HTMLElement>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const [stack, setStack] = useState<string[]>([]);
+
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [!streams.length && !together]);
+
+  const items = useMemo(() => {
+    const list: WallItem[] = streams.filter(s => (s.ownerId === userId ? s.id === publishId && wall.showOwn : true)).map(s => ({ id: s.id, place: s.ownerId, stream: s }));
+    if (together) list.unshift({ id: TOGETHER, place: TOGETHER, stream: null });
+    const rank = (item: WallItem) => {
+      const index = wall.order.indexOf(item.place);
+      return index < 0 ? wall.order.length : index;
+    };
+    return [...list].sort((a, b) => rank(a) - rank(b));
+  }, [streams, userId, publishId, together, wall.order, wall.showOwn]);
+
+  const shownIds = items.filter(i => i.id === TOGETHER || i.stream?.ownerId === userId || subs[i.id]).map(i => i.id);
+  const main = shownIds.includes(focusedId ?? "") ? focusedId! : (items.find(i => i.stream && i.stream.ownerId !== userId && subs[i.id])?.id ?? shownIds[0] ?? null);
+  const ids = items.map(i => i.id);
+  const placeOf = (id: string) => items.find(i => i.id === id)?.place ?? id;
+  const rects = layoutWall(wall.mode, ids, main, size.width, size.height, id => wall.free[placeOf(id)]);
+  if (drag && wall.mode === "free") rects[drag.id] = drag.rect;
+  useEffect(() => {
+    if (!size.width) return;
+    lastShown = Object.fromEntries(Object.entries(rects).map(([id, r]) => [placeOf(id), { x: r.x / size.width, y: r.y / size.height, w: r.w / size.width, h: r.h / size.height }]));
+  });
 
   if (!streams.length && !together) return <section className="stage"><EmptyStage /></section>;
-
-  const isShown = (s: StreamInfo) => s.ownerId === userId || !!subs[s.id];
-  const shown = streams.filter(s => isShown(s) && (s.ownerId !== userId || s.id === publishId));
-  const others = streams.filter(s => !isShown(s));
-  const main = shown.find(s => s.id === focusedId) ?? shown.find(s => s.ownerId !== userId) ?? shown[0];
-  const focus = (id: string) => set({ focused: id });
-  const togetherFirst = together && (focusedId === TOGETHER || !main);
-
-  const tile = (stream: StreamInfo, focused: boolean, primary: boolean) =>
-    stream.ownerId === userId ? <OwnTile key={stream.id} stream={stream} focused={focused} primary={primary} /> : <WatchTile key={stream.id} stream={stream} focused={focused} primary={primary} onFocus={() => focus(stream.id)} />;
-
-  if (layout === "grid" || (!main && !together)) {
+  if (!items.length) {
     return (
-      <section className={`stage stage-grid n${Math.min(streams.length + Number(together), 6)}`}>
-        {together && <TogetherTile focused={false} primary onFocus={() => focus(TOGETHER)} />}
-        {shown.map((s, i) => tile(s, false, i === 0 && !together))}
-        {others.map(s => (
-          <StreamCard key={s.id} stream={s} onWatch={() => void core.watch(s.id)} />
-        ))}
+      <section className="stage" ref={root}>
+        <div className="stage-empty">
+          <h2>Ton retour est masqué</h2>
+          <p>Tes spectateurs continuent de te voir normalement.</p>
+          <Button icon={<Eye size={17} />} onClick={() => core.updateWall({ showOwn: true })}>
+            Afficher mon retour
+          </Button>
+        </div>
       </section>
     );
   }
 
-  const rest = shown.filter(s => togetherFirst || s !== main);
+  const focus = (id: string) => set({ focused: id });
+  const raise = (id: string) => setStack(list => [...list.filter(x => x !== id), id]);
+  const leads = wall.mode === "focus" || wall.mode === "side" || wall.mode === "pip";
+  // Une image ne doit jamais disparaître derrière une plus grande : les petites passent devant, et la dernière touchée au-dessus de tout.
+  const byArea = [...ids].sort((p, q) => rects[q]!.w * rects[q]!.h - rects[p]!.w * rects[p]!.h);
+  const layer = (id: string) => 1 + byArea.indexOf(id) + (stack.indexOf(id) + 1) * ids.length;
+
+  const onDragStart = (e: React.PointerEvent, id: string, mode: Drag["mode"]) => {
+    e.stopPropagation();
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const from = rects[id]!;
+    raise(id);
+    setDrag({ id, mode, x: e.clientX, y: e.clientY, from, rect: from, target: null });
+  };
+
+  const onDragMove = (e: React.PointerEvent) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    const moved = drag.mode === "move" ? { ...drag.from, x: drag.from.x + dx, y: drag.from.y + dy } : { ...drag.from, w: drag.from.w + dx, h: drag.from.h + dy };
+    if (wall.mode === "free") {
+      const others = ids.filter(id => id !== drag.id).map(id => rects[id]!);
+      return setDrag({ ...drag, rect: snapRect(moved, others, size.width, size.height, drag.mode === "size") });
+    }
+    const bounds = root.current!.getBoundingClientRect();
+    const x = e.clientX - bounds.left;
+    const y = e.clientY - bounds.top;
+    const target = ids.find(id => id !== drag.id && x >= rects[id]!.x && x <= rects[id]!.x + rects[id]!.w && y >= rects[id]!.y && y <= rects[id]!.y + rects[id]!.h) ?? null;
+    setDrag({ ...drag, rect: moved, target });
+  };
+
+  const onDragEnd = () => {
+    if (!drag) return;
+    if (wall.mode === "free") {
+      const { x, y, w, h } = drag.rect;
+      core.updateWall({ free: { ...wall.free, [placeOf(drag.id)]: { x: x / size.width, y: y / size.height, w: w / size.width, h: h / size.height } } });
+    } else if (drag.target) {
+      const order = items.map(i => i.place);
+      const a = order.indexOf(placeOf(drag.id));
+      const b = order.indexOf(placeOf(drag.target));
+      [order[a], order[b]] = [order[b]!, order[a]!];
+      core.updateWall({ order });
+      if (drag.target === main) focus(drag.id);
+    }
+    setDrag(null);
+  };
+
+  const tile = (item: WallItem) => {
+    const lead = item.id === main;
+    if (item.id === TOGETHER) return <TogetherTile focused={lead} primary={lead} onFocus={() => focus(TOGETHER)} />;
+    const stream = item.stream!;
+    if (stream.ownerId === userId) return <OwnTile stream={stream} focused={lead} primary={lead} onFocus={() => focus(stream.id)} />;
+    if (subs[stream.id]) return <WatchTile stream={stream} focused={lead} primary={lead} onFocus={() => focus(stream.id)} />;
+    return <StreamCard stream={stream} onWatch={() => void core.watch(stream.id)} />;
+  };
+
   return (
-    <section className="stage stage-focus">
-      <div className="stage-main">{togetherFirst ? <TogetherTile focused primary onFocus={() => {}} /> : tile(main!, true, true)}</div>
-      {rest.length + others.length + Number(together && !togetherFirst) > 0 && (
-        <div className="stage-strip">
-          {together && !togetherFirst && (
-            <div className="strip-item">
-              <TogetherTile focused={false} primary={false} onFocus={() => focus(TOGETHER)} />
-            </div>
-          )}
-          {rest.map(s => (
-            <div key={s.id} className="strip-item" onClick={() => focus(s.id)}>
-              {tile(s, false, false)}
-            </div>
-          ))}
-          {others.map(s => (
-            <div key={s.id} className="strip-item">
-              <StreamCard stream={s} onWatch={() => void core.watch(s.id)} />
-            </div>
-          ))}
-        </div>
-      )}
+    <section className={`stage stage-wall is-${wall.mode} ${drag ? "is-arranging" : ""}`} ref={root}>
+      {items.map(item => {
+        const rect = rects[item.id];
+        if (!rect) return null;
+        const dragging = drag?.id === item.id;
+        const small = rect.w < SMALL_TILE;
+        const shifted = dragging && wall.mode !== "free" ? { transform: `translate(${drag.rect.x - drag.from.x}px, ${drag.rect.y - drag.from.y}px)` } : undefined;
+        return (
+          <div
+            key={item.id}
+            className={`wall-item ${small ? "is-small" : ""} ${dragging ? "is-dragging" : ""} ${drag?.target === item.id ? "is-target" : ""}`}
+            style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex: dragging ? 100 : layer(item.id), ...shifted }}
+            data-wall={item.place}
+            onPointerDownCapture={() => wall.mode === "free" && raise(item.id)}
+            onClick={e => {
+              if (leads && item.id !== main && shownIds.includes(item.id) && !(e.target as HTMLElement).closest("button, input")) focus(item.id);
+            }}
+          >
+            {tile(item)}
+            <button type="button" className="wall-grip" aria-label="Glisser pour déplacer cette image" onPointerDown={e => onDragStart(e, item.id, "move")} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd}>
+              <GripHorizontal size={15} />
+            </button>
+            {wall.mode === "free" && <span className="wall-size" aria-label="Glisser pour redimensionner cette image" onPointerDown={e => onDragStart(e, item.id, "size")} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd} />}
+          </div>
+        );
+      })}
     </section>
   );
 }

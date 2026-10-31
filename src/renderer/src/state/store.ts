@@ -64,6 +64,8 @@ export interface PublishView {
   controlAsk: string | null;
   controller: string | null;
   controlBlocked: boolean;
+  /** Le fichier diffusé : c'est le diffuseur qui le met en pause, l'avance ou le recule. */
+  file: { playing: boolean; time: number; duration: number; loop: boolean } | null;
 }
 
 /** La main demandée ou obtenue sur le stream de quelqu'un d'autre. */
@@ -122,6 +124,10 @@ interface AppState {
   update: UpdateStatus;
   toasts: Toast[];
   goLiveOpen: boolean;
+  /** L'onglet à ouvrir, et la page à diffuser quand on vient de la Watch Party. */
+  goLivePreset: { tab: "file" | "web"; url?: string } | null;
+  /** Le seul stream qu'on écoute, choisi à la main. */
+  solo: string | null;
   replyTo: ChatMessage | null;
   unread: number;
   /** Personnes en train d'écrire, avec l'instant où l'indication s'efface. */
@@ -171,6 +177,8 @@ export const useApp = create<AppState>(() => ({
   update: { state: "idle" },
   toasts: [],
   goLiveOpen: false,
+  goLivePreset: null,
+  solo: null,
   replyTo: null,
   unread: 0,
   typing: {},
@@ -190,6 +198,13 @@ export const useApp = create<AppState>(() => ({
 
 export const set = useApp.setState;
 export const get = useApp.getState;
+
+/** Ce qu'on écoute quand plusieurs images tournent : le choix à la main d'abord, sinon l'image en grand si le réglage le demande. */
+export function soloOf(s: AppState) {
+  if (s.solo) return s.solo;
+  if (!s.settings?.wall.audioFollows) return null;
+  return Object.keys(s.subs).length + Number(!!s.room?.together) > 1 ? s.focused : null;
+}
 
 let nextToast = 1;
 export function toast(text: string, kind: Toast["kind"] = "info", ms = 4500, action?: ToastAction) {

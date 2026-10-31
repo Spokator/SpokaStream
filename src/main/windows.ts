@@ -46,7 +46,7 @@ export function createMainWindow(startHidden: boolean, onCloseRequest: (e: Elect
   });
 
   win.webContents.setWindowOpenHandler(({ url, frameName }) => {
-    if (frameName === "spoka-popout") {
+    if (frameName.startsWith("spoka-popout")) {
       return {
         action: "allow",
         overrideBrowserWindowOptions: {

@@ -5,6 +5,7 @@ import {
   DEFAULT_VIEWER_QUALITY,
   LIMITS,
   PROTOCOL_VERSION,
+  videoUrl,
   youtubeId,
 } from "../src/shared/protocol.ts";
 import type {
@@ -143,7 +144,7 @@ function cleanLayout(l: Partial<CameraLayout> | undefined): CameraLayout {
 function cleanAnnounce(s: Partial<StreamAnnounce>): StreamAnnounce {
   return {
     title: clean(s.title, LIMITS.title),
-    kind: s.kind === "window" || s.kind === "camera" || s.kind === "file" || s.kind === "obs" ? s.kind : "screen",
+    kind: s.kind === "window" || s.kind === "camera" || s.kind === "file" || s.kind === "obs" || s.kind === "web" ? s.kind : "screen",
     sourceName: clean(s.sourceName, LIMITS.title),
     width: clampNumber(s.width, 0, 8192, 0),
     height: clampNumber(s.height, 0, 4320, 0),
@@ -322,12 +323,14 @@ export class Hub {
         return this.onPollEnd(conn, msg.id, true);
       case "together.add":
         if (!conn.buckets.misc.take(now)) return this.fail(conn, "rate_limited");
-        return this.onTogetherAdd(conn, msg.videoId, msg.title);
+        return this.onTogetherAdd(conn, msg);
       case "together.control":
         if (!conn.buckets.misc.take(now)) return;
         return this.onTogetherControl(conn, msg.playing === true, msg.position);
       case "together.next":
         return this.onTogetherNext(conn, msg.videoId);
+      case "together.remove":
+        return this.onTogetherRemove(conn, msg.index, msg.videoId);
       case "together.stop":
         return this.onTogetherStop(conn);
       case "reaction": {
@@ -665,16 +668,19 @@ export class Hub {
 
   private pushTogether(room: Room) {
     this.broadcast(room, { t: "together", together: this.togetherView(room.together) });
+    this.touchStatus(room);
   }
 
-  private onTogetherAdd(conn: Conn, rawId: unknown, rawTitle: unknown) {
+  private onTogetherAdd(conn: Conn, msg: { videoId?: unknown; url?: unknown; subtitles?: unknown; title?: unknown }) {
     const room = conn.room;
     const live = this.liveOf(conn);
     if (!room || !live) return;
     if (!this.canShare(room, conn.userId!)) return this.fail(conn, "forbidden");
-    const videoId = typeof rawId === "string" ? youtubeId(rawId) : null;
+    const url = videoUrl(msg.url);
+    const videoId = url ? randomBytes(6).toString("hex") : typeof msg.videoId === "string" ? youtubeId(msg.videoId) : null;
     if (!videoId) return this.fail(conn, "bad_request");
-    const item: TogetherItem = { videoId, title: clean(rawTitle, LIMITS.title) || "Vidéo YouTube", byName: live.member.name };
+    const subtitles = videoUrl(msg.subtitles);
+    const item: TogetherItem = { videoId, title: clean(msg.title, LIMITS.title) || "Vidéo", byName: live.member.name, ...(url ? { url } : {}), ...(subtitles ? { subtitles } : {}) };
     if (!room.together) {
       room.together = { ...item, playing: true, position: 0, anchor: this.now(), queue: [] };
       this.pushSystem(room, `${live.member.name} lance « ${item.title} »`);
@@ -702,6 +708,15 @@ export class Hub {
     if (!room || !together || together.videoId !== videoId) return;
     const next = together.queue.shift();
     room.together = next ? { ...next, playing: true, position: 0, anchor: this.now(), queue: together.queue } : null;
+    this.pushTogether(room);
+  }
+
+  private onTogetherRemove(conn: Conn, index: unknown, videoId: unknown) {
+    const room = conn.room;
+    const together = room?.together;
+    if (!room || !together || !this.canShare(room, conn.userId!)) return;
+    if (typeof index !== "number" || together.queue[index]?.videoId !== videoId) return;
+    together.queue.splice(index, 1);
     this.pushTogether(room);
   }
 
@@ -832,6 +847,7 @@ export class Hub {
       members: room.members.size,
       online: [...room.members.values()].slice(0, 12).map(({ member }) => ({ name: member.name, color: member.color })),
       live: [...room.streams.values()].map(s => ({ ownerName: room.members.get(s.ownerId)?.member.name ?? "?", title: s.title, thumb: s.thumb })),
+      ...(room.together ? { party: room.together.title } : {}),
       exists: true,
     };
   }

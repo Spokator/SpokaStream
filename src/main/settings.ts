@@ -2,7 +2,7 @@ import { app } from "electron";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { DEFAULT_HOTKEYS, DEFAULT_REGIE, DEFAULT_SCREENS } from "../shared/ipc.ts";
+import { DEFAULT_HOTKEYS, DEFAULT_REGIE, DEFAULT_SCREENS, DEFAULT_WALL } from "../shared/ipc.ts";
 import { DEFAULT_CAMERA_LAYOUT } from "../shared/protocol.ts";
 import type { Settings } from "../shared/ipc.ts";
 
@@ -59,6 +59,7 @@ function defaults(): Settings {
     scenes: [],
     obsKey: randomBytes(16).toString("hex"),
     regie: DEFAULT_REGIE,
+    wall: DEFAULT_WALL,
   };
 }
 
@@ -78,6 +79,7 @@ export class SettingsStore {
         profile: { ...base.profile, ...saved.profile },
         stream: { ...base.stream, ...saved.stream },
         hotkeys: { ...base.hotkeys, ...saved.hotkeys },
+        wall: { ...base.wall, ...saved.wall },
         overlay: { ...base.overlay, ...saved.overlay },
         regie: { ...base.regie, ...saved.regie },
       };

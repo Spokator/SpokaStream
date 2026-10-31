@@ -1,12 +1,13 @@
-import { Check, Clapperboard, Headphones, HeadphoneOff, LayoutGrid, Link2, LogOut, Lock, Mic, MicOff, PanelRightClose, PanelRightOpen, PhoneCall, PhoneOff, Radio, Settings2, Square, Trash2, TvMinimalPlay, Unlock, X } from "lucide-react";
+import { Check, Clapperboard, Columns2, Eye, Grid2x2, Headphones, HeadphoneOff, LayoutDashboard, LayoutGrid, Link2, LogOut, Lock, Mic, MicOff, Move, PanelBottom, PanelRightClose, PanelRightOpen, PhoneCall, PhoneOff, PictureInPicture2, Radio, Settings2, Square, Trash2, TvMinimalPlay, Unlock, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { core } from "../engine/core.ts";
 import { get, set, useApp } from "../state/store.ts";
-import { Avatar, Button, Field, IconButton, isTyping, Modal, Segmented, Select, Toggle } from "../ui/kit.tsx";
+import type { WallMode } from "@shared/ipc.ts";
+import { Avatar, Button, Field, IconButton, isTyping, Modal, Popover, Segmented, Select, Toggle } from "../ui/kit.tsx";
 import { Chat } from "./Chat.tsx";
 import { Members } from "./Members.tsx";
 import { LiveBar, RegieBoard } from "./Regie.tsx";
-import { Stage } from "./Stage.tsx";
+import { Stage, wallSnapshot } from "./Stage.tsx";
 import { Studio } from "./Studio.tsx";
 
 export function Room() {
@@ -18,7 +19,6 @@ export function Room() {
   const unread = useApp(s => s.unread);
   const cinema = useApp(s => s.cinema);
   const regie = useApp(s => s.regie && !!s.publish && !s.cinema);
-  const [layout, setLayout] = useState<"focus" | "grid">("focus");
   const [copied, setCopied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const isOwner = room.ownerId === userId;
@@ -72,9 +72,7 @@ export function Room() {
               <Settings2 size={18} />
             </IconButton>
           )}
-          <IconButton label={layout === "focus" ? "Afficher en grille" : "Afficher un stream en grand"} active={layout === "grid"} onClick={() => setLayout(layout === "focus" ? "grid" : "focus")}>
-            <LayoutGrid size={18} />
-          </IconButton>
+          <WallMenu />
           <IconButton label="Mode cinéma" onClick={() => set({ cinema: true })}>
             <Clapperboard size={18} />
           </IconButton>
@@ -84,7 +82,7 @@ export function Room() {
         </header>
 
         {publish && !cinema && <LiveBar />}
-        {regie ? <RegieBoard stage={<Stage layout="focus" />} /> : <Stage layout={layout} />}
+        {regie ? <RegieBoard stage={<Stage />} /> : <Stage />}
         <Dock />
         {cinema && (
           <button type="button" className="cinema-exit" onClick={() => set({ cinema: false })}>
@@ -117,6 +115,93 @@ export function Room() {
       )}
       {settingsOpen && <RoomSettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
+  );
+}
+
+const WALL_MODES: { value: WallMode; label: string; hint: string; icon: typeof Grid2x2 }[] = [
+  { value: "focus", label: "Un grand, bandeau en bas", hint: "L'image principale, les autres dessous", icon: PanelBottom },
+  { value: "side", label: "Un grand, colonne à droite", hint: "Comme une régie", icon: Columns2 },
+  { value: "grid", label: "Grille", hint: "Tout le monde à la même taille", icon: Grid2x2 },
+  { value: "pip", label: "Incrustation", hint: "Les autres par-dessus l'image principale", icon: PictureInPicture2 },
+  { value: "free", label: "Libre", hint: "Tu glisses et tu redimensionnes chaque image", icon: Move },
+];
+
+/** Chacun arrange sa scène comme il veut, spectateur comme diffuseur : rien de tout ça ne change l'écran des autres. */
+function WallMenu() {
+  const wall = useApp(s => s.settings!.wall);
+  const missing = useApp(s => (s.room?.streams ?? []).filter(x => x.ownerId !== s.userId && !s.subs[x.id]).length);
+  const live = useApp(s => !!s.publish);
+  return (
+    <Popover
+      align="right"
+      trigger={(open, toggle) => (
+        <IconButton label="Disposition des images" active={open} onClick={toggle}>
+          <LayoutGrid size={18} />
+        </IconButton>
+      )}
+    >
+      {close => (
+        <div className="menu wall-menu">
+          <div className="menu-title">Disposition</div>
+          {WALL_MODES.map(mode => (
+            <button
+              key={mode.value}
+              type="button"
+              className={`menu-item ${wall.mode === mode.value ? "is-on" : ""}`}
+              onClick={() => {
+                core.setWallMode(mode.value, wallSnapshot());
+                close();
+              }}
+            >
+              <span>
+                <mode.icon size={15} /> {mode.label}
+              </span>
+              <small>{mode.hint}</small>
+            </button>
+          ))}
+          {wall.mode === "free" && (
+            <button type="button" className="menu-item" onClick={() => core.updateWall({ free: {} })}>
+              <span>
+                <LayoutDashboard size={15} /> Tout remettre en grille
+              </span>
+            </button>
+          )}
+          <div className="menu-title">Streams</div>
+          {missing > 0 && (
+            <button
+              type="button"
+              className="menu-item"
+              onClick={() => {
+                core.watchAll();
+                close();
+              }}
+            >
+              <span>
+                <Eye size={15} /> Tout regarder ({missing})
+              </span>
+            </button>
+          )}
+          <label className="menu-toggle">
+            <span>Ouvrir tous les streams du salon</span>
+            <Toggle label="Ouvrir tous les streams du salon" checked={wall.watchAll} onChange={watchAll => core.updateWall({ watchAll })} />
+          </label>
+          <label className="menu-toggle">
+            <span>Le son suit l'image en grand</span>
+            <Toggle label="Le son suit l'image en grand" checked={wall.audioFollows} onChange={audioFollows => core.updateWall({ audioFollows })} />
+          </label>
+          <label className="menu-toggle" title="Une petite image n'a pas besoin de 1080p : ton diffuseur et ta connexion respirent">
+            <span>Adapter la qualité à la taille</span>
+            <Toggle label="Adapter la qualité à la taille" checked={wall.fitQuality} onChange={fitQuality => core.updateWall({ fitQuality })} />
+          </label>
+          {live && (
+            <label className="menu-toggle">
+              <span>Voir mon retour</span>
+              <Toggle label="Voir mon retour" checked={wall.showOwn} onChange={showOwn => core.updateWall({ showOwn })} />
+            </label>
+          )}
+        </div>
+      )}
+    </Popover>
   );
 }
 
@@ -153,7 +238,7 @@ function Dock() {
             Diffuser
           </Button>
         )}
-        <IconButton label="Regarder une vidéo YouTube ensemble" disabled={!canStream} onClick={() => set({ dialog: "together" })}>
+        <IconButton label="Lancer une Watch Party" disabled={!canStream} onClick={() => set({ dialog: "together" })}>
           <TvMinimalPlay size={19} />
         </IconButton>
       </div>
@@ -179,7 +264,7 @@ function RoomSettingsModal({ onClose }: { onClose: () => void }) {
         <span className="label">Nom du salon</span>
         <input className="input" value={name} maxLength={48} onChange={e => setName(e.target.value)} onBlur={() => name.trim() && name !== room.name && core.updateRoom(name.trim())} />
       </label>
-      <Field label="Qui peut diffuser ?">
+      <Field label="Qui peut diffuser ?" hint="Et lancer une Watch Party">
         <Segmented
           label="Qui peut diffuser"
           value={settings.whoCanStream}

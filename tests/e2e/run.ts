@@ -1088,9 +1088,9 @@ try {
     return "panneaux déplacés, fenêtre détachée hors capture, écran d'attente, réglages de source, raccourci de scène";
   });
 
-  await step("regarder YouTube ensemble : même position, même pause", async () => {
-    await alice.page.getByRole("button", { name: "Regarder une vidéo YouTube ensemble" }).click();
-    await alice.page.getByPlaceholder(/youtube/).fill("https://www.youtube.com/watch?v=aqz-KE-bpKQ");
+  await step("Watch Party YouTube : même position, même pause", async () => {
+    await alice.page.getByRole("button", { name: "Lancer une Watch Party" }).click();
+    await alice.page.getByPlaceholder("https://…").first().fill("https://www.youtube.com/watch?v=aqz-KE-bpKQ");
     await alice.page.getByRole("button", { name: "Lancer pour tout le salon" }).click();
     await bob.page.locator(".tile-together").waitFor({ timeout: 15_000 });
     const position = (peer: Peer) => peer.page.locator(".together-seek").evaluate((i: HTMLInputElement) => Number(i.value));

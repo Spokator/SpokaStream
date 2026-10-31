@@ -1,10 +1,10 @@
 /** @jsxImportSource preact */
-import { Camera, Gauge, Maximize, MessageSquare, Minimize, MousePointer2, Pause, PictureInPicture2, Play, Radio, SkipForward, Square, Users, Volume2, VolumeX } from "lucide-preact";
+import { Camera, Captions, Gauge, Maximize, MessageSquare, Minimize, MousePointer2, Pause, PictureInPicture2, Play, Radio, RotateCcw, RotateCw, SkipForward, Square, Users, Volume2, VolumeX } from "lucide-preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { DEFAULT_CAMERA_LAYOUT } from "@shared/protocol.ts";
 import { StrokeCanvas } from "../src/renderer/src/ui/strokes.ts";
 import type { StrokeEvent } from "./client.ts";
-import { audioOnly, camera, canShare, capture, frame, nameOf, newStrokeId, playerClock, react, REACTIONS, sendStroke, streamShown, strokes, tapped, togetherPlay, togetherPosition, togetherSeek, togetherSkip, togetherStop, video } from "./client.ts";
+import { audioOnly, camera, canShare, capture, frame, loadSubtitles, nameOf, newStrokeId, playerClock, react, REACTIONS, sendStroke, setTogetherVolume, streamShown, strokes, tapped, togetherPlay, togetherPosition, togetherSeek, togetherSkip, togetherSkipBy, togetherStop, video } from "./client.ts";
 import { get, set, TOGETHER, useApp } from "./store.ts";
 
 const HIDE_MS = 3500;
@@ -78,6 +78,12 @@ function TogetherBar() {
           <button type="button" class="round" aria-label={together.playing ? "Mettre en pause pour le salon" : "Reprendre pour le salon"} onClick={() => togetherPlay(!together.playing)}>
             {together.playing ? <Pause size={18} /> : <Play size={18} />}
           </button>
+          <button type="button" class="round" aria-label="Reculer de 10 secondes" onClick={() => togetherSkipBy(-10)}>
+            <RotateCcw size={17} />
+          </button>
+          <button type="button" class="round" aria-label="Avancer de 10 secondes" onClick={() => togetherSkipBy(10)}>
+            <RotateCw size={17} />
+          </button>
           <input type="range" aria-label="Position dans la vidéo" min={0} max={Math.max(1, Math.floor(duration))} value={Math.floor(position)} onChange={e => togetherSeek(Number(e.currentTarget.value))} />
           <span class="together-time">
             {mmss(position)} / {mmss(duration)}
@@ -106,6 +112,9 @@ export function Player() {
   const stream = streamShown();
   const [controls, setControls] = useState(true);
   const [muted, setMuted] = useState(false);
+  const [level, setLevel] = useState(100);
+  const partyFile = useApp(s => s.shown === TOGETHER && !!s.room?.together?.url);
+  const subtitleFile = useRef<HTMLInputElement>(null);
   const [zoom, setZoom] = useState({ scale: 1, x: 0, y: 0 });
   const [box, setBox] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const [laser, setLaser] = useState(false);
@@ -166,6 +175,12 @@ export function Player() {
     setControls(true);
     clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => setControls(false), HIDE_MS);
+  };
+
+  // En mode pointeur, toucher l'image dessine : sans ce bandeau, plus aucun geste ne ramènerait les commandes pour en sortir.
+  const leaveLaser = () => {
+    setLaser(false);
+    showControls();
   };
 
   useEffect(() => {
@@ -285,6 +300,16 @@ export function Player() {
         ))}
       </div>
 
+      {laser && (
+        <div class="laser-bar">
+          <MousePointer2 size={15} />
+          <span>Glisse le doigt sur l'image</span>
+          <button type="button" onClick={leaveLaser}>
+            Terminer
+          </button>
+        </div>
+      )}
+
       {!isTogether && (
         <div class="controls-top">
           {stream && (
@@ -329,26 +354,52 @@ export function Player() {
           class="round"
           aria-label={muted ? "Remettre le son" : "Couper le son"}
           onClick={() => {
-            video.muted = !video.muted;
-            setMuted(video.muted);
+            const next = !muted;
+            video.muted = next;
+            setMuted(next);
+            setTogetherVolume(next ? 0 : level);
             showControls();
           }}
         >
           {muted ? <VolumeX size={19} /> : <Volume2 size={19} />}
         </button>
-        <input class="volume" type="range" min={0} max={1} step={0.05} value={1} aria-label="Volume" onInput={e => (video.volume = Number(e.currentTarget.value))} />
-        {!isTogether && (
-          <div class="reactions-inline">
-            {REACTIONS.slice(0, 4).map(emoji => (
-              <button key={emoji} type="button" aria-label={`Réagir ${emoji} sur l'image`} onClick={() => (react(emoji), showControls())}>
-                {emoji}
-              </button>
-            ))}
-          </div>
-        )}
+        <input
+          class="volume"
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={level}
+          aria-label="Volume"
+          onInput={e => {
+            const value = Number(e.currentTarget.value);
+            setLevel(value);
+            video.volume = value / 100;
+            setTogetherVolume(value);
+          }}
+        />
+        <div class="reactions-inline">
+          {REACTIONS.slice(0, 4).map(emoji => (
+            <button key={emoji} type="button" aria-label={`Réagir ${emoji} sur l'image`} onClick={() => (react(emoji), showControls())}>
+              {emoji}
+            </button>
+          ))}
+        </div>
         <span class="spacer" />
+        {partyFile && (
+          <>
+            <input ref={subtitleFile} type="file" accept=".srt,.vtt" hidden onChange={e => {
+              const picked = e.currentTarget.files?.[0];
+              if (picked) void loadSubtitles(picked);
+              e.currentTarget.value = "";
+            }} />
+            <button type="button" class="round" aria-label="Mes sous-titres : un fichier .srt ou .vtt, pour toi seulement" onClick={() => subtitleFile.current?.click()}>
+              <Captions size={18} />
+            </button>
+          </>
+        )}
         {stream?.allowDraw && !isTogether && (
-          <button type="button" class={`round ${laser ? "is-on" : ""}`} aria-label="Pointeur laser : montre quelque chose avec ton doigt" aria-pressed={laser} onClick={() => setLaser(on => !on)}>
+          <button type="button" class={`round ${laser ? "is-on" : ""}`} aria-label="Pointeur laser : montre quelque chose avec ton doigt" aria-pressed={laser} onClick={() => (laser ? leaveLaser() : setLaser(true))}>
             <MousePointer2 size={18} />
           </button>
         )}

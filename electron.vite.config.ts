@@ -7,10 +7,11 @@ const CSP = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://i.ytimg.com",
-  "media-src 'self' blob: mediastream:",
+  // Avant de lancer une Watch Party, on vérifie ici que la vidéo se lit vraiment.
+  "media-src 'self' blob: mediastream: http: https:",
   "font-src 'self' data:",
   "connect-src 'self' ws: wss:",
-  // Le lecteur de « Regarder ensemble » vit sur le serveur de salons, quelle que soit son adresse.
+  // Le lecteur de la Watch Party vit sur le serveur de salons, quelle que soit son adresse.
   "frame-src http: https:",
   "worker-src 'self' blob:",
 ].join("; ");

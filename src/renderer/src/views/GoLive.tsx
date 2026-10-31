@@ -1,6 +1,7 @@
-import { AppWindow, Camera, Check, Clapperboard, FileVideo, Loader2, Monitor, Plus, Radio, RefreshCw, Volume2, VolumeX, X } from "lucide-react";
+import { AppWindow, Camera, Check, Clapperboard, FileVideo, Globe, Loader2, Monitor, Plus, Radio, RefreshCw, Volume2, VolumeX, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AudioApp, CaptureSource, CodecChoice, Resolution, VideoPriority } from "@shared/ipc.ts";
+import { videoUrl } from "@shared/protocol.ts";
 import type { VideoSource } from "../engine/capture.ts";
 import { core } from "../engine/core.ts";
 import type { AudioChoice } from "../engine/core.ts";
@@ -47,13 +48,14 @@ export const PRESETS: Preset[] = [
   { id: "max", label: "Maximum", hint: "Native, 60 i/s, 40 Mb/s", resolution: "source", fps: 60, kbps: 40000, priority: "motion" },
 ];
 
-type Tab = "screen" | "window" | "camera" | "file" | "obs";
+type Tab = "screen" | "window" | "camera" | "file" | "web" | "obs";
 
 const TABS: { value: Tab; label: string; icon: typeof Monitor }[] = [
   { value: "screen", label: "Écrans", icon: Monitor },
   { value: "window", label: "Fenêtres", icon: AppWindow },
   { value: "camera", label: "Caméra", icon: Camera },
   { value: "file", label: "Fichier vidéo", icon: FileVideo },
+  { value: "web", label: "Page web", icon: Globe },
   { value: "obs", label: "OBS", icon: Clapperboard },
 ];
 
@@ -171,7 +173,9 @@ export function GoLiveModal() {
   const defaults = settings.stream;
 
   const obsConnected = useApp(s => s.obs.connected);
-  const [tab, setTab] = useState<Tab>(obsConnected ? "obs" : "screen");
+  const preset = useApp(s => s.goLivePreset);
+  const [tab, setTab] = useState<Tab>(preset?.tab ?? (obsConnected ? "obs" : "screen"));
+  const [webUrl, setWebUrl] = useState(preset?.url ?? "");
   const [sources, setSources] = useState<CaptureSource[]>([]);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [selected, setSelected] = useState<VideoSource | null>(null);
@@ -188,7 +192,7 @@ export function GoLiveModal() {
   const [starting, setStarting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const engineReady = audioEngine === "ready";
-  const close = () => set({ goLiveOpen: false });
+  const close = () => set({ goLiveOpen: false, goLivePreset: null });
 
   useEffect(() => {
     let alive = true;
@@ -225,7 +229,13 @@ export function GoLiveModal() {
   }, [tab, obsConnected]);
 
   useEffect(() => {
-    if (selected || !sources.length || tab === "obs") return;
+    const url = tab === "web" ? videoUrl(/^[a-z]+:\/\//i.test(webUrl.trim()) ? webUrl : `https://${webUrl.trim()}`) : null;
+    if (url && webUrl.trim()) pick({ kind: "web", url });
+    else if (selected?.kind === "web") setSelected(null);
+  }, [tab, webUrl]);
+
+  useEffect(() => {
+    if (selected || !sources.length || tab !== "screen") return;
     const primary = sources.find(s => s.kind === "screen");
     if (primary) pick({ kind: "screen", source: primary });
   }, [sources]);
@@ -329,6 +339,14 @@ export function GoLiveModal() {
 
           {tab === "obs" && <ObsPanel />}
 
+          {tab === "web" && (
+            <div className="file-pick">
+              <Globe size={32} />
+              <p>SpokaStream ouvre la page dans sa propre fenêtre et diffuse son image et son son, rien d'autre du PC. Tu y navigues normalement, et ton compte reste connecté d'une fois sur l'autre. Les vidéos protégées (Netflix, Disney+…) restent noires : c'est voulu par ces services.</p>
+              <input className="input" autoFocus value={webUrl} placeholder="https://…" spellCheck={false} aria-label="Adresse de la page" onChange={e => setWebUrl(e.target.value)} />
+            </div>
+          )}
+
           {tab === "file" && (
             <div className="file-pick">
               <input
@@ -342,7 +360,7 @@ export function GoLiveModal() {
                 }}
               />
               <FileVideo size={32} />
-              <p>{selected?.kind === "file" ? selected.file.name : "Diffuse un film ou une vidéo de ton PC, en qualité d'origine, sans partager ton écran."}</p>
+              <p>{selected?.kind === "file" ? selected.file.name : "Diffuse un film ou une vidéo de ton PC, sans partager ton écran. Tu gardes la pause et la position, et le son du fichier part avec."}</p>
               <Button onClick={() => fileInput.current?.click()}>Choisir un fichier</Button>
             </div>
           )}

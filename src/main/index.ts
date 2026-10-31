@@ -9,6 +9,7 @@ import { LocalHost } from "./host.ts";
 import { SettingsStore } from "./settings.ts";
 import { AppTray } from "./tray.ts";
 import { Updater } from "./updater.ts";
+import { videoInfo, WebSource } from "./webSource.ts";
 import { WhipServer } from "./whip.ts";
 import { appIcon, createMainWindow, Overlay } from "./windows.ts";
 
@@ -64,6 +65,7 @@ const overlay = new Overlay(engine);
 const updater = new Updater();
 const host = new LocalHost();
 const whip = new WhipServer(() => settings.current.obsKey);
+const webSource = new WebSource();
 const iconCache = new Map<string, string | null>();
 const recordings = new Map<number, WriteStream>();
 let nextRecording = 1;
@@ -150,7 +152,8 @@ async function audioApps(): Promise<AudioApp[]> {
   const selfTree = process.pid;
   const result: AudioApp[] = [];
   for (const a of apps) {
-    if (a.pid === selfTree) continue;
+    // Pendant une capture, Windows liste aussi le moteur audio : il ne produit aucun son, le proposer n'aurait aucun sens.
+    if (a.pid === selfTree || path.basename(a.path ?? "").toLowerCase() === "spokaaudio.exe") continue;
     result.push({ pid: a.pid, name: a.name, title: a.title, peak: a.peak, icon: await fileIcon(a.path) });
   }
   return result;
@@ -287,6 +290,10 @@ function wireIpc() {
     return file;
   });
   ipcMain.handle("youtube:info", (_e, videoId: string) => youtubeInfo(videoId));
+  ipcMain.handle("video:info", (_e, url: string) => videoInfo(url));
+  ipcMain.handle("web:open", (_e, url: string) => webSource.open(url));
+  ipcMain.on("web:close", () => webSource.close());
+  webSource.onClosed = () => toRenderer("web:closed");
   ipcMain.on("reveal", (_e, file: string) => {
     if (statSync(file, { throwIfNoEntry: false })) shell.showItemInFolder(file);
   });
@@ -322,6 +329,13 @@ app.whenReady().then(() => {
   const allowed = (permission: string, url: string | undefined) => (permission === "media" || permission === "display-capture" ? isOurPage(url) : ["notifications", "fullscreen", "clipboard-sanitized-write", "speaker-selection"].includes(permission));
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => callback(allowed(permission, details.requestingUrl)));
   session.defaultSession.setPermissionCheckHandler((_wc, permission, origin) => allowed(permission, origin));
+
+  // La seule capture demandée par la page sans passer par une source choisie : celle du site à diffuser, son compris.
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    const frame = webSource.frame;
+    if (frame) callback({ video: frame, audio: frame });
+    else callback({});
+  });
 
   wireIpc();
   engine.start();
@@ -366,6 +380,7 @@ app.on("before-quit", () => {
   settings?.flush();
   engine.stop();
   overlay.close();
+  webSource.close();
   void host.stop();
   whip.stop();
   for (const stream of recordings.values()) stream.end();

@@ -1,8 +1,8 @@
 import { DEFAULT_REGIE } from "@shared/ipc.ts";
-import type { ActionId, AudioChoice, ControlTarget, PanelId, RegieLayout, Resolution, Scene, SceneSource, Settings, WaitScreen } from "@shared/ipc.ts";
-import { DEFAULT_VIEWER_QUALITY, youtubeId } from "@shared/protocol.ts";
+import type { ActionId, AudioChoice, ControlTarget, PanelId, RegieLayout, Resolution, Scene, SceneSource, Settings, VideoInfo, WaitScreen, WallMode, WallRect, WallSettings } from "@shared/ipc.ts";
+import { DEFAULT_VIEWER_QUALITY, isHls, videoUrl, youtubeId } from "@shared/protocol.ts";
 import type { AudioKind, CameraLayout, ChatMessage, ControlInput, ControlToHost, ControlToViewer, ErrorCode, Poll, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
-import { get, memberOf, patchPublish, patchRoom, patchSub, set, toast, TOGETHER, useApp } from "../state/store.ts";
+import { get, memberOf, patchPublish, patchRoom, patchSub, set, soloOf, toast, TOGETHER, useApp } from "../state/store.ts";
 import type { ActivityItem } from "../state/store.ts";
 import { duration, mentionsName } from "../ui/format.ts";
 import { clipThumb, frameForChat } from "../ui/image.ts";
@@ -23,6 +23,7 @@ import { Recorder, saveClipFile, saveVideoFrame } from "./recorder.ts";
 import { playSound } from "./sfx.ts";
 import { RequestError, Signal } from "./signal.ts";
 import { Subscription } from "./subscription.ts";
+import { canPlay } from "./videoProbe.ts";
 import { VOICE_SESSION, Voice } from "./voice.ts";
 
 const api = window.spoka;
@@ -64,6 +65,13 @@ const ACTIVITY_ITEMS = 120;
 const SAME_EVENT_MS = 3000;
 const ASK_COOLDOWN_MS = 10_000;
 const ASK_TIMEOUT_MS = 30_000;
+const FIT_DELAY_MS = 1500;
+/** Hauteur réelle de l'image à l'écran, et ce qu'il suffit de recevoir pour l'afficher nettement. */
+const FIT_TIERS = [
+  { upTo: 300, maxHeight: 360, maxKbps: 900 },
+  { upTo: 520, maxHeight: 540, maxKbps: 2500 },
+  { upTo: 760, maxHeight: 720, maxKbps: 5000 },
+];
 
 const resolutionHeight = (r: Resolution) => (r === "source" ? 0 : Number(r));
 const savedVolume = (ownerId: string) => {
@@ -116,6 +124,12 @@ class Core {
   private readonly reactionListeners = new Set<ReactionListener>();
   private readonly speakHold = new Map<string, number>();
   private strokeCount = 0;
+  /** La définition qui suffit à la tuile de chaque stream. 0 : tout ce que le diffuseur envoie. */
+  private readonly fits = new Map<string, number>();
+  private readonly fitTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private lastSolo: string | null = null;
+  private fileLoop = false;
+  private fileSeek = false;
 
   async boot() {
     // S'abonner avant de lire : un changement arrivé entre les deux serait perdu, et l'interface resterait fausse.
@@ -125,6 +139,12 @@ class Core {
     const settings = await api.getSettings();
     set({ settings, audioEngine: await api.audioStatus(), update: await api.updateStatus() });
     this.playback.setOutput(settings.outputId);
+    useApp.subscribe(state => {
+      const solo = soloOf(state);
+      if (solo === this.lastSolo) return;
+      this.lastSolo = solo;
+      for (const id of this.subs.keys()) this.applyMuted(id);
+    });
 
     api.onDeepLink(code => void this.joinRoom(code));
     api.onNotificationClick(roomId => void this.openRoom(roomId));
@@ -409,16 +429,26 @@ class Core {
     if (stream.ownerId === get().userId) return;
     playSound("live", !!get().settings?.soundEffects);
     if (this.subs.has(stream.id)) {
-      void this.signal.request({ t: "stream.watch", id: stream.id, on: true, resume: true, quality: get().subs[stream.id]?.quality }).catch(() => {});
+      void this.signal.request({ t: "stream.watch", id: stream.id, on: true, resume: true, quality: this.sentQuality(stream.id) }).catch(() => {});
       return;
     }
     this.maybeAutoWatch();
+    if (!this.subs.has(stream.id) && (get().publish || this.subs.size)) {
+      toast(`${memberOf(stream.ownerId)?.name ?? "Quelqu'un"} diffuse aussi`, "info", 8000, { label: "Regarder", run: () => void this.watch(stream.id) });
+    }
   }
 
   private maybeAutoWatch() {
-    if (!get().settings?.autoWatch || this.subs.size) return;
-    const first = get().room?.streams.find(s => s.ownerId !== get().userId);
-    if (first && !get().room?.together) void this.watch(first.id);
+    const settings = get().settings;
+    if (!settings?.autoWatch) return;
+    const others = get().room?.streams.filter(s => s.ownerId !== get().userId) ?? [];
+    if (settings.wall.watchAll) return others.forEach(s => void this.watch(s.id));
+    if (!this.subs.size && others[0] && !get().room?.together) void this.watch(others[0].id);
+  }
+
+  /** Ouvre tous les streams du salon, y compris quand on diffuse soi-même. */
+  watchAll() {
+    for (const stream of get().room?.streams ?? []) if (stream.ownerId !== get().userId) void this.watch(stream.id);
   }
 
   private reportError(e: unknown) {
@@ -543,19 +573,29 @@ class Core {
     return `${get().settings!.serverUrl.replace(/^ws/, "http").replace(/\/ws$/, "")}/player`;
   }
 
-  /** Rend false si le lien n'est pas lisible : la fenêtre reste ouverte pour corriger. */
-  async togetherAdd(link: string) {
+  /** Rend true quand la vidéo part, false si le lien ne mène à rien, ou la page à diffuser quand aucun lecteur ne peut l'ouvrir pour tout le salon. */
+  async togetherAdd(link: string, subtitles = ""): Promise<boolean | VideoInfo> {
     const videoId = youtubeId(link);
-    if (!videoId) {
-      toast("Ce n'est pas un lien YouTube.", "warning");
+    if (videoId) {
+      const info = await api.youtubeInfo(videoId).catch(() => null);
+      if (info) this.signal.send({ t: "together.add", videoId, title: info.title });
+      else toast("Cette vidéo n'existe pas, ou YouTube interdit de la regarder hors de son site.", "warning", 6000);
+      return !!info;
+    }
+    const url = videoUrl(/^[a-z]+:\/\//i.test(link.trim()) ? link : `https://${link.trim()}`);
+    if (!url) {
+      toast("Ce lien n'est pas valable.", "warning");
       return false;
     }
-    const info = await api.youtubeInfo(videoId).catch(() => null);
+    const info = await api.videoInfo(url).catch(() => null);
     if (!info) {
-      toast("Cette vidéo n'existe pas, ou YouTube interdit de la regarder hors de son site.", "warning", 6000);
+      toast("Ce lien ne répond pas.", "warning");
       return false;
     }
-    this.signal.send({ t: "together.add", videoId, title: info.title });
+    // Une page https refuse une vidéo http, et un format que Chromium ne sait pas lire ne marcherait chez personne.
+    const blocked = this.playerUrl().startsWith("https:") && info.url.startsWith("http:");
+    if (info.kind === "page" || blocked || (!isHls(info.url) && !(await canPlay(info.url)))) return { ...info, kind: "page", url };
+    this.signal.send({ t: "together.add", url: info.url, title: info.title, ...(subtitles.trim() ? { subtitles: subtitles.trim() } : {}) });
     return true;
   }
 
@@ -565,6 +605,10 @@ class Core {
 
   togetherNext(videoId: string) {
     this.signal.send({ t: "together.next", videoId });
+  }
+
+  togetherRemove(index: number, videoId: string) {
+    this.signal.send({ t: "together.remove", index, videoId });
   }
 
   togetherStop() {
@@ -625,12 +669,12 @@ class Core {
     sub.onTrack = track => {
       if (track.kind !== "audio") return;
       const view = get().subs[streamId];
-      this.playback.add(streamId, "stream", track, view?.volume ?? 1, view?.muted ?? false);
+      this.playback.add(streamId, "stream", track, view?.volume ?? 1, this.isSilent(streamId));
       patchSub(streamId, { hasAudio: true });
     };
     sub.onControl = message => this.onHandMessage(streamId, message);
     sub.onLost = () => {
-      if (this.subs.has(streamId)) void this.signal.request({ t: "stream.watch", id: streamId, on: true, quality: get().subs[streamId]?.quality }).catch(() => {});
+      if (this.subs.has(streamId)) void this.signal.request({ t: "stream.watch", id: streamId, on: true, quality: this.sentQuality(streamId) }).catch(() => {});
     };
     try {
       await this.signal.request({ t: "stream.watch", id: streamId, on: true, quality });
@@ -653,17 +697,20 @@ class Core {
     sub.close();
     this.subs.delete(streamId);
     this.playback.remove(streamId);
+    this.fits.delete(streamId);
+    clearTimeout(this.fitTimers.get(streamId));
+    this.fitTimers.delete(streamId);
     set(s => {
       const subs = { ...s.subs };
       delete subs[streamId];
-      return { subs, focused: s.focused === streamId ? (Object.keys(subs)[0] ?? null) : s.focused };
+      return { subs, solo: s.solo === streamId ? null : s.solo, focused: s.focused === streamId ? (Object.keys(subs)[0] ?? null) : s.focused };
     });
   }
 
   setSubVolume(streamId: string, volume: number) {
     this.playback.setVolume(streamId, volume);
     patchSub(streamId, { volume, muted: false });
-    this.playback.setMuted(streamId, false);
+    this.applyMuted(streamId);
     const ownerId = get().subs[streamId]?.ownerId;
     try {
       if (ownerId) localStorage.setItem(`volume:${ownerId}`, String(volume));
@@ -673,13 +720,58 @@ class Core {
   }
 
   setSubMuted(streamId: string, muted: boolean) {
-    this.playback.setMuted(streamId, muted);
     patchSub(streamId, { muted });
+    this.applyMuted(streamId);
+  }
+
+  private isSilent(streamId: string) {
+    const solo = soloOf(get());
+    return !!get().subs[streamId]?.muted || (solo !== null && solo !== streamId);
+  }
+
+  private applyMuted(streamId: string) {
+    this.playback.setMuted(streamId, this.isSilent(streamId));
+  }
+
+  toggleSolo(id: string) {
+    set(s => ({ solo: s.solo === id ? null : id }));
   }
 
   setSubQuality(streamId: string, quality: ViewerQuality) {
     patchSub(streamId, { quality });
-    this.signal.send({ t: "stream.quality", id: streamId, quality });
+    this.signal.send({ t: "stream.quality", id: streamId, quality: this.sentQuality(streamId) });
+  }
+
+  /** La qualité choisie, plafonnée à ce que la tuile peut afficher. Un seul stream ouvert garde toujours tout. */
+  private sentQuality(streamId: string): ViewerQuality {
+    const quality = get().subs[streamId]?.quality ?? DEFAULT_VIEWER_QUALITY;
+    const fit = FIT_TIERS.find(tier => tier.maxHeight === this.fits.get(streamId));
+    if (!fit || this.subs.size < 2 || !get().settings?.wall.fitQuality) return quality;
+    return { ...quality, maxHeight: quality.maxHeight ? Math.min(quality.maxHeight, fit.maxHeight) : fit.maxHeight, maxKbps: quality.maxKbps ? Math.min(quality.maxKbps, fit.maxKbps) : fit.maxKbps };
+  }
+
+  /** Une tuile vient de changer de taille. On attend qu'elle se pose : un glissement ne doit pas renégocier à chaque pixel. */
+  fitSub(streamId: string, height: number) {
+    const target = FIT_TIERS.find(tier => height * devicePixelRatio <= tier.upTo)?.maxHeight ?? 0;
+    clearTimeout(this.fitTimers.get(streamId));
+    if (target === (this.fits.get(streamId) ?? 0)) return;
+    this.fitTimers.set(
+      streamId,
+      setTimeout(() => {
+        this.fits.set(streamId, target);
+        for (const id of this.subs.keys()) this.signal.send({ t: "stream.quality", id, quality: this.sentQuality(id) });
+      }, FIT_DELAY_MS),
+    );
+  }
+
+  updateWall(patch: Partial<WallSettings>) {
+    void this.updateSettings({ wall: { ...get().settings!.wall, ...patch } });
+  }
+
+  /** La disposition libre part de ce qu'on voit : on déplace ce qui est à l'écran, sans repartir de zéro. */
+  setWallMode(mode: WallMode, shown: Record<string, WallRect> = {}) {
+    const { free } = get().settings!.wall;
+    this.updateWall(mode === "free" ? { mode, free: { ...shown, ...free } } : { mode });
   }
 
   setLatency(latency: Settings["latency"]) {
@@ -832,6 +924,7 @@ class Core {
         preview,
         sourceName: opened.name,
         kind: opened.kind,
+        file: null,
         nativeCapture: opened.native,
         stats: null,
         viewers: [],
@@ -902,7 +995,43 @@ class Core {
     void api.overlayOpen({ displayId: source.kind === "screen" ? source.source.displayId : undefined, hwnd: source.kind === "window" ? source.source.id.split(":")[1] : undefined, settings: overlay });
   }
 
+  /** Le fichier diffusé reste entre les mains du diffuseur : pause, position et boucle passent par ici. */
+  private followFile(opened: OpenedSource) {
+    const element = opened.element;
+    if (!element) return patchPublish({ file: null });
+    const push = () => {
+      if (this.opened === opened) patchPublish({ file: { playing: !element.paused, time: element.currentTime, duration: Number.isFinite(element.duration) ? element.duration : 0, loop: this.fileLoop } });
+    };
+    this.fileLoop = false;
+    for (const type of ["timeupdate", "play", "pause", "durationchange", "seeked"]) element.addEventListener(type, push);
+    // Le seul retour au début qu'on n'a pas demandé, c'est la fin du fichier.
+    element.addEventListener("seeking", () => {
+      if (this.fileSeek) return void (this.fileSeek = false);
+      if (this.fileLoop || this.opened !== opened) return;
+      element.pause();
+      toast("Le fichier est terminé", "info");
+    });
+    push();
+  }
+
+  fileControl(change: { playing?: boolean; time?: number; loop?: boolean }) {
+    const element = this.opened?.element;
+    const file = get().publish?.file;
+    if (!element || !file) return;
+    if (change.time !== undefined) {
+      this.fileSeek = true;
+      element.currentTime = change.time;
+    }
+    if (change.loop !== undefined) {
+      this.fileLoop = change.loop;
+      patchPublish({ file: { ...file, loop: change.loop } });
+    }
+    if (change.playing === true) void element.play().catch(() => {});
+    if (change.playing === false) element.pause();
+  }
+
   private watchSource(opened: OpenedSource) {
+    this.followFile(opened);
     opened.onEnded(() => {
       if (this.opened !== opened) return;
       this.sourceGone = true;

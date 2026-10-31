@@ -112,6 +112,34 @@ export interface OverlaySettings {
   corner: "top-left" | "top-right" | "bottom-left" | "bottom-right";
 }
 
+/** Comment une personne arrange la scène : ces réglages sont les siens, ils ne changent rien chez les autres. */
+export type WallMode = "focus" | "side" | "grid" | "pip" | "free";
+
+/** Position et taille en parts de la scène : une disposition libre survit à un changement de taille de fenêtre. */
+export interface WallRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface WallSettings {
+  mode: WallMode;
+  /** Les personnes dans l'ordre choisi : on retrouve son arrangement au stream suivant. */
+  order: string[];
+  free: Record<string, WallRect>;
+  /** Le diffuseur voit son propre retour. Le masquer économise un décodage. */
+  showOwn: boolean;
+  /** Seule l'image en grand fait du son. */
+  audioFollows: boolean;
+  /** Une petite image reçoit une petite définition : le diffuseur et la connexion respirent. */
+  fitQuality: boolean;
+  /** Ouvrir tous les streams du salon, pas seulement le premier. */
+  watchAll: boolean;
+}
+
+export const DEFAULT_WALL: WallSettings = { mode: "focus", order: [], free: {}, showOwn: true, audioFollows: false, fitQuality: true, watchAll: false };
+
 export interface RecentRoom {
   id: string;
   name: string;
@@ -157,6 +185,7 @@ export interface Settings {
   /** Clé de l'entrée OBS : elle ne quitte jamais ce PC. */
   obsKey: string;
   regie: RegieLayout;
+  wall: WallSettings;
 }
 
 export interface CaptureSource {
@@ -250,6 +279,13 @@ export interface YoutubeInfo {
   title: string;
 }
 
+/** Ce que cache un lien : une vidéo lisible par tout le salon, ou une page qu'il faudra diffuser. */
+export interface VideoInfo {
+  kind: "direct" | "page";
+  url: string;
+  title: string;
+}
+
 export interface NativeVideoRequest {
   sourceId: string;
   displayId: string;
@@ -316,6 +352,12 @@ export interface SpokaApi {
   saveScreenshot(fileName: string, png: ArrayBuffer): Promise<string>;
   /** null : la vidéo n'existe pas, ou YouTube interdit de la lire ailleurs que sur son site. */
   youtubeInfo(videoId: string): Promise<YoutubeInfo | null>;
+  /** null : le lien ne répond pas. */
+  videoInfo(url: string): Promise<VideoInfo | null>;
+  /** Ouvre la page à diffuser. La capture qui suit vise cette page, et rien d'autre. */
+  webOpen(url: string): Promise<boolean>;
+  webClose(): void;
+  onWebClosed(cb: () => void): () => void;
   reveal(path: string): void;
   pickFolder(): Promise<string | null>;
 

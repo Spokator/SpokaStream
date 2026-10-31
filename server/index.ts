@@ -7,7 +7,7 @@ import { LIMITS } from "../src/shared/protocol.ts";
 import type { IceServer } from "../src/shared/protocol.ts";
 import { Hub } from "./hub.ts";
 import type { Store } from "./store.ts";
-import { ICON_192, ICON_512, VIEWER_HTML, VIEWER_JS } from "./viewer.gen.ts";
+import { HLS_JS, ICON_192, ICON_512, VIEWER_HTML, VIEWER_JS } from "./viewer.gen.ts";
 
 export interface ServerOptions {
   port: number;
@@ -45,10 +45,11 @@ export function iceServersFor(userId: string, options: Pick<ServerOptions, "turn
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 
-/** Le lecteur web ne parle qu'à ce serveur. Les seules images extérieures sont les miniatures YouTube. */
-const VIEWER_CSP = ["default-src 'self'", "script-src 'self'", "style-src 'unsafe-inline'", "img-src 'self' data: blob: https://i.ytimg.com", "media-src 'self' blob:", "connect-src 'self' ws: wss:", "frame-src 'self'", "worker-src 'self'", "manifest-src 'self'", "base-uri 'none'", "form-action 'none'"].join("; ");
+/** Le lecteur web ne parle qu'à ce serveur. Les seuls contenus extérieurs sont les miniatures YouTube et les vidéos de la Watch Party, qu'il faut vérifier avant de les lancer. */
+const VIEWER_CSP = ["default-src 'self'", "script-src 'self'", "style-src 'unsafe-inline'", "img-src 'self' data: blob: https://i.ytimg.com", "media-src 'self' blob: http: https:", "connect-src 'self' ws: wss:", "frame-src 'self'", "worker-src 'self'", "manifest-src 'self'", "base-uri 'none'", "form-action 'none'"].join("; ");
 
 const VIEWER_JS_GZIP = gzipSync(VIEWER_JS);
+const HLS_JS_GZIP = gzipSync(HLS_JS);
 
 /** De quoi ajouter SpokaStream à l'écran d'accueil d'un téléphone : il s'ouvre alors comme une application, sans barre de navigateur. */
 const MANIFEST = JSON.stringify({
@@ -100,40 +101,135 @@ function invitePage(code: string, downloadUrl: string) {
 }
 
 /**
- * Le lecteur de « Regarder ensemble ». YouTube refuse une page sans vraie origine, et l'application est chargée depuis
- * un fichier local : elle affiche donc cette page en cadre et la pilote par messages.
+ * Le lecteur de la Watch Party. YouTube refuse une page sans vraie origine, et l'application est chargée depuis un
+ * fichier local : elle affiche donc cette page en cadre et la pilote par messages. Un fichier ou un flux HLS passe par
+ * le même chemin : pour l'application et pour le site, les deux lecteurs se commandent de la même façon.
  */
 const PLAYER_PAGE = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>SpokaStream</title>
-<style>html,body,#player{margin:0;width:100%;height:100%;background:#000;overflow:hidden}</style></head>
-<body><div id="player"></div><script>
-var player = null;
+<style>html,body,#player,#file{margin:0;width:100%;height:100%;background:#000;overflow:hidden}#file{display:none;object-fit:contain}video::cue{font:500 clamp(14px,3.4vh,34px)/1.3 system-ui,"Segoe UI",sans-serif;background:rgba(0,0,0,.62)}</style></head>
+<body><div id="player"></div><video id="file" playsinline></video><script>
+var yt = null, requested = false, waiting = null, mode = "", hls = null, volume = 100, seekTo = 0;
+var file = document.getElementById("file");
 function send(message) { message.spoka = true; parent.postMessage(message, "*"); }
+function fileState() { return file.ended ? 0 : file.paused ? 2 : file.readyState < 3 || file.seeking ? 3 : 1; }
 function report() {
-  if (!player || !player.getCurrentTime) return;
-  send({ type: "time", time: player.getCurrentTime(), duration: player.getDuration(), state: player.getPlayerState() });
+  if (mode === "file") return send({ type: "time", time: file.currentTime, duration: isFinite(file.duration) ? file.duration : 0, state: fileState() });
+  if (yt && yt.getCurrentTime) send({ type: "time", time: yt.getCurrentTime(), duration: yt.getDuration(), state: yt.getPlayerState() });
+}
+function show(name) {
+  var frame = document.getElementById("player");
+  frame.style.display = name === "file" ? "none" : "block";
+  file.style.display = name === "file" ? "block" : "none";
+  mode = name;
 }
 function onYouTubeIframeAPIReady() {
-  player = new YT.Player("player", {
+  yt = new YT.Player("player", {
     width: "100%", height: "100%",
     playerVars: { controls: 0, disablekb: 1, fs: 0, rel: 0, iv_load_policy: 3, playsinline: 1, origin: location.origin },
     events: {
-      onReady: function () { send({ type: "ready" }); },
+      onReady: function () { yt.setVolume(volume); if (waiting) { var next = waiting; waiting = null; loadYoutube(next); } },
       onStateChange: function (e) { send({ type: "state", state: e.data }); report(); },
       onError: function (e) { send({ type: "error", code: e.data }); }
     }
   });
 }
+function loadYoutube(m) {
+  clearFile();
+  show("youtube");
+  if (!yt || !yt.loadVideoById) {
+    waiting = m;
+    if (requested) return;
+    requested = true;
+    var script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    script.onerror = function () { send({ type: "error", code: 5 }); };
+    return document.body.append(script);
+  }
+  yt.loadVideoById({ videoId: m.id, startSeconds: m.time || 0 });
+  if (!m.playing) yt.pauseVideo();
+}
+function clearFile() {
+  if (hls) { hls.destroy(); hls = null; }
+  file.pause();
+  file.removeAttribute("src");
+  file.load();
+  subtitles(null);
+}
+function playFile() {
+  var started = file.play();
+  if (started) started.catch(function (e) {
+    if (e.name !== "NotAllowedError") return;
+    file.muted = true;
+    send({ type: "muted" });
+    file.play().catch(function () {});
+  });
+}
+function startHls(m) {
+  hls = new Hls();
+  hls.on(Hls.Events.ERROR, function (_, data) { if (data.fatal) send({ type: "error", code: 1002 }); });
+  hls.loadSource(m.url);
+  hls.attachMedia(file);
+}
+function loadFile(m) {
+  if (yt && yt.stopVideo) yt.stopVideo();
+  clearFile();
+  show("file");
+  seekTo = m.time || 0;
+  var stream = /\\.m3u8(?:[?#]|$)/i.test(m.url);
+  if (stream && !file.canPlayType("application/vnd.apple.mpegurl")) {
+    if (window.Hls) startHls(m);
+    else {
+      var script = document.createElement("script");
+      script.src = "/hls.js";
+      script.onload = function () { startHls(m); };
+      script.onerror = function () { send({ type: "error", code: 1002 }); };
+      document.body.append(script);
+    }
+  } else file.src = m.url;
+  if (m.playing) playFile();
+  if (m.subtitles) fetch(m.subtitles).then(function (r) { return r.ok ? r.text() : ""; }).then(function (text) { if (text) subtitles(text); }, function () {});
+}
+function subtitles(text) {
+  for (var old = file.querySelector("track"); old; old = file.querySelector("track")) { URL.revokeObjectURL(old.src); old.remove(); }
+  if (!text) return;
+  var vtt = /^\\s*WEBVTT/.test(text) ? text : "WEBVTT\\n\\n" + text.replace(/\\r/g, "").replace(/(\\d\\d:\\d\\d:\\d\\d),(\\d\\d\\d)/g, "$1.$2");
+  var track = document.createElement("track");
+  track.kind = "subtitles";
+  track.label = "Sous-titres";
+  track.default = true;
+  track.src = URL.createObjectURL(new Blob([vtt], { type: "text/vtt" }));
+  file.append(track);
+  track.track.mode = "showing";
+}
+file.addEventListener("loadedmetadata", function () { if (seekTo) { file.currentTime = seekTo; seekTo = 0; } report(); });
+file.addEventListener("ended", function () { send({ type: "state", state: 0 }); });
+file.addEventListener("error", function () { if (file.getAttribute("src") && file.error) send({ type: "error", code: 1000 + file.error.code }); });
 addEventListener("message", function (e) {
   var m = e.data;
-  if (e.source !== parent || !m || !m.spoka || !player || !player.loadVideoById) return;
-  if (m.cmd === "load") { player.loadVideoById({ videoId: m.id, startSeconds: m.time || 0 }); if (!m.playing) player.pauseVideo(); }
-  else if (m.cmd === "play") player.playVideo();
-  else if (m.cmd === "pause") player.pauseVideo();
-  else if (m.cmd === "seek") player.seekTo(m.time, true);
-  else if (m.cmd === "volume") { player.setVolume(m.volume); if (m.volume > 0) player.unMute(); else player.mute(); }
+  if (e.source !== parent || !m || !m.spoka) return;
+  if (m.cmd === "load") return m.url ? loadFile(m) : loadYoutube(m);
+  if (m.cmd === "subtitles") return subtitles(m.text);
+  if (m.cmd === "volume") {
+    volume = m.volume;
+    file.volume = m.volume / 100;
+    file.muted = m.volume <= 0;
+    if (yt && yt.setVolume) { yt.setVolume(m.volume); if (m.volume > 0) yt.unMute(); else yt.mute(); }
+    return;
+  }
+  if (mode === "file") {
+    if (m.cmd === "play") playFile();
+    else if (m.cmd === "pause") file.pause();
+    else if (m.cmd === "seek") { if (file.readyState) file.currentTime = m.time; else seekTo = m.time; }
+    return;
+  }
+  if (!yt || !yt.loadVideoById) return;
+  if (m.cmd === "play") yt.playVideo();
+  else if (m.cmd === "pause") yt.pauseVideo();
+  else if (m.cmd === "seek") yt.seekTo(m.time, true);
 });
 setInterval(report, 500);
-</script><script src="https://www.youtube.com/iframe_api"></script></body></html>`;
+send({ type: "ready" });
+</script></body></html>`;
 
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const downloadUrl = options.downloadUrl ?? "https://github.com/Spokator/SpokaStream/releases/latest";
@@ -158,6 +254,11 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       const gzip = /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""));
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", vary: "accept-encoding", ...(gzip ? { "content-encoding": "gzip" } : {}) });
       return res.end(gzip ? VIEWER_JS_GZIP : VIEWER_JS);
+    }
+    if (url.pathname === "/hls.js") {
+      const gzip = /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""));
+      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=86400", vary: "accept-encoding", ...(gzip ? { "content-encoding": "gzip" } : {}) });
+      return res.end(gzip ? HLS_JS_GZIP : HLS_JS);
     }
     if (url.pathname === "/manifest.webmanifest") {
       res.writeHead(200, { "content-type": "application/manifest+json" });

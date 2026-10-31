@@ -12,6 +12,7 @@ export type VideoSource =
   | { kind: "window"; source: CaptureSource }
   | { kind: "camera"; deviceId: string; label: string }
   | { kind: "file"; file: File }
+  | { kind: "web"; url: string }
   | { kind: "obs"; ingest: ObsIngest };
 
 export interface OpenedSource {
@@ -144,12 +145,17 @@ export async function openSource(source: VideoSource, fps: number, maxHeight: nu
     });
     return fromTrack(stream.getVideoTracks()[0]!, source.label, "camera");
   }
+  if (source.kind === "web") return openWeb(source.url, fps);
   const url = URL.createObjectURL(source.file);
   const element = document.createElement("video");
   element.src = url;
+  // Une piste capturée meurt avec la fin du média : en bouclant, elle reste vivante, et core.ts s'arrête à la fin s'il le faut.
   element.loop = true;
   element.playsInline = true;
-  await element.play();
+  await element.play().catch(() => {
+    URL.revokeObjectURL(url);
+    throw new Error("Ce fichier ne se lit pas ici : son format n'est pas pris en charge. Le MP4 et le WebM passent presque toujours, le MKV pas toujours.");
+  });
   const stream = (element as HTMLVideoElement & { captureStream(): MediaStream }).captureStream();
   const track = stream.getVideoTracks()[0];
   if (!track) {
@@ -167,6 +173,29 @@ export async function openSource(source: VideoSource, fps: number, maxHeight: nu
       element.removeAttribute("src");
       element.load();
       URL.revokeObjectURL(url);
+    },
+  };
+}
+
+/** La page s'ouvre dans sa propre fenêtre : on y navigue normalement, et seules son image et son son partent. */
+async function openWeb(url: string, fps: number): Promise<OpenedSource> {
+  if (!(await window.spoka.webOpen(url))) throw new Error("Cette page n'a pas pu s'ouvrir.");
+  const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: fps, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: true }).catch((e: Error) => {
+    window.spoka.webClose();
+    throw e;
+  });
+  const track = stream.getVideoTracks()[0]!;
+  const audio = stream.getAudioTracks();
+  let ended = () => {};
+  const off = window.spoka.onWebClosed(() => ended());
+  return {
+    ...fromTrack(track, new URL(url).hostname.replace(/^www\./, ""), "web"),
+    audio: audio.length ? new MediaStream(audio) : null,
+    onEnded: listener => (ended = listener),
+    stop: () => {
+      off();
+      for (const t of stream.getTracks()) t.stop();
+      window.spoka.webClose();
     },
   };
 }

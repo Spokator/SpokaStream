@@ -224,7 +224,7 @@ export function Chat() {
       {tray && (
         <div class="emoji-tray">
           {REACTIONS.map(emoji => (
-            <button key={emoji} type="button" aria-label={`Réagir ${emoji}`} disabled={!shown || shown === TOGETHER} onClick={() => react(emoji)}>
+            <button key={emoji} type="button" aria-label={`Réagir ${emoji}`} disabled={!shown} onClick={() => react(emoji)}>
               {emoji}
             </button>
           ))}
@@ -292,7 +292,7 @@ export function Chat() {
                 set({ sheet: "together" });
               }}
             >
-              <TvMinimalPlay size={17} /> Regarder une vidéo ensemble
+              <TvMinimalPlay size={17} /> Lancer une Watch Party
             </button>
           )}
         </div>
@@ -356,9 +356,9 @@ function Live() {
       ))}
       {together && (
         <button type="button" class={`stream ${shown === TOGETHER ? "is-on" : ""}`} onClick={() => choose(TOGETHER)}>
-          <img src={`https://i.ytimg.com/vi/${together.videoId}/mqdefault.jpg`} alt="" />
+          {together.url ? <span class="thumb-empty" /> : <img src={`https://i.ytimg.com/vi/${together.videoId}/mqdefault.jpg`} alt="" />}
           <span>
-            <b>YouTube ensemble</b>
+            <b>Watch Party</b>
             <small>{together.title}</small>
             {together.queue.length > 0 && <small>{together.queue.length} à suivre</small>}
           </span>
@@ -366,7 +366,7 @@ function Live() {
       )}
       {canShare() && (
         <button type="button" class="wide" onClick={() => set({ sheet: "together" })}>
-          <TvMinimalPlay size={17} /> Regarder une vidéo YouTube ensemble
+          <TvMinimalPlay size={17} /> Lancer une Watch Party
         </button>
       )}
     </div>

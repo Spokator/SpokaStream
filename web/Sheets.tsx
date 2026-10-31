@@ -177,10 +177,10 @@ function TogetherSheet() {
   const [error, setError] = useState("");
   return (
     <Sheet title="Regarder ensemble">
-      <p class="sheet-note">Colle un lien YouTube : chacun lit la vidéo de son côté et tout le salon reste synchronisé.</p>
+      <p class="sheet-note">Colle un lien YouTube ou l'adresse d'une vidéo (.mp4, .webm, .m3u8) : chacun la lit de son côté et tout le salon reste au même endroit.</p>
       <label class="field">
         <span>Lien de la vidéo</span>
-        <input value={link} placeholder="https://www.youtube.com/watch?v=…" inputMode="url" aria-label="Lien YouTube" onInput={e => setLink(e.currentTarget.value)} />
+        <input value={link} placeholder="https://…" inputMode="url" aria-label="Lien de la vidéo" onInput={e => setLink(e.currentTarget.value)} />
       </label>
       {error && <p class="error">{error}</p>}
       <button

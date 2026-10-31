@@ -8,7 +8,8 @@ export const PROTOCOL_VERSION = 2;
 export const LIMITS = {
   name: 32,
   roomName: 48,
-  title: 80,
+  title: 120,
+  url: 2048,
   chat: 2000,
   history: 200,
   avatarBytes: 96_000,
@@ -51,7 +52,7 @@ export interface Member extends Profile {
   web?: boolean;
 }
 
-export type SourceKind = "screen" | "window" | "camera" | "file" | "obs";
+export type SourceKind = "screen" | "window" | "camera" | "file" | "obs" | "web";
 export type AudioKind = "none" | "system" | "apps" | "input" | "file";
 
 /** Place de la caméra sur l'image, en fractions de sa taille. Chaque spectateur la dessine lui-même au même endroit. */
@@ -142,9 +143,13 @@ export interface TogetherItem {
   videoId: string;
   title: string;
   byName: string;
+  /** Adresse d'un fichier vidéo ou d'un flux HLS. Absente : videoId est une vidéo YouTube. */
+  url?: string;
+  /** Sous-titres proposés avec la vidéo, en .vtt ou .srt. */
+  subtitles?: string;
 }
 
-/** Une vidéo regardée ensemble : chacun la lit chez lui, en pleine qualité, et le salon garde la même position. */
+/** La Watch Party : chacun lit la vidéo chez lui, en pleine qualité, et le salon garde la même position. */
 export interface Together extends TogetherItem {
   playing: boolean;
   /** Position en secondes, au moment où le serveur a envoyé ce message. */
@@ -173,6 +178,8 @@ export interface RoomStatus {
   members: number;
   /** Qui est là, pour l'accueil : nom et couleur suffisent, les avatars pèseraient trop. */
   online: { name: string; color: string }[];
+  /** Le titre de la Watch Party en cours. */
+  party?: string;
   live: { ownerName: string; title: string; thumb: string | null }[];
   exists: boolean;
 }
@@ -246,9 +253,10 @@ export type ClientMessage =
   | { t: "poll.vote"; id: string; option: number }
   | { t: "poll.close"; id: string }
   | { t: "poll.dismiss"; id: string }
-  | { t: "together.add"; videoId: string; title: string }
+  | { t: "together.add"; videoId?: string; url?: string; subtitles?: string; title: string }
   | { t: "together.control"; playing: boolean; position: number }
   | { t: "together.next"; videoId: string }
+  | { t: "together.remove"; index: number; videoId: string }
   | { t: "together.stop" }
   | { t: "reaction"; streamId: string | null; emoji: string }
   | { t: "draw"; streamId: string; stroke: Stroke }
@@ -313,4 +321,28 @@ export function youtubeId(input: string): string | null {
   if (/^[\w-]{11}$/.test(text)) return text;
   const match = text.match(/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#\s]*&)?v=|shorts\/|live\/|embed\/))([\w-]{11})(?![\w-])/i);
   return match?.[1] ?? null;
+}
+
+/** Une adresse qu'un lecteur peut ouvrir : http ou https, sans identifiants glissés dedans. */
+export function videoUrl(input: unknown): string | null {
+  if (typeof input !== "string" || input.length > LIMITS.url) return null;
+  try {
+    const url = new URL(input.trim());
+    return /^https?:$/.test(url.protocol) && !url.username && !url.password ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export const isHls = (url: string) => /\.m3u8(?:[?#]|$)/i.test(url);
+
+/** Un titre lisible tiré de l'adresse, quand personne n'en donne un. */
+export function titleFromUrl(url: string) {
+  try {
+    const { hostname, pathname } = new URL(url);
+    const file = decodeURIComponent(pathname.split("/").pop() ?? "").replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[._]+/g, " ").trim();
+    return file || hostname;
+  } catch {
+    return "Vidéo";
+  }
 }

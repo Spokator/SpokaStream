@@ -1,11 +1,12 @@
 // Le moteur du lecteur web. Il réutilise la réception, le vocal et les clips de l'application.
 // Diffuser reste réservé au logiciel : c'est lui seul qui peut capter le son d'une application.
-import { DEFAULT_VIEWER_QUALITY, LIMITS, youtubeId } from "@shared/protocol.ts";
+import { DEFAULT_VIEWER_QUALITY, isHls, LIMITS, titleFromUrl, videoUrl, youtubeId } from "@shared/protocol.ts";
 import type { ChatMessage, ErrorCode, IceServer, RoomState, RoomStatus, ServerMessage, Stroke, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
 import { CLIP_SESSION, ClipShare } from "../src/renderer/src/engine/clipShare.ts";
 import { RequestError, Signal } from "../src/renderer/src/engine/signal.ts";
 import { Subscription } from "../src/renderer/src/engine/subscription.ts";
 import { VOICE_SESSION, Voice } from "../src/renderer/src/engine/voice.ts";
+import { canPlay } from "../src/renderer/src/engine/videoProbe.ts";
 import { frameForChat } from "../src/renderer/src/ui/image.ts";
 import { get, init, set, store, stored, TOGETHER } from "./store.ts";
 import type { RecentRoom, ViewStats } from "./store.ts";
@@ -50,7 +51,7 @@ camera.id = "camera";
 camera.muted = true;
 export const frame = document.createElement("iframe");
 frame.id = "together";
-frame.title = "Vidéo YouTube du salon";
+frame.title = "Vidéo de la Watch Party";
 frame.allow = "autoplay; encrypted-media";
 
 const signal = new Signal();
@@ -471,6 +472,7 @@ export function tapped() {
   video.muted = false;
   set({ needsTap: "" });
   resume();
+  if (get().shown === TOGETHER) sendPlayer({ cmd: "volume", volume: get().togetherVolume });
 }
 
 /** L'écran ne s'éteint pas pendant qu'on regarde. */
@@ -536,7 +538,7 @@ export function floatReaction(emoji: string) {
 
 export function react(emoji: string) {
   const { shown } = get();
-  if (!shown || shown === TOGETHER) return;
+  if (!shown) return;
   signal.send({ t: "reaction", streamId: shown, emoji });
   navigator.vibrate?.(15);
 }
@@ -594,20 +596,22 @@ function syncPlayer() {
   if (!playerReady) return;
   if (playerVideo !== together.videoId) {
     playerVideo = together.videoId;
-    return sendPlayer({ cmd: "load", id: together.videoId, time: togetherPosition(), playing: together.playing });
+    return sendPlayer({ cmd: "load", id: together.videoId, url: together.url, subtitles: together.subtitles, time: togetherPosition(), playing: together.playing });
   }
   sendPlayer({ cmd: together.playing ? "play" : "pause" });
   sendPlayer({ cmd: "seek", time: togetherPosition() });
 }
 
 function onPlayerMessage(event: MessageEvent) {
-  const message = event.data as { spoka?: boolean; type?: string; time?: number; duration?: number; state?: number };
+  const message = event.data as { spoka?: boolean; type?: string; time?: number; duration?: number; state?: number; code?: number };
   if (event.origin !== location.origin || event.source !== frame.contentWindow || !message?.spoka) return;
   if (message.type === "ready") {
     playerReady = true;
     sendPlayer({ cmd: "volume", volume: get().togetherVolume });
     return syncPlayer();
   }
+  if (message.type === "muted") return set({ needsTap: "son" });
+  if (message.type === "error") return set({ status: "Cette vidéo ne peut pas être lue sur ce téléphone." });
   if (message.type === "state" && message.state === 0) {
     const id = get().room?.together?.videoId;
     if (id) signal.send({ t: "together.next", videoId: id });
@@ -629,11 +633,31 @@ export const togetherSkip = () => {
   if (id) signal.send({ t: "together.next", videoId: id });
 };
 export const togetherStop = () => signal.send({ t: "together.stop" });
+export const togetherSkipBy = (seconds: number) => togetherSeek(Math.max(0, togetherPosition() + seconds));
+export const togetherRemove = (index: number, videoId: string) => signal.send({ t: "together.remove", index, videoId });
+
+/** Le son de la Watch Party : elle joue dans son propre lecteur, pas dans celui des streams. */
+export function setTogetherVolume(volume: number) {
+  set({ togetherVolume: volume });
+  sendPlayer({ cmd: "volume", volume });
+}
+
+/** Tes sous-titres, pour toi seul : un fichier .srt ou .vtt du téléphone. */
+export async function loadSubtitles(file: File) {
+  sendPlayer({ cmd: "subtitles", text: await file.text() });
+}
 
 /** Rend un message d'erreur, ou null si la vidéo part. */
-export async function togetherAdd(link: string) {
+export async function togetherAdd(link: string, subtitles = "") {
   const videoId = youtubeId(link);
-  if (!videoId) return "Ce n'est pas un lien YouTube.";
+  if (!videoId) {
+    const url = videoUrl(/^[a-z]+:\/\//i.test(link.trim()) ? link : `https://${link.trim()}`);
+    if (!url) return "Ce lien n'est pas valable.";
+    if (location.protocol === "https:" && url.startsWith("http:")) return "Ce lien n'est pas sécurisé (http) : un navigateur refuse de le lire ici.";
+    if (!isHls(url) && !(await canPlay(url))) return "Ce n'est pas une vidéo qu'un navigateur sait lire. Depuis l'application sur PC, on peut diffuser la page.";
+    signal.send({ t: "together.add", url, title: titleFromUrl(url), ...(subtitles.trim() ? { subtitles: subtitles.trim() } : {}) });
+    return null;
+  }
   const info = await fetch(`/oembed?id=${videoId}`).then(r => (r.ok ? (r.json() as Promise<{ title?: string }>) : null), () => null);
   if (!info?.title) return "Cette vidéo n'existe pas, ou YouTube interdit de la regarder hors de son site.";
   signal.send({ t: "together.add", videoId, title: info.title });

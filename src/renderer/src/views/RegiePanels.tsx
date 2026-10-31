@@ -9,6 +9,7 @@ import { get, memberOf, set, toast, useApp } from "../state/store.ts";
 import type { ActivityItem, PublishView } from "../state/store.ts";
 import { clock, limitText, mbps, pathText, plural } from "../ui/format.ts";
 import { Avatar, Button, Field, IconButton, Meter, Popover, Segmented, Select, Slider, Toggle, Uptime } from "../ui/kit.tsx";
+import { FileTransport } from "./Stage.tsx";
 import { Chat } from "./Chat.tsx";
 import { BITRATES, FPS_OPTIONS, PRESETS, RESOLUTIONS } from "./GoLive.tsx";
 import { Scenes, ScenesAdd } from "./Scenes.tsx";
@@ -268,6 +269,7 @@ function SourcesPanel() {
         <span>{publish.sourceName}</span>
         <Button onClick={() => set({ goLiveOpen: true })}>Changer</Button>
       </div>
+      <FileTransport />
       <CameraField on={!!publish.camera} />
     </>
   );
