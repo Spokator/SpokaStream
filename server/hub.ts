@@ -4,6 +4,7 @@ import {
   DEFAULT_VIEWER_QUALITY,
   LIMITS,
   PROTOCOL_VERSION,
+  youtubeId,
 } from "../src/shared/protocol.ts";
 import type {
   ChatMessage,
@@ -11,6 +12,7 @@ import type {
   ErrorCode,
   IceServer,
   Member,
+  Poll,
   Profile,
   RoomSettings,
   RoomState,
@@ -19,6 +21,8 @@ import type {
   StreamAnnounce,
   StreamInfo,
   StreamPatch,
+  Together,
+  TogetherItem,
   ViewerQuality,
 } from "../src/shared/protocol.ts";
 import type { Store, StoredRoom } from "./store.ts";
@@ -26,6 +30,8 @@ import type { Store, StoredRoom } from "./store.ts";
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const GRACE_MS = 20_000;
 const ROOM_MAX_IDLE_MS = 90 * 24 * 3600 * 1000;
+/** Une vignette toutes les 6 s chez chaque abonné serait du gaspillage : l'accueil n'a pas besoin d'être si frais. */
+const STATUS_THUMB_MS = 30_000;
 
 export interface Transport {
   send(data: string): void;
@@ -60,7 +66,7 @@ interface Conn {
   profile: Profile | null;
   room: Room | null;
   subscriptions: Set<string>;
-  buckets: Record<"chat" | "draw" | "reaction" | "signal" | "room" | "misc", Bucket>;
+  buckets: Record<"chat" | "image" | "draw" | "reaction" | "signal" | "room" | "misc", Bucket>;
 }
 
 interface LiveMember {
@@ -74,6 +80,14 @@ interface Room {
   members: Map<string, LiveMember>;
   streams: Map<string, StreamInfo>;
   qualities: Map<string, Map<string, ViewerQuality>>;
+  poll: Poll | null;
+  together: LiveTogether | null;
+  statusThumbAt: number;
+}
+
+/** position vaut à l'instant anchor : le serveur calcule la position réelle au moment d'envoyer. */
+interface LiveTogether extends Together {
+  anchor: number;
 }
 
 export interface HubOptions {
@@ -124,6 +138,7 @@ function cleanAnnounce(s: Partial<StreamAnnounce>): StreamAnnounce {
     paused: s.paused === true,
     allowDraw: s.allowDraw !== false,
     maxViewers: clampNumber(s.maxViewers, 0, LIMITS.membersPerRoom, 0),
+    camera: s.camera === true,
   };
 }
 
@@ -147,7 +162,7 @@ export class Hub {
     const cutoff = this.now() - ROOM_MAX_IDLE_MS;
     for (const data of this.store.load()) {
       if (data.lastActivity < cutoff) continue;
-      this.rooms.set(data.id, { data, members: new Map(), streams: new Map(), qualities: new Map() });
+      this.rooms.set(data.id, this.liveRoom(data));
       this.byCode.set(data.code, data.id);
     }
   }
@@ -172,6 +187,7 @@ export class Hub {
       subscriptions: new Set(),
       buckets: {
         chat: new Bucket(3, 12, now),
+        image: new Bucket(0.2, 4, now),
         draw: new Bucket(90, 180, now),
         reaction: new Bucket(6, 20, now),
         signal: new Bucket(300, 900, now),
@@ -255,9 +271,38 @@ export class Hub {
       }
       case "chat.send":
         if (!conn.buckets.chat.take(now)) return this.fail(conn, "rate_limited");
-        return this.onChat(conn, msg.text, msg.replyTo ?? null);
+        if (msg.image && !conn.buckets.image.take(now)) return this.fail(conn, "rate_limited");
+        return this.onChat(conn, msg.text, msg.replyTo ?? null, msg.image ?? null);
       case "chat.delete":
         return this.onChatDelete(conn, msg.id);
+      case "chat.react":
+        if (!conn.buckets.reaction.take(now)) return;
+        return this.onChatReact(conn, msg.id, msg.emoji);
+      case "chat.pin":
+        return this.onChatPin(conn, msg.id);
+      case "chat.typing":
+        if (conn.room && conn.buckets.misc.take(now)) this.broadcast(conn.room, { t: "chat.typing", userId: conn.userId! }, conn.userId!);
+        return;
+      case "poll.create":
+        if (!conn.buckets.room.take(now)) return this.fail(conn, "rate_limited");
+        return this.onPollCreate(conn, msg.question, msg.options);
+      case "poll.vote":
+        if (!conn.buckets.misc.take(now)) return;
+        return this.onPollVote(conn, msg.id, msg.option);
+      case "poll.close":
+        return this.onPollEnd(conn, msg.id, false);
+      case "poll.dismiss":
+        return this.onPollEnd(conn, msg.id, true);
+      case "together.add":
+        if (!conn.buckets.misc.take(now)) return this.fail(conn, "rate_limited");
+        return this.onTogetherAdd(conn, msg.videoId, msg.title);
+      case "together.control":
+        if (!conn.buckets.misc.take(now)) return;
+        return this.onTogetherControl(conn, msg.playing === true, msg.position);
+      case "together.next":
+        return this.onTogetherNext(conn, msg.videoId);
+      case "together.stop":
+        return this.onTogetherStop(conn);
       case "reaction": {
         const room = conn.room;
         if (!room || !isString(msg.emoji, 16) || !msg.emoji || !conn.buckets.reaction.take(now)) return;
@@ -292,7 +337,12 @@ export class Hub {
         const stream = this.streamOf(conn);
         if (!stream || !isDataImage(msg.data, LIMITS.thumbBytes) || !conn.buckets.misc.take(now)) return;
         stream.thumb = msg.data;
-        return this.broadcast(conn.room!, { t: "stream.thumb", id: stream.id, data: msg.data }, conn.userId!);
+        this.broadcast(conn.room!, { t: "stream.thumb", id: stream.id, data: msg.data }, conn.userId!);
+        if (now - conn.room!.statusThumbAt >= STATUS_THUMB_MS) {
+          conn.room!.statusThumbAt = now;
+          this.touchStatus(conn.room!);
+        }
+        return;
       }
       case "stream.watch":
         return this.onStreamWatch(conn, msg);
@@ -353,7 +403,7 @@ export class Hub {
       createdAt: now,
       lastActivity: now,
     };
-    const room: Room = { data, members: new Map(), streams: new Map(), qualities: new Map() };
+    const room = this.liveRoom(data);
     this.rooms.set(data.id, room);
     this.byCode.set(data.code, data.id);
     this.persist();
@@ -483,12 +533,13 @@ export class Hub {
     this.removeMember(room, userId);
   }
 
-  private onChat(conn: Conn, rawText: unknown, replyTo: string | null) {
+  private onChat(conn: Conn, rawText: unknown, replyTo: string | null, rawImage: unknown) {
     const room = conn.room;
     const live = this.liveOf(conn);
     if (!room || !live) return;
     const text = typeof rawText === "string" ? rawText.trim().slice(0, LIMITS.chat) : "";
-    if (!text) return;
+    const image = isDataImage(rawImage, LIMITS.image) ? rawImage : null;
+    if (!text && !image) return;
     const message: ChatMessage = {
       id: randomBytes(8).toString("hex"),
       authorId: live.member.id,
@@ -498,9 +549,136 @@ export class Hub {
       at: this.now(),
       replyTo: isString(replyTo, 24) ? replyTo : null,
       kind: "user",
+      image,
     };
     this.remember(room, message);
     this.broadcast(room, { t: "chat", message });
+  }
+
+  private onChatReact(conn: Conn, id: string, emoji: unknown) {
+    const room = conn.room;
+    const message = room?.data.history.find(m => m.id === id);
+    if (!room || !message || message.kind !== "user" || !isString(emoji, 16) || !emoji) return;
+    const reactions = (message.reactions ??= {});
+    const voters = reactions[emoji] ?? [];
+    if (voters.includes(conn.userId!)) {
+      const rest = voters.filter(v => v !== conn.userId);
+      if (rest.length) reactions[emoji] = rest;
+      else delete reactions[emoji];
+    } else {
+      if (!voters.length && Object.keys(reactions).length >= LIMITS.reactionsPerMessage) return;
+      reactions[emoji] = [...voters, conn.userId!];
+    }
+    this.persist();
+    this.broadcast(room, { t: "chat.reactions", id, reactions });
+  }
+
+  private onChatPin(conn: Conn, id: string | null) {
+    const room = conn.room;
+    if (!room || room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
+    const message = id ? room.data.history.find(m => m.id === id && m.kind === "user") : null;
+    if (id && !message) return;
+    room.data.pinned = message ? { ...message, image: null } : null;
+    this.persist();
+    this.broadcast(room, { t: "chat.pinned", message: room.data.pinned });
+  }
+
+  private onPollCreate(conn: Conn, rawQuestion: unknown, rawOptions: unknown) {
+    const room = conn.room;
+    const live = this.liveOf(conn);
+    if (!room || !live) return;
+    if (room.poll && !room.poll.closed && room.poll.authorId !== conn.userId && room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
+    const question = clean(rawQuestion, LIMITS.pollQuestion);
+    const options = Array.isArray(rawOptions) ? [...new Set(rawOptions.map(o => clean(o, LIMITS.pollOption)).filter(Boolean))].slice(0, LIMITS.pollOptions) : [];
+    if (!question || options.length < 2) return this.fail(conn, "bad_request");
+    room.poll = { id: randomBytes(6).toString("hex"), question, options: options.map(text => ({ text, voters: [] })), authorId: conn.userId!, authorName: live.member.name, closed: false };
+    this.broadcast(room, { t: "poll", poll: room.poll });
+    this.pushSystem(room, `${live.member.name} a lancé un sondage`);
+  }
+
+  private onPollVote(conn: Conn, id: string, option: unknown) {
+    const room = conn.room;
+    const poll = room?.poll;
+    if (!room || !poll || poll.id !== id || poll.closed || !Number.isInteger(option) || !poll.options[option as number]) return;
+    const already = poll.options[option as number]!.voters.includes(conn.userId!);
+    for (const entry of poll.options) entry.voters = entry.voters.filter(v => v !== conn.userId);
+    // Un second clic sur le même choix retire le vote.
+    if (!already) poll.options[option as number]!.voters.push(conn.userId!);
+    this.broadcast(room, { t: "poll", poll });
+  }
+
+  private onPollEnd(conn: Conn, id: string, dismiss: boolean) {
+    const room = conn.room;
+    const poll = room?.poll;
+    if (!room || !poll || poll.id !== id) return;
+    if (poll.authorId !== conn.userId && room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
+    if (dismiss) room.poll = null;
+    else poll.closed = true;
+    this.broadcast(room, { t: "poll", poll: room.poll });
+  }
+
+  private canShare(room: Room, userId: string) {
+    return room.data.settings.whoCanStream === "everyone" || room.data.ownerId === userId;
+  }
+
+  private togetherPosition(t: LiveTogether) {
+    return t.playing ? t.position + (this.now() - t.anchor) / 1000 : t.position;
+  }
+
+  private togetherView(t: LiveTogether | null): Together | null {
+    if (!t) return null;
+    const { anchor: _anchor, ...view } = t;
+    return { ...view, position: this.togetherPosition(t) };
+  }
+
+  private pushTogether(room: Room) {
+    this.broadcast(room, { t: "together", together: this.togetherView(room.together) });
+  }
+
+  private onTogetherAdd(conn: Conn, rawId: unknown, rawTitle: unknown) {
+    const room = conn.room;
+    const live = this.liveOf(conn);
+    if (!room || !live) return;
+    if (!this.canShare(room, conn.userId!)) return this.fail(conn, "forbidden");
+    const videoId = typeof rawId === "string" ? youtubeId(rawId) : null;
+    if (!videoId) return this.fail(conn, "bad_request");
+    const item: TogetherItem = { videoId, title: clean(rawTitle, LIMITS.title) || "Vidéo YouTube", byName: live.member.name };
+    if (!room.together) {
+      room.together = { ...item, playing: true, position: 0, anchor: this.now(), queue: [] };
+      this.pushSystem(room, `${live.member.name} lance « ${item.title} »`);
+    } else {
+      if (room.together.queue.length >= LIMITS.queue) return this.fail(conn, "bad_request");
+      room.together.queue.push(item);
+    }
+    this.pushTogether(room);
+  }
+
+  private onTogetherControl(conn: Conn, playing: boolean, rawPosition: unknown) {
+    const room = conn.room;
+    const together = room?.together;
+    if (!room || !together || !this.canShare(room, conn.userId!)) return;
+    together.position = Number.isFinite(rawPosition) ? Math.max(0, Math.min(86_400, rawPosition as number)) : this.togetherPosition(together);
+    together.anchor = this.now();
+    together.playing = playing;
+    this.pushTogether(room);
+  }
+
+  /** Chacun signale la fin de la vidéo : seul le premier message fait avancer, les suivants parlent d'une vidéo déjà passée. */
+  private onTogetherNext(conn: Conn, videoId: string) {
+    const room = conn.room;
+    const together = room?.together;
+    if (!room || !together || together.videoId !== videoId) return;
+    const next = together.queue.shift();
+    room.together = next ? { ...next, playing: true, position: 0, anchor: this.now(), queue: together.queue } : null;
+    this.pushTogether(room);
+  }
+
+  private onTogetherStop(conn: Conn) {
+    const room = conn.room;
+    if (!room?.together) return;
+    if (!this.canShare(room, conn.userId!)) return this.fail(conn, "forbidden");
+    room.together = null;
+    this.pushTogether(room);
   }
 
   private onChatDelete(conn: Conn, id: string) {
@@ -511,6 +689,10 @@ export class Hub {
     const message = room.data.history[index]!;
     if (message.authorId !== conn.userId && room.data.ownerId !== conn.userId) return this.fail(conn, "forbidden");
     room.data.history.splice(index, 1);
+    if (room.data.pinned?.id === id) {
+      room.data.pinned = null;
+      this.broadcast(room, { t: "chat.pinned", message: null });
+    }
     this.persist();
     this.broadcast(room, { t: "chat.deleted", id });
   }
@@ -524,6 +706,11 @@ export class Hub {
   private remember(room: Room, message: ChatMessage) {
     room.data.history.push(message);
     if (room.data.history.length > LIMITS.history) room.data.history.splice(0, room.data.history.length - LIMITS.history);
+    let images = 0;
+    for (let i = room.data.history.length - 1; i >= 0; i--) {
+      const old = room.data.history[i]!;
+      if (old.image && ++images > LIMITS.imagesPerRoom) old.image = null;
+    }
     room.data.lastActivity = message.at;
     this.persist();
   }
@@ -544,6 +731,7 @@ export class Hub {
       this.stopStreamOf(room, userId);
     }
     const stream: StreamInfo = { ...cleanAnnounce(announce), id, ownerId: userId, startedAt: this.now(), viewers: [], thumb: null };
+    room.statusThumbAt = 0;
     room.streams.set(id, stream);
     room.qualities.set(id, new Map());
     this.broadcast(room, { t: "stream.add", stream });
@@ -603,13 +791,14 @@ export class Hub {
 
   private statusOf(id: string): RoomStatus {
     const room = this.rooms.get(id);
-    if (!room) return { id, name: "", code: "", members: 0, live: [], exists: false };
+    if (!room) return { id, name: "", code: "", members: 0, online: [], live: [], exists: false };
     return {
       id,
       name: room.data.name,
       code: room.data.code,
       members: room.members.size,
-      live: [...room.streams.values()].map(s => ({ ownerName: room.members.get(s.ownerId)?.member.name ?? "?", title: s.title })),
+      online: [...room.members.values()].slice(0, 12).map(({ member }) => ({ name: member.name, color: member.color })),
+      live: [...room.streams.values()].map(s => ({ ownerName: room.members.get(s.ownerId)?.member.name ?? "?", title: s.title, thumb: s.thumb })),
       exists: true,
     };
   }
@@ -631,6 +820,9 @@ export class Hub {
       members: [...room.members.values()].map(m => m.member),
       streams: [...room.streams.values()],
       history: room.data.history,
+      pinned: room.data.pinned ?? null,
+      poll: room.poll,
+      together: this.togetherView(room.together),
     };
   }
 
@@ -652,8 +844,13 @@ export class Hub {
     return null;
   }
 
+  private liveRoom(data: StoredRoom): Room {
+    return { data, members: new Map(), streams: new Map(), qualities: new Map(), poll: null, together: null, statusThumbAt: 0 };
+  }
+
+  /** Les images restent en mémoire : un fichier réécrit à chaque message ne doit pas en porter le poids. */
   private persist() {
-    this.store.save([...this.rooms.values()].map(r => r.data));
+    this.store.save([...this.rooms.values()].map(r => ({ ...r.data, history: r.data.history.map(m => (m.image ? { ...m, image: null } : m)) })));
   }
 
   private broadcast(room: Room, msg: ServerMessage, exceptUserId?: string) {

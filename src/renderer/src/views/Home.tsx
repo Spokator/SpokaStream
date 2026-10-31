@@ -1,9 +1,9 @@
-import { ArrowRight, Radio, Server, Users, Volume2, WifiOff } from "lucide-react";
+import { ArrowRight, Keyboard, Radio, Server, Users, Volume2, WifiOff } from "lucide-react";
 import { useState } from "react";
 import { core } from "../engine/core.ts";
 import { set, useApp } from "../state/store.ts";
 import { hueOf, initials, plural } from "../ui/format.ts";
-import { Button } from "../ui/kit.tsx";
+import { Avatar, Button } from "../ui/kit.tsx";
 import { CreateRoomModal } from "./Shell.tsx";
 
 export function Home() {
@@ -17,6 +17,7 @@ export function Home() {
   const [creating, setCreating] = useState(false);
   const rooms = [...settings.recentRooms].sort((a, b) => (statuses[b.id]?.live.length ?? 0) - (statuses[a.id]?.live.length ?? 0) || b.at - a.at);
   const liveRooms = rooms.filter(r => (statuses[r.id]?.live.length ?? 0) > 0);
+  const liveNow = liveRooms.flatMap(room => statuses[room.id]!.live.map(live => ({ room, live })));
 
   const join = () => {
     if (code.trim()) void core.joinRoom(code);
@@ -64,6 +65,24 @@ export function Home() {
           </div>
         </section>
 
+        {liveNow.length > 0 && (
+          <section>
+            <h2 className="section-title">En direct maintenant</h2>
+            <div className="live-grid">
+              {liveNow.map(({ room, live }, i) => (
+                <button key={`${room.id}-${i}`} type="button" className="live-card" onClick={() => void core.openRoom(room.id)}>
+                  {live.thumb ? <img src={live.thumb} alt="" /> : <div className="live-card-empty" />}
+                  <span className="live-pill">En direct</span>
+                  <span className="live-card-text">
+                    <b>{live.ownerName}</b>
+                    <small>{live.title ? `${live.title} · ${room.name}` : room.name}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
         {rooms.length > 0 && (
           <section>
             <h2 className="section-title">Tes salons</h2>
@@ -80,7 +99,13 @@ export function Home() {
                       <b>{r.name}</b>
                       <small>{live.length ? `${live.map(l => l.ownerName).join(", ")} en direct` : status ? plural(status.members, "personne") : "Hors ligne"}</small>
                     </span>
-                    {live.length > 0 && <span className="live-pill">En direct</span>}
+                    {status?.online.length ? (
+                      <span className="room-card-people">
+                        {status.online.slice(0, 4).map((person, index) => (
+                          <Avatar key={index} name={person.name} color={person.color} size={22} />
+                        ))}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
@@ -97,6 +122,10 @@ export function Home() {
             <Volume2 size={15} />
             {audioEngine === "ready" ? "Capture du son par application prête" : audioEngine === "starting" ? "Démarrage du moteur audio…" : "Moteur audio indisponible"}
           </div>
+          <button type="button" className="health-item is-link" onClick={() => set({ dialog: "shortcuts" })}>
+            <Keyboard size={15} />
+            Raccourcis clavier
+          </button>
         </section>
       </div>
       {creating && <CreateRoomModal onClose={() => setCreating(false)} />}

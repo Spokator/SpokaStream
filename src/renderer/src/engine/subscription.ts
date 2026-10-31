@@ -14,6 +14,7 @@ export class Subscription {
   readonly streamId: string;
   readonly ownerId: string;
   readonly media = new MediaStream();
+  readonly camera = new MediaStream();
   private pc: RTCPeerConnection | null = null;
   private readonly iceServers: () => IceServer[];
   private readonly sendSignal: (data: unknown) => void;
@@ -60,10 +61,13 @@ export class Subscription {
       this.pc = pc;
       pc.onicecandidate = e => e.candidate && this.sendSignal({ candidate: e.candidate });
       pc.ontrack = e => {
-        for (const old of this.media.getTracks().filter(t => t.kind === e.track.kind)) this.media.removeTrack(old);
-        this.media.addTrack(e.track);
+        // Le diffuseur réserve toujours la bulle caméra après l'image et le son.
+        const isCamera = e.track.kind === "video" && e.transceiver.mid !== "0";
+        const target = isCamera ? this.camera : this.media;
+        for (const old of target.getTracks().filter(t => t.kind === e.track.kind)) target.removeTrack(old);
+        target.addTrack(e.track);
         this.applyLatency();
-        this.onTrack(e.track);
+        if (!isCamera) this.onTrack(e.track);
       };
       pc.onconnectionstatechange = () => {
         if (pc !== this.pc) return;
@@ -105,6 +109,6 @@ export class Subscription {
     if (this.unstableTimer) clearTimeout(this.unstableTimer);
     this.pc?.close();
     this.pc = null;
-    this.media.getTracks().forEach(t => this.media.removeTrack(t));
+    for (const stream of [this.media, this.camera]) stream.getTracks().forEach(t => stream.removeTrack(t));
   }
 }

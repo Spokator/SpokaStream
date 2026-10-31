@@ -47,6 +47,7 @@ const api: SpokaApi = {
   overlaySend: event => ipcRenderer.send("overlay:send", event),
   onOverlayEvent: cb => subscribe("overlay:event", cb),
 
+  youtubeInfo: videoId => ipcRenderer.invoke("youtube:info", videoId),
   recordStart: fileName => ipcRenderer.invoke("record:start", fileName),
   recordWrite: (id, chunk) => ipcRenderer.invoke("record:write", id, chunk),
   recordStop: id => ipcRenderer.invoke("record:stop", id),

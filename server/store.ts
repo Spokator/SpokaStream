@@ -10,6 +10,7 @@ export interface StoredRoom {
   settings: RoomSettings;
   bans: string[];
   history: ChatMessage[];
+  pinned?: ChatMessage | null;
   createdAt: number;
   lastActivity: number;
 }

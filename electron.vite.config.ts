@@ -6,10 +6,12 @@ const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  "img-src 'self' data: blob: https://i.ytimg.com",
   "media-src 'self' blob: mediastream:",
   "font-src 'self' data:",
   "connect-src 'self' ws: wss:",
+  // Le lecteur de « Regarder ensemble » vit sur le serveur de salons, quelle que soit son adresse.
+  "frame-src http: https:",
   "worker-src 'self' blob:",
 ].join("; ");
 

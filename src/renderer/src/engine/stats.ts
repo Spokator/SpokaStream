@@ -78,7 +78,8 @@ export class SendMeter {
     const report = await pc.getStats();
     let result: SendStats | null = null;
     report.forEach((r: Row) => {
-      if (r.type !== "outbound-rtp" || r.kind !== "video") return;
+      // La bulle caméra est un second flux vidéo : les mesures parlent de l'image principale.
+      if (r.type !== "outbound-rtp" || r.kind !== "video" || r.mid !== "0") return;
       const now = r.timestamp;
       const bytes = Number(r.bytesSent ?? 0);
       const sent = Number(r.packetsSent ?? 0);
@@ -117,7 +118,7 @@ export class ReceiveMeter {
     let audio: Row | undefined;
     report.forEach((r: Row) => {
       if (r.type !== "inbound-rtp") return;
-      if (r.kind === "video") video = r;
+      if (r.kind === "video" && r.mid === "0") video = r;
       else if (r.kind === "audio") audio = r;
     });
     if (!video && !audio) return null;

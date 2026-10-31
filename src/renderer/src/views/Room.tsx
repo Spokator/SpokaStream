@@ -1,8 +1,8 @@
-import { Check, Headphones, HeadphoneOff, LayoutGrid, Link2, LogOut, Lock, Mic, MicOff, PanelRightClose, PanelRightOpen, PhoneCall, PhoneOff, Radio, Settings2, Square, Trash2, Unlock } from "lucide-react";
-import { useState } from "react";
+import { Check, Clapperboard, Headphones, HeadphoneOff, LayoutGrid, Link2, LogOut, Lock, Mic, MicOff, PanelRightClose, PanelRightOpen, PhoneCall, PhoneOff, Radio, Settings2, Square, Trash2, TvMinimalPlay, Unlock } from "lucide-react";
+import { useEffect, useState } from "react";
 import { core } from "../engine/core.ts";
-import { set, useApp } from "../state/store.ts";
-import { Avatar, Button, Field, IconButton, Modal, Segmented, Select, Toggle } from "../ui/kit.tsx";
+import { get, set, useApp } from "../state/store.ts";
+import { Avatar, Button, Field, IconButton, isTyping, Modal, Segmented, Select, Toggle } from "../ui/kit.tsx";
 import { Chat } from "./Chat.tsx";
 import { Members } from "./Members.tsx";
 import { Stage } from "./Stage.tsx";
@@ -15,10 +15,26 @@ export function Room() {
   const panelTab = useApp(s => s.panelTab);
   const publish = useApp(s => s.publish);
   const unread = useApp(s => s.unread);
+  const cinema = useApp(s => s.cinema);
   const [layout, setLayout] = useState<"focus" | "grid">("focus");
   const [copied, setCopied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const isOwner = room.ownerId === userId;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && get().cinema && !document.querySelector(".modal-backdrop")) return set({ cinema: false });
+      if (isTyping(e) || get().view !== "room") return;
+      const key = e.key.toLowerCase();
+      if (key === "t") set({ cinema: !get().cinema });
+      else if (key === "c") void core.saveClip();
+      else if (e.key === "Enter" && !document.querySelector(".floating-chat")) document.querySelector<HTMLTextAreaElement>(".chat-input textarea")?.focus();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const copyInvite = () => {
     window.spoka.copyText(core.inviteLink(room.code));
@@ -31,7 +47,7 @@ export function Room() {
   };
 
   return (
-    <div className={`room ${panelOpen ? "" : "no-panel"}`}>
+    <div className={`room ${panelOpen && !cinema ? "" : "no-panel"} ${cinema ? "is-cinema" : ""}`}>
       <div className="room-main">
         <header className="room-head">
           <h1>{room.name}</h1>
@@ -55,6 +71,9 @@ export function Room() {
           <IconButton label={layout === "focus" ? "Afficher en grille" : "Afficher un stream en grand"} active={layout === "grid"} onClick={() => setLayout(layout === "focus" ? "grid" : "focus")}>
             <LayoutGrid size={18} />
           </IconButton>
+          <IconButton label="Mode cinéma" onClick={() => set({ cinema: true })}>
+            <Clapperboard size={18} />
+          </IconButton>
           <IconButton label={panelOpen ? "Masquer le panneau" : "Afficher le panneau"} onClick={() => void core.updateSettings({ chatPanelOpen: !panelOpen })}>
             {panelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
           </IconButton>
@@ -64,7 +83,7 @@ export function Room() {
         <Dock />
       </div>
 
-      {panelOpen && (
+      {panelOpen && !cinema && (
         <aside className="panel">
           <div className="panel-tabs" role="tablist">
             <button type="button" role="tab" aria-selected={panelTab === "chat"} className={panelTab === "chat" ? "is-on" : ""} onClick={() => openTab("chat")}>
@@ -124,6 +143,9 @@ function Dock() {
             Diffuser
           </Button>
         )}
+        <IconButton label="Regarder une vidéo YouTube ensemble" disabled={!canStream} onClick={() => set({ dialog: "together" })}>
+          <TvMinimalPlay size={19} />
+        </IconButton>
       </div>
 
       <div className="dock-group dock-right">

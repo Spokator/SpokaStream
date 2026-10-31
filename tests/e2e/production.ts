@@ -80,7 +80,7 @@ try {
   assert.ok(level > 0.1, `le son doit arriver, niveau ${level}`);
   console.log(`par le relais ${settled.path.protocol} : ${settled.width}x${settled.height}, ${settled.fps} i/s, ${settled.kbps} kb/s, ${settled.codec}, aller-retour ${settled.path.rttMs} ms, pertes ${settled.lostPct} %, gels ${settled.freezes}, son ${Math.round(level * 100)} %`);
 
-  await b.page.getByLabel("Message").fill("Reçu par le vrai serveur");
+  await b.page.getByRole("textbox", { name: "Message", exact: true }).fill("Reçu par le vrai serveur");
   await b.page.keyboard.press("Enter");
   await poll(
     "message reçu",

@@ -40,12 +40,17 @@ function defaults(): Settings {
       maxViewers: 0,
       allowDraw: true,
       normalizeAudio: false,
+      clipSeconds: 30,
+      cameraId: "",
     },
     hotkeys: DEFAULT_HOTKEYS,
     overlay: { enabled: true, reactions: true, chat: true, viewers: true, corner: "top-right" },
     recordingsDir: path.join(app.getPath("videos"), "SpokaStream"),
     recentRooms: [],
     chatPanelOpen: true,
+    accent: "#7c5cff",
+    uiScale: 1,
+    ambient: true,
   };
 }
 

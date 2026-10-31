@@ -25,6 +25,7 @@ export function OverlayView() {
   const [region, setRegion] = useState<OverlayRegion | null>(null);
   const [chat, setChat] = useState<ChatLine[]>([]);
   const [reactions, setReactions] = useState<Floating[]>([]);
+  const [poll, setPoll] = useState<Extract<OverlayEvent, { type: "poll" }>["poll"]>(null);
 
   useEffect(() => {
     document.documentElement.style.background = "transparent";
@@ -39,6 +40,8 @@ export function OverlayView() {
           return setRegion(event.region);
         case "viewers":
           return setViewers(event.count);
+        case "poll":
+          return setPoll(event.poll);
         case "stroke":
           return strokes.add(event.id, event.tool, event.color, event.points, event.end);
         case "clear":
@@ -81,6 +84,17 @@ export function OverlayView() {
                 <b style={{ color: line.color }}>{line.name}</b> {line.text}
               </div>
             ))}
+          {settings.chat && poll && (
+            <div className="overlay-poll">
+              <b>{poll.question}</b>
+              {poll.options.map(option => (
+                <div key={option.text}>
+                  <span>{option.text}</span>
+                  <em>{option.votes}</em>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {settings?.reactions && (

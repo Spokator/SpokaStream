@@ -54,6 +54,42 @@ function invitePage(code: string, downloadUrl: string) {
 <script>location.href=${JSON.stringify(deepLink)}</script></body></html>`;
 }
 
+/**
+ * Le lecteur de « Regarder ensemble ». YouTube refuse une page sans vraie origine, et l'application est chargée depuis
+ * un fichier local : elle affiche donc cette page en cadre et la pilote par messages.
+ */
+const PLAYER_PAGE = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>SpokaStream</title>
+<style>html,body,#player{margin:0;width:100%;height:100%;background:#000;overflow:hidden}</style></head>
+<body><div id="player"></div><script>
+var player = null;
+function send(message) { message.spoka = true; parent.postMessage(message, "*"); }
+function report() {
+  if (!player || !player.getCurrentTime) return;
+  send({ type: "time", time: player.getCurrentTime(), duration: player.getDuration(), state: player.getPlayerState() });
+}
+function onYouTubeIframeAPIReady() {
+  player = new YT.Player("player", {
+    width: "100%", height: "100%",
+    playerVars: { controls: 0, disablekb: 1, fs: 0, rel: 0, iv_load_policy: 3, playsinline: 1, origin: location.origin },
+    events: {
+      onReady: function () { send({ type: "ready" }); },
+      onStateChange: function (e) { send({ type: "state", state: e.data }); report(); },
+      onError: function (e) { send({ type: "error", code: e.data }); }
+    }
+  });
+}
+addEventListener("message", function (e) {
+  var m = e.data;
+  if (e.source !== parent || !m || !m.spoka || !player || !player.loadVideoById) return;
+  if (m.cmd === "load") { player.loadVideoById({ videoId: m.id, startSeconds: m.time || 0 }); if (!m.playing) player.pauseVideo(); }
+  else if (m.cmd === "play") player.playVideo();
+  else if (m.cmd === "pause") player.pauseVideo();
+  else if (m.cmd === "seek") player.seekTo(m.time, true);
+  else if (m.cmd === "volume") { player.setVolume(m.volume); if (m.volume > 0) player.unMute(); else player.mute(); }
+});
+setInterval(report, 500);
+</script><script src="https://www.youtube.com/iframe_api"></script></body></html>`;
+
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const downloadUrl = options.downloadUrl ?? "https://github.com/Spokator/SpokaStream/releases/latest";
   const hub = new Hub({ store: options.store, serverName: options.serverName, iceServers: userId => iceServersFor(userId, options) });
@@ -68,6 +104,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     if (invite) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return res.end(invitePage(invite[1]!, downloadUrl));
+    }
+    if (url.pathname === "/player") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return res.end(PLAYER_PAGE);
     }
     res.writeHead(url.pathname === "/" ? 200 : 404, { "content-type": "text/plain; charset=utf-8" });
     res.end("SpokaStream\n");

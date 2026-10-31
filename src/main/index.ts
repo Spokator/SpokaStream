@@ -1,9 +1,9 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, Notification, screen, session, shell, webContents } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, net, Notification, screen, session, shell, webContents } from "electron";
 import { appendFileSync, createWriteStream, mkdirSync, statSync, writeFileSync } from "node:fs";
 import type { WriteStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AudioApp, CaptureSource, HotkeyMap, NativeVideoRequest, NotifyRequest, OverlayEvent, OverlayTarget, Settings, TrayState } from "../shared/ipc.ts";
+import type { AudioApp, CaptureSource, HotkeyMap, NativeVideoRequest, NotifyRequest, OverlayEvent, OverlayTarget, Settings, TrayState, YoutubeInfo } from "../shared/ipc.ts";
 import { AudioEngine } from "./audioEngine.ts";
 import { LocalHost } from "./host.ts";
 import { SettingsStore } from "./settings.ts";
@@ -152,6 +152,20 @@ async function audioApps(): Promise<AudioApp[]> {
   return result;
 }
 
+/** La page refuse de parler à YouTube (CSP) : c'est ici qu'on vérifie la vidéo et qu'on récupère son titre. */
+async function youtubeInfo(videoId: string): Promise<YoutubeInfo | null> {
+  if (!/^[\w-]{11}$/.test(videoId)) return null;
+  const url = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`;
+  const response = await net.fetch(url).catch(() => null);
+  if (!response?.ok) return null;
+  const data = (await response.json().catch(() => null)) as { title?: string } | null;
+  return data?.title ? { title: data.title } : null;
+}
+
+function applyScale() {
+  mainWindow?.webContents.setZoomFactor(settings.current.uiScale);
+}
+
 function diagnostics() {
   const lines = [
     `SpokaStream ${app.getVersion()} (${app.isPackaged ? "installé" : "développement"})`,
@@ -174,6 +188,7 @@ function wireIpc() {
     const next = settings.update(patch);
     if (patch.hotkeys) registerHotkeys(next.hotkeys);
     if (patch.startWithWindows !== undefined || patch.startMinimized !== undefined) applyLoginItem(next);
+    if (patch.uiScale !== undefined) applyScale();
     if (next !== before) for (const w of BrowserWindow.getAllWindows()) w.webContents.send("settings:changed", next);
     return next;
   });
@@ -244,6 +259,7 @@ function wireIpc() {
     writeFileSync(file, Buffer.from(png));
     return file;
   });
+  ipcMain.handle("youtube:info", (_e, videoId: string) => youtubeInfo(videoId));
   ipcMain.on("reveal", (_e, file: string) => {
     if (statSync(file, { throwIfNoEntry: false })) shell.showItemInFolder(file);
   });
@@ -274,10 +290,11 @@ function wireIpc() {
 
 app.whenReady().then(() => {
   settings = new SettingsStore();
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(["media", "display-capture", "notifications", "fullscreen", "clipboard-sanitized-write", "speaker-selection"].includes(permission));
-  });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => ["media", "display-capture", "notifications", "fullscreen", "speaker-selection"].includes(permission));
+  // Le lecteur YouTube est une page tierce : il n'a jamais droit au micro, à la caméra ni à l'écran.
+  const isOurPage = (url: string | undefined) => !url || url.startsWith("file:") || (!!process.env.ELECTRON_RENDERER_URL && url.startsWith(new URL(process.env.ELECTRON_RENDERER_URL).origin));
+  const allowed = (permission: string, url: string | undefined) => (permission === "media" || permission === "display-capture" ? isOurPage(url) : ["notifications", "fullscreen", "clipboard-sanitized-write", "speaker-selection"].includes(permission));
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => callback(allowed(permission, details.requestingUrl)));
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, origin) => allowed(permission, origin));
 
   wireIpc();
   engine.start();
@@ -287,6 +304,7 @@ app.whenReady().then(() => {
     mainWindow?.hide();
   });
   mainWindow.webContents.once("did-finish-load", () => {
+    applyScale();
     if (pendingDeepLink) toRenderer("deep-link", pendingDeepLink);
     pendingDeepLink = null;
   });

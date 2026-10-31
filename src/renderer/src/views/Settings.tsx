@@ -1,4 +1,4 @@
-import { Bell, Copy, Download, FolderOpen, Gauge, Info, Keyboard, Layers, Mic, Radio, Server, User } from "lucide-react";
+import { Bell, Check, Copy, Download, FolderOpen, Gauge, Info, Keyboard, Layers, Mic, Palette, Radio, Server, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { HostStatus, HotkeyMap, LatencyMode, Settings } from "@shared/ipc.ts";
 import { core } from "../engine/core.ts";
@@ -12,6 +12,7 @@ import { ProfileEditor } from "./Onboarding.tsx";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: typeof User }[] = [
   { id: "profile", label: "Profil", icon: User },
+  { id: "appearance", label: "Apparence", icon: Palette },
   { id: "voice", label: "Son et voix", icon: Mic },
   { id: "stream", label: "Diffusion", icon: Radio },
   { id: "watch", label: "Regarder", icon: Gauge },
@@ -169,6 +170,41 @@ function ProfileSection({ s }: { s: Settings }) {
   );
 }
 
+const ACCENTS = ["#7c5cff", "#4f8dff", "#22b8cf", "#2fbf8a", "#f59e0b", "#f4638d", "#ef4444"];
+
+function AppearanceSection({ s }: { s: Settings }) {
+  return (
+    <>
+      <h1>Apparence</h1>
+      <Field label="Couleur d'accent">
+        <div className="accent-list" role="radiogroup" aria-label="Couleur d'accent">
+          {ACCENTS.map(accent => (
+            <button key={accent} type="button" role="radio" aria-checked={s.accent === accent} aria-label={accent} style={{ background: accent }} onClick={() => update({ accent })}>
+              {s.accent === accent && <Check size={15} />}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Taille de l'interface">
+        <Segmented
+          label="Taille de l'interface"
+          value={s.uiScale}
+          options={[
+            { value: 0.9, label: "Petite" },
+            { value: 1, label: "Normale" },
+            { value: 1.1, label: "Grande" },
+            { value: 1.25, label: "Très grande" },
+          ]}
+          onChange={uiScale => update({ uiScale })}
+        />
+      </Field>
+      <Field label="Ambiance" hint="Les bandes autour de l'image prennent ses couleurs">
+        <Toggle label="Ambiance" checked={s.ambient} onChange={ambient => update({ ambient })} />
+      </Field>
+    </>
+  );
+}
+
 function VoiceSection({ s }: { s: Settings }) {
   const mics = useDevices("audioinput");
   const outputs = useDevices("audiooutput");
@@ -285,6 +321,19 @@ function StreamSection({ s }: { s: Settings }) {
       <Field label="Dessin des spectateurs" hint="Ils peuvent pointer et dessiner sur ton stream">
         <Toggle label="Dessin des spectateurs" checked={s.stream.allowDraw} onChange={allowDraw => setStream({ allowDraw })} />
       </Field>
+      <Field label="Clips" hint="Garde les dernières secondes en mémoire : une touche, et c'est un fichier MP4. Encode un flux de plus pendant que tu diffuses ou regardes">
+        <Select
+          label="Clips"
+          value={s.stream.clipSeconds}
+          options={[
+            { value: 0, label: "Coupés" },
+            { value: 15, label: "15 secondes" },
+            { value: 30, label: "30 secondes" },
+            { value: 60, label: "1 minute" },
+          ]}
+          onChange={clipSeconds => setStream({ clipSeconds })}
+        />
+      </Field>
       <Field label="Dossier des enregistrements" hint={s.recordingsDir}>
         <Button
           icon={<FolderOpen size={15} />}
@@ -364,13 +413,14 @@ const HOTKEY_LABELS: Record<keyof HotkeyMap, string> = {
   toggleDeafen: "Couper / réactiver tout le son",
   toggleStream: "Lancer / arrêter le stream",
   pauseStream: "Mettre le stream en pause",
+  saveClip: "Garder un clip des dernières secondes",
 };
 
 function HotkeysSection({ s }: { s: Settings }) {
   return (
     <>
       <h1>Raccourcis</h1>
-      <p className="muted-text">Ils fonctionnent partout, même en plein jeu.</p>
+      <p className="muted-text">Ils fonctionnent partout, même en plein jeu. Dans l'application, appuie sur ? pour voir tous les autres.</p>
       {(Object.keys(HOTKEY_LABELS) as (keyof HotkeyMap)[]).map(action => (
         <Field key={action} label={HOTKEY_LABELS[action]}>
           <HotkeyInput value={s.hotkeys[action]} onChange={accelerator => update({ hotkeys: { ...s.hotkeys, [action]: accelerator } })} />
@@ -526,6 +576,7 @@ export function SettingsView() {
       <div className="settings-body">
         <div className="settings-inner">
           {section === "profile" && <ProfileSection s={settings} />}
+          {section === "appearance" && <AppearanceSection s={settings} />}
           {section === "voice" && <VoiceSection s={settings} />}
           {section === "stream" && <StreamSection s={settings} />}
           {section === "watch" && <WatchSection s={settings} />}

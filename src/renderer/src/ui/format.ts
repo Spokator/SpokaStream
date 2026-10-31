@@ -21,6 +21,12 @@ export const duration = (ms: number) => {
   return `${h ? `${h}:${String(m).padStart(2, "0")}` : m}:${String(s).padStart(2, "0")}`;
 };
 
+/** « @tous » appelle tout le salon. */
+export const mentionsName = (text: string, name: string) => {
+  const lower = text.toLowerCase();
+  return lower.includes("@tous") || (!!name && lower.includes(`@${name.toLowerCase()}`));
+};
+
 export const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? "s" : ""}`;
 
 const LIMIT_TEXT: Record<string, string> = {

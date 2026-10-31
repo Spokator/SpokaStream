@@ -9,6 +9,7 @@ import { SendMeter } from "./stats.ts";
 import type { SendStats } from "./stats.ts";
 
 const TCP_RELAY_CAP_KBPS = 4000;
+const CAMERA_KBPS = 700;
 
 export interface EncodingTarget {
   kbps: number;
@@ -26,6 +27,8 @@ interface Viewer {
   pc: RTCPeerConnection;
   video: RTCRtpSender;
   audio: RTCRtpSender | null;
+  /** Réservé dès la connexion : la caméra s'allume et s'éteint ensuite sans renégocier. */
+  camera: RTCRtpSender;
   quality: ViewerQuality;
   meter: SendMeter;
   stats: SendStats | null;
@@ -46,6 +49,7 @@ export interface ViewerView {
 export class Publisher {
   private readonly viewers = new Map<string, Viewer>();
   private videoTrack: MediaStreamTrack;
+  private cameraTrack: MediaStreamTrack | null = null;
   private readonly audioTrack: MediaStreamTrack | null;
   private readonly mediaStream: MediaStream;
   private readonly session: string;
@@ -89,11 +93,13 @@ export class Publisher {
     const pc = new RTCPeerConnection(rtcConfig(this.iceServers()));
     const video = pc.addTrack(this.videoTrack, this.mediaStream);
     const audio = this.audioTrack ? pc.addTrack(this.audioTrack, this.mediaStream) : null;
+    const cameraTransceiver = pc.addTransceiver("video", { direction: "sendonly" });
     const viewer: Viewer = {
       id,
       pc,
       video,
       audio,
+      camera: cameraTransceiver.sender,
       quality: quality ?? DEFAULT_VIEWER_QUALITY,
       meter: new SendMeter(),
       stats: null,
@@ -110,6 +116,7 @@ export class Publisher {
     pc.getTransceivers().find(t => t.sender === video)?.setCodecPreferences(codecPreferences(this.bench, this.target.codec));
     await this.applyEncoding(viewer);
     if (!viewer.quality.video) await video.replaceTrack(null);
+    else if (this.cameraTrack) await viewer.camera.replaceTrack(this.cameraTrack);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     this.sendSignal(id, { sdp: pc.localDescription });
@@ -169,6 +176,23 @@ export class Publisher {
       audioParameters.encodings[0]!.networkPriority = "high";
       await viewer.audio.setParameters(audioParameters).catch(() => {});
     }
+    if (this.cameraTrack) {
+      const cameraParameters = viewer.camera.getParameters();
+      if (cameraParameters.encodings?.length) {
+        cameraParameters.encodings[0]!.maxBitrate = CAMERA_KBPS * 1000;
+        cameraParameters.encodings[0]!.maxFramerate = 30;
+        await viewer.camera.setParameters(cameraParameters).catch(() => {});
+      }
+    }
+  }
+
+  /** La bulle reste légère : elle coûte moins que le son, et un spectateur « son seul » ne la reçoit pas. */
+  async setCamera(track: MediaStreamTrack | null) {
+    this.cameraTrack = track;
+    for (const viewer of this.viewers.values()) {
+      await viewer.camera.replaceTrack(viewer.quality.video ? track : null);
+      await this.applyEncoding(viewer);
+    }
   }
 
   /** Changement à chaud : le spectateur ne voit qu'une image qui change, jamais de coupure. */
@@ -185,7 +209,10 @@ export class Publisher {
     if (!viewer) return;
     const wasVideo = viewer.quality.video;
     viewer.quality = quality;
-    if (wasVideo !== quality.video) await viewer.video.replaceTrack(quality.video ? this.videoTrack : null);
+    if (wasVideo !== quality.video) {
+      await viewer.video.replaceTrack(quality.video ? this.videoTrack : null);
+      await viewer.camera.replaceTrack(quality.video ? this.cameraTrack : null);
+    }
     await this.applyEncoding(viewer);
   }
 

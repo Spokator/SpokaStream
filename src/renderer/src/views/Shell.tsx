@@ -1,5 +1,5 @@
-import { AlertTriangle, CheckCircle2, Download, Info, Plus, Settings as SettingsIcon, WifiOff, XCircle } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, CheckCircle2, Download, Info, Plus, Search, Settings as SettingsIcon, WifiOff, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
 import { core } from "../engine/core.ts";
 import { set, useApp } from "../state/store.ts";
 import { hueOf, initials, plural } from "../ui/format.ts";
@@ -24,6 +24,11 @@ export function TitleBar() {
           {publish.paused ? "En pause" : "En direct"} · {plural(viewers, "spectateur")}
         </div>
       )}
+      <button type="button" className="titlebar-search" onClick={() => set({ dialog: "palette" })}>
+        <Search size={13} />
+        Rechercher
+        <kbd>Ctrl K</kbd>
+      </button>
       <div className="titlebar-spacer" />
       {connection !== "online" && (
         <div className="titlebar-status" role="status">
@@ -118,6 +123,23 @@ export function CreateRoomModal({ onClose }: { onClose: () => void }) {
 }
 
 const TOAST_ICONS = { info: Info, success: CheckCircle2, warning: AlertTriangle, error: XCircle };
+const dismiss = (id: number) => set(s => ({ toasts: s.toasts.filter(t => t.id !== id) }));
+
+export function Lightbox() {
+  const image = useApp(s => s.lightbox);
+  useEffect(() => {
+    if (!image) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && set({ lightbox: null });
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [image]);
+  if (!image) return null;
+  return (
+    <div className="modal-backdrop lightbox" onMouseDown={() => set({ lightbox: null })}>
+      <img src={image} alt="" />
+    </div>
+  );
+}
 
 export function Toasts() {
   const toasts = useApp(s => s.toasts);
@@ -129,6 +151,18 @@ export function Toasts() {
           <div key={t.id} className={`toast toast-${t.kind}`}>
             <Icon size={16} />
             {t.text}
+            {t.action && (
+              <button
+                type="button"
+                className="toast-action"
+                onClick={() => {
+                  t.action!.run();
+                  dismiss(t.id);
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
         );
       })}

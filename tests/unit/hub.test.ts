@@ -4,11 +4,11 @@ import { iceServersFor } from "../../server/index.ts";
 import { Hub } from "../../server/hub.ts";
 import { MemoryStore } from "../../server/store.ts";
 import type { ClientMessage, RoomState, ServerMessage, StreamAnnounce } from "../../src/shared/protocol.ts";
-import { PROTOCOL_VERSION } from "../../src/shared/protocol.ts";
+import { LIMITS, PROTOCOL_VERSION, youtubeId } from "../../src/shared/protocol.ts";
 
 const ANNOUNCE: StreamAnnounce = {
   title: "Mon stream", kind: "screen", sourceName: "Écran 1", width: 1920, height: 1080, fps: 60,
-  audio: "system", audioLabel: "Tout le PC", paused: false, allowDraw: true, maxViewers: 0,
+  audio: "system", audioLabel: "Tout le PC", paused: false, allowDraw: true, maxViewers: 0, camera: false,
 };
 
 class Client {
@@ -280,4 +280,168 @@ test("les identifiants TURN suivent le format de coturn", () => {
   assert.match(String(turn.username), /^\d+:u1$/);
   assert.ok(turn.credential);
   assert.equal(iceServersFor("u1", {}).length, 1);
+});
+
+const PIXEL = "data:image/png;base64,iVBORw0KGgo=";
+
+test("une réaction se pose et se retire sur un message", () => {
+  const { a, b, aId, bId } = setup();
+  a.send({ t: "chat.send", text: "Salut" });
+  const { id } = a.last("chat").message;
+  b.send({ t: "chat.react", id, emoji: "🔥" });
+  a.send({ t: "chat.react", id, emoji: "🔥" });
+  assert.deepEqual(a.last("chat.reactions").reactions, { "🔥": [bId, aId] });
+  a.send({ t: "chat.react", id, emoji: "🔥" });
+  b.send({ t: "chat.react", id, emoji: "🔥" });
+  assert.deepEqual(b.last("chat.reactions").reactions, {});
+});
+
+test("seul le propriétaire épingle, et supprimer le message retire l'épingle", () => {
+  const { a, b } = setup();
+  a.send({ t: "chat.send", text: "À lire" });
+  const { id } = a.last("chat").message;
+  b.send({ t: "chat.pin", id });
+  assert.equal(b.last("error").error, "forbidden");
+  a.send({ t: "chat.pin", id });
+  assert.equal(b.last("chat.pinned").message?.text, "À lire");
+  a.send({ t: "chat.delete", id });
+  assert.equal(b.last("chat.pinned").message, null);
+});
+
+test("« écrit… » n'est envoyé qu'aux autres", () => {
+  const { a, b, aId } = setup();
+  a.send({ t: "chat.typing" });
+  assert.equal(b.last("chat.typing").userId, aId);
+  assert.equal(a.all("chat.typing").length, 0);
+});
+
+test("les images passent dans le chat, sans jamais aller sur disque", () => {
+  const store = new MemoryStore();
+  const hub = new Hub({ store, iceServers: () => [] });
+  const a = new Client(hub);
+  a.hello("alice");
+  a.send({ t: "room.create", name: "Images" });
+  a.send({ t: "chat.send", text: "", image: PIXEL });
+  assert.equal(a.last("chat").message.image, PIXEL);
+  assert.equal(store.load()[0]!.history.at(-1)!.image, null);
+  a.send({ t: "chat.send", text: "", image: "data:text/html;base64,AAAA" });
+  assert.equal(a.all("chat").filter(m => m.message.kind === "user").length, 1);
+});
+
+test("seules les dernières images restent en mémoire", () => {
+  const now = { value: 0 };
+  const hub = new Hub({ store: new MemoryStore(), iceServers: () => [], now: () => now.value });
+  const a = new Client(hub);
+  a.hello("alice");
+  a.send({ t: "room.create", name: "Images" });
+  const { code } = a.last("room.state").room;
+  for (let i = 0; i < LIMITS.imagesPerRoom + 3; i++) {
+    now.value += 60_000;
+    a.send({ t: "chat.send", text: `image ${i}`, image: PIXEL });
+  }
+  a.send({ t: "room.leave" });
+  a.send({ t: "room.join", code, rid: 9 });
+  const history = a.last("room.state").room.history.filter(m => m.kind === "user");
+  assert.equal(history.filter(m => m.image).length, LIMITS.imagesPerRoom);
+  assert.equal(history[0]!.image, null);
+});
+
+test("un sondage : un vote par personne, on change d'avis, l'auteur le clôt", () => {
+  const { a, b, aId, bId } = setup();
+  b.send({ t: "poll.create", question: "On regarde quoi ?", options: ["Film", "Série", "Film", " "] });
+  const poll = a.last("poll").poll!;
+  assert.deepEqual(poll.options.map(o => o.text), ["Film", "Série"]);
+  a.send({ t: "poll.vote", id: poll.id, option: 0 });
+  b.send({ t: "poll.vote", id: poll.id, option: 0 });
+  a.send({ t: "poll.vote", id: poll.id, option: 1 });
+  assert.deepEqual(b.last("poll").poll!.options.map(o => o.voters), [[bId], [aId]]);
+  b.send({ t: "poll.vote", id: poll.id, option: 0 });
+  assert.deepEqual(b.last("poll").poll!.options[0]!.voters, []);
+  a.send({ t: "poll.vote", id: poll.id, option: 9 });
+  b.send({ t: "poll.close", id: poll.id });
+  assert.equal(a.last("poll").poll!.closed, true);
+  a.send({ t: "poll.vote", id: poll.id, option: 0 });
+  assert.equal(a.last("poll").poll!.options[0]!.voters.length, 0);
+  b.send({ t: "poll.dismiss", id: poll.id });
+  assert.equal(a.last("poll").poll, null);
+});
+
+test("un nouvel arrivant voit le sondage en cours", () => {
+  const { hub, a, room } = setup();
+  a.send({ t: "poll.create", question: "Pizza ?", options: ["Oui", "Non"] });
+  const c = new Client(hub, "9.9.9.9");
+  c.hello("carole");
+  c.send({ t: "room.join", code: room.code, rid: 3 });
+  assert.equal(c.last("room.state").room.poll?.question, "Pizza ?");
+});
+
+test("on reconnaît les liens YouTube", () => {
+  for (const link of ["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://youtu.be/dQw4w9WgXcQ?t=4", "https://www.youtube.com/watch?list=x&v=dQw4w9WgXcQ&t=1", "https://youtube.com/shorts/dQw4w9WgXcQ", "dQw4w9WgXcQ"]) {
+    assert.equal(youtubeId(link), "dQw4w9WgXcQ", link);
+  }
+  assert.equal(youtubeId("https://exemple.fr/watch?v=dQw4w9WgXcQ"), null);
+  assert.equal(youtubeId("un mot"), null);
+});
+
+test("regarder ensemble : tout le salon partage la position et la file", () => {
+  const now = { value: 1_000_000 };
+  const hub = new Hub({ store: new MemoryStore(), iceServers: () => [], now: () => now.value });
+  const a = new Client(hub);
+  const b = new Client(hub, "5.6.7.8");
+  a.hello("alice");
+  b.hello("bob");
+  a.send({ t: "room.create", name: "Ensemble" });
+  const { code } = a.last("room.state").room;
+  b.send({ t: "room.join", code });
+
+  a.send({ t: "together.add", videoId: "dQw4w9WgXcQ", title: "Première" });
+  assert.equal(b.last("together").together?.title, "Première");
+  b.send({ t: "together.add", videoId: "aqz-KE-bpKQ", title: "Deuxième" });
+  assert.deepEqual(a.last("together").together?.queue.map(q => q.title), ["Deuxième"]);
+
+  now.value += 10_000;
+  b.send({ t: "together.control", playing: false, position: 42 });
+  now.value += 10_000;
+  assert.equal(a.last("together").together?.position, 42);
+  a.send({ t: "together.control", playing: true, position: 42 });
+  now.value += 5_000;
+  const c = new Client(hub, "9.9.9.9");
+  c.hello("carole");
+  c.send({ t: "room.join", code });
+  assert.equal(c.last("room.state").room.together?.position, 47, "un arrivant reprend au bon endroit");
+
+  a.send({ t: "together.next", videoId: "dQw4w9WgXcQ" });
+  b.send({ t: "together.next", videoId: "dQw4w9WgXcQ" });
+  assert.equal(c.last("together").together?.title, "Deuxième", "plusieurs fins signalées n'avancent qu'une fois");
+  a.send({ t: "together.next", videoId: "aqz-KE-bpKQ" });
+  assert.equal(c.last("together").together, null);
+});
+
+test("regarder ensemble suit la règle du salon sur qui peut partager", () => {
+  const { a, b } = setup();
+  a.send({ t: "room.update", settings: { whoCanStream: "owner" } });
+  b.send({ t: "together.add", videoId: "dQw4w9WgXcQ", title: "Non" });
+  assert.equal(b.last("error").error, "forbidden");
+  a.send({ t: "together.add", videoId: "dQw4w9WgXcQ", title: "Oui" });
+  b.send({ t: "together.stop" });
+  assert.equal(b.last("together").together?.title, "Oui");
+});
+
+test("l'accueil reçoit qui est là et la vignette du stream", () => {
+  const now = { value: 1_000_000 };
+  const hub = new Hub({ store: new MemoryStore(), iceServers: () => [], now: () => now.value });
+  const a = new Client(hub);
+  a.hello("alice");
+  a.send({ t: "room.create", name: "Accueil" });
+  const room = a.last("room.state").room;
+  const watcher = new Client(hub, "9.9.9.9");
+  watcher.hello("carole");
+  watcher.send({ t: "room.subscribe", ids: [room.id] });
+  assert.deepEqual(watcher.last("room.status").rooms[0]?.online, [{ name: "alice", color: "#112233" }]);
+  a.send({ t: "stream.start", id: "s1", stream: ANNOUNCE });
+  a.send({ t: "stream.thumb", data: PIXEL });
+  assert.equal(watcher.last("room.status").rooms[0]?.live[0]?.thumb, PIXEL);
+  const count = watcher.all("room.status").length;
+  a.send({ t: "stream.thumb", data: PIXEL });
+  assert.equal(watcher.all("room.status").length, count, "les vignettes ne partent pas à chaque image");
 });

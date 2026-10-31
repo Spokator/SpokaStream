@@ -8,10 +8,16 @@ import type { ConnectionState } from "../engine/signal.ts";
 import type { ReceiveStats, SendStats } from "../engine/stats.ts";
 import type { SubscriptionState } from "../engine/subscription.ts";
 
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
 export interface Toast {
   id: number;
   kind: "info" | "success" | "warning" | "error";
   text: string;
+  action?: ToastAction;
 }
 
 export interface SubView {
@@ -19,6 +25,8 @@ export interface SubView {
   ownerId: string;
   state: SubscriptionState;
   media: MediaStream;
+  /** La bulle du diffuseur, reçue à côté de l'image. */
+  camera: MediaStream;
   volume: number;
   muted: boolean;
   quality: ViewerQuality;
@@ -41,11 +49,15 @@ export interface PublishView {
   title: string;
   allowDraw: boolean;
   maxViewers: number;
+  /** La caméra envoyée en bulle à côté de l'image. */
+  camera: MediaStream | null;
 }
 
 export type View = "home" | "room" | "settings";
 export type PanelTab = "chat" | "members" | "studio";
-export type SettingsSection = "profile" | "voice" | "stream" | "watch" | "overlay" | "hotkeys" | "notifications" | "server" | "about";
+export type SettingsSection = "profile" | "appearance" | "voice" | "stream" | "watch" | "overlay" | "hotkeys" | "notifications" | "server" | "about";
+/** Identifiant de la vidéo regardée ensemble dans la liste de ce qu'on peut mettre en grand. */
+export const TOGETHER = "together";
 
 interface AppState {
   settings: Settings | null;
@@ -76,6 +88,14 @@ interface AppState {
   goLiveOpen: boolean;
   replyTo: ChatMessage | null;
   unread: number;
+  /** Personnes en train d'écrire, avec l'instant où l'indication s'efface. */
+  typing: Record<string, number>;
+  /** Heure locale de la dernière position reçue pour la vidéo regardée ensemble. */
+  togetherAt: number;
+  cinema: boolean;
+  dialog: "poll" | "together" | "shortcuts" | "palette" | null;
+  lightbox: string | null;
+  clipSaving: boolean;
 }
 
 export const useApp = create<AppState>(() => ({
@@ -107,15 +127,21 @@ export const useApp = create<AppState>(() => ({
   goLiveOpen: false,
   replyTo: null,
   unread: 0,
+  typing: {},
+  togetherAt: 0,
+  cinema: false,
+  dialog: null,
+  lightbox: null,
+  clipSaving: false,
 }));
 
 export const set = useApp.setState;
 export const get = useApp.getState;
 
 let nextToast = 1;
-export function toast(text: string, kind: Toast["kind"] = "info", ms = 4500) {
+export function toast(text: string, kind: Toast["kind"] = "info", ms = 4500, action?: ToastAction) {
   const id = nextToast++;
-  set(s => ({ toasts: [...s.toasts.slice(-3), { id, kind, text }] }));
+  set(s => ({ toasts: [...s.toasts.slice(-3), { id, kind, text, action }] }));
   setTimeout(() => set(s => ({ toasts: s.toasts.filter(t => t.id !== id) })), ms);
 }
 

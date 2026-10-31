@@ -1,16 +1,19 @@
 import type { HotkeyMap, Resolution, Settings } from "@shared/ipc.ts";
-import { DEFAULT_VIEWER_QUALITY } from "@shared/protocol.ts";
-import type { AudioKind, ChatMessage, ErrorCode, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, ViewerQuality } from "@shared/protocol.ts";
-import { get, memberOf, patchPublish, patchRoom, patchSub, set, toast, useApp } from "../state/store.ts";
+import { DEFAULT_VIEWER_QUALITY, youtubeId } from "@shared/protocol.ts";
+import type { AudioKind, ChatMessage, ErrorCode, Poll, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
+import { get, memberOf, patchPublish, patchRoom, patchSub, set, toast, TOGETHER, useApp } from "../state/store.ts";
+import { mentionsName } from "../ui/format.ts";
+import { frameForChat } from "../ui/image.ts";
 import { StreamMixer } from "./audio/mixer.ts";
 import { Playback } from "./audio/playback.ts";
 import { captureThumbnail, createPauseCard, openSource } from "./capture.ts";
 import type { OpenedSource, VideoSource } from "./capture.ts";
+import { ClipBuffer } from "./clips.ts";
 import { benchClass, cachedBench, measureEncoders, rankResults } from "./encoders.ts";
 import type { BenchResult } from "./encoders.ts";
 import { Publisher } from "./publisher.ts";
 import type { EncodingTarget } from "./publisher.ts";
-import { Recorder, saveVideoFrame } from "./recorder.ts";
+import { Recorder, saveClipFile, saveVideoFrame } from "./recorder.ts";
 import { playSound } from "./sfx.ts";
 import { RequestError, Signal } from "./signal.ts";
 import { Subscription } from "./subscription.ts";
@@ -74,6 +77,10 @@ class Core {
   private previewElement: HTMLVideoElement | null = null;
   private previewTimer: ReturnType<typeof setInterval> | undefined;
   private recorder: Recorder | null = null;
+  private clipBuffer: ClipBuffer | null = null;
+  private clipSource: string | null = null;
+  private lastTyping = 0;
+  private cameraStream: MediaStream | null = null;
   private sourceMixId: string | null = null;
   private announce: StreamAnnounce | null = null;
   private timers: ReturnType<typeof setInterval>[] = [];
@@ -115,6 +122,8 @@ class Core {
 
     this.timers.push(setInterval(() => void this.pollStats(), 1000));
     this.timers.push(setInterval(() => this.pollSpeaking(), 120));
+    this.timers.push(setInterval(() => this.expireTyping(), 1000));
+    this.timers.push(setInterval(() => this.followClips(), 1500));
 
     if (settings.onboarded) this.connect();
     this.applyPttWatch();
@@ -191,6 +200,16 @@ class Core {
         return this.onChat(m.message);
       case "chat.deleted":
         return patchRoom(r => ({ history: r.history.filter(x => x.id !== m.id) }));
+      case "chat.reactions":
+        return patchRoom(r => ({ history: r.history.map(x => (x.id === m.id ? { ...x, reactions: m.reactions } : x)) }));
+      case "chat.pinned":
+        return patchRoom(() => ({ pinned: m.message }));
+      case "chat.typing":
+        return set(s => ({ typing: { ...s.typing, [m.userId]: Date.now() + 4000 } }));
+      case "poll":
+        return this.onPoll(m.poll);
+      case "together":
+        return this.onTogether(m.together);
       case "reaction":
         return this.onReaction(m.streamId, m.emoji, m.from);
       case "draw":
@@ -240,7 +259,7 @@ class Core {
   }
 
   private onRoomState(room: RoomState) {
-    set({ room, view: get().view === "settings" ? "settings" : "room" });
+    set({ room, togetherAt: performance.now(), focused: room.together && !get().focused ? TOGETHER : get().focused, view: get().view === "settings" ? "settings" : "room" });
     this.rememberRoom(room.id, room.name, room.code);
     if (this.publisher && this.announce) {
       void this.signal
@@ -290,12 +309,41 @@ class Core {
 
   private onChat(message: ChatMessage) {
     patchRoom(r => ({ history: [...r.history, message].slice(-300) }));
+    set(state => {
+      if (!state.typing[message.authorId]) return {};
+      const typing = { ...state.typing };
+      delete typing[message.authorId];
+      return { typing };
+    });
     if (message.kind !== "user" || message.authorId === get().userId) return;
     const s = get().settings!;
+    const mentioned = mentionsName(message.text, s.profile.name);
     if (get().panelTab !== "chat" || !s.chatPanelOpen) set(state => ({ unread: state.unread + 1 }));
-    playSound("message", s.soundEffects && !document.hasFocus());
-    if (s.notifyMessages && !document.hasFocus()) api.notify({ title: message.authorName, body: message.text.slice(0, 140), roomId: get().room?.id });
+    playSound(mentioned ? "live" : "message", s.soundEffects && (mentioned || !document.hasFocus()));
+    if ((s.notifyMessages || mentioned) && !document.hasFocus()) api.notify({ title: mentioned ? `${message.authorName} t'a mentionné` : message.authorName, body: message.text.slice(0, 140), roomId: get().room?.id });
     if (this.publisher) api.overlaySend({ type: "chat", name: message.authorName, color: message.authorColor, text: message.text.slice(0, 200) });
+  }
+
+  private expireTyping() {
+    const now = Date.now();
+    const { typing } = get();
+    const keys = Object.keys(typing);
+    const alive = keys.filter(k => typing[k]! > now);
+    if (alive.length !== keys.length) set({ typing: Object.fromEntries(alive.map(k => [k, typing[k]!])) });
+  }
+
+  private onPoll(poll: Poll | null) {
+    patchRoom(() => ({ poll }));
+    if (!this.publisher) return;
+    api.overlaySend({ type: "poll", poll: poll && { question: poll.question, closed: poll.closed, options: poll.options.map(o => ({ text: o.text, votes: o.voters.length })) } });
+  }
+
+  private onTogether(together: Together | null) {
+    const before = get().room?.together;
+    set({ togetherAt: performance.now() });
+    patchRoom(() => ({ together }));
+    if (together && !before) set({ focused: TOGETHER });
+    if (!together && get().focused === TOGETHER) set({ focused: Object.keys(get().subs)[0] ?? null });
   }
 
   private onReaction(streamId: string | null, emoji: string, from: string) {
@@ -324,7 +372,7 @@ class Core {
   private maybeAutoWatch() {
     if (!get().settings?.autoWatch || this.subs.size) return;
     const first = get().room?.streams.find(s => s.ownerId !== get().userId);
-    if (first) void this.watch(first.id);
+    if (first && !get().room?.together) void this.watch(first.id);
   }
 
   private reportError(e: unknown) {
@@ -400,13 +448,88 @@ class Core {
 
   // ---------------------------------------------------------------- chat et interactions
 
-  sendChat(text: string) {
-    this.signal.send({ t: "chat.send", text, replyTo: get().replyTo?.id ?? null });
+  sendChat(text: string, image: string | null = null) {
+    this.signal.send({ t: "chat.send", text, replyTo: get().replyTo?.id ?? null, image });
     set({ replyTo: null });
   }
 
   deleteChat(id: string) {
     this.signal.send({ t: "chat.delete", id });
+  }
+
+  reactChat(id: string, emoji: string) {
+    this.signal.send({ t: "chat.react", id, emoji });
+  }
+
+  pinChat(id: string | null) {
+    this.signal.send({ t: "chat.pin", id });
+  }
+
+  /** Une indication toutes les 2,5 s suffit : elle reste affichée 4 s chez les autres. */
+  sendTyping() {
+    const now = Date.now();
+    if (now - this.lastTyping < 2500) return;
+    this.lastTyping = now;
+    this.signal.send({ t: "chat.typing" });
+  }
+
+  createPoll(question: string, options: string[]) {
+    this.signal.send({ t: "poll.create", question, options });
+    set({ panelTab: "chat" });
+    if (!get().settings!.chatPanelOpen) void this.updateSettings({ chatPanelOpen: true });
+  }
+
+  votePoll(id: string, option: number) {
+    this.signal.send({ t: "poll.vote", id, option });
+  }
+
+  closePoll(id: string) {
+    this.signal.send({ t: "poll.close", id });
+  }
+
+  dismissPoll(id: string) {
+    this.signal.send({ t: "poll.dismiss", id });
+  }
+
+  // ---------------------------------------------------------------- regarder ensemble
+
+  playerUrl() {
+    return `${get().settings!.serverUrl.replace(/^ws/, "http").replace(/\/ws$/, "")}/player`;
+  }
+
+  /** Rend false si le lien n'est pas lisible : la fenêtre reste ouverte pour corriger. */
+  async togetherAdd(link: string) {
+    const videoId = youtubeId(link);
+    if (!videoId) {
+      toast("Ce n'est pas un lien YouTube.", "warning");
+      return false;
+    }
+    const info = await api.youtubeInfo(videoId).catch(() => null);
+    if (!info) {
+      toast("Cette vidéo n'existe pas, ou YouTube interdit de la regarder hors de son site.", "warning", 6000);
+      return false;
+    }
+    this.signal.send({ t: "together.add", videoId, title: info.title });
+    return true;
+  }
+
+  togetherControl(playing: boolean, position: number) {
+    this.signal.send({ t: "together.control", playing, position });
+  }
+
+  togetherNext(videoId: string) {
+    this.signal.send({ t: "together.next", videoId });
+  }
+
+  togetherStop() {
+    this.signal.send({ t: "together.stop" });
+  }
+
+  togetherPosition() {
+    const { room, togetherAt } = get();
+    const together = room?.together;
+    if (!together) return 0;
+    return together.playing ? together.position + (performance.now() - togetherAt) / 1000 : together.position;
   }
 
   react(streamId: string | null, emoji: string) {
@@ -449,8 +572,8 @@ class Core {
     const quality: ViewerQuality = { ...DEFAULT_VIEWER_QUALITY };
     const volume = savedVolume(stream.ownerId);
     set(s => ({
-      subs: { ...s.subs, [streamId]: { streamId, ownerId: stream.ownerId, state: "connecting", media: sub.media, volume, muted: false, quality, stats: null, hasAudio: false } },
-      focused: s.focused ?? streamId,
+      subs: { ...s.subs, [streamId]: { streamId, ownerId: stream.ownerId, state: "connecting", media: sub.media, camera: sub.camera, volume, muted: false, quality, stats: null, hasAudio: false } },
+      focused: s.focused && s.focused !== TOGETHER ? s.focused : s.room?.together ? s.focused : streamId,
     }));
     sub.onState = state => patchSub(streamId, { state });
     sub.onTrack = track => {
@@ -534,7 +657,8 @@ class Core {
   async screenshot(video: HTMLVideoElement, name: string) {
     try {
       const file = await saveVideoFrame(video, name);
-      toast("Capture enregistrée", "success");
+      const image = frameForChat(video);
+      toast("Capture enregistrée", "success", 6000, { label: "Envoyer au chat", run: () => void image.then(data => data && this.sendChat("", data)) });
       return file;
     } catch (e) {
       this.reportError(e);
@@ -658,6 +782,7 @@ class Core {
         title: config.title,
         allowDraw: config.allowDraw,
         maxViewers: config.maxViewers,
+        camera: null,
       },
       panelTab: "studio",
     });
@@ -677,6 +802,7 @@ class Core {
       paused: false,
       allowDraw: config.allowDraw,
       maxViewers: config.maxViewers,
+      camera: false,
     };
     try {
       await this.signal.request({ t: "stream.start", id: streamId, stream: this.announce });
@@ -805,6 +931,9 @@ class Core {
     const publish = get().publish;
     if (!publish && !this.publisher) return;
     if (get().recording?.streamId === publish?.streamId) await this.stopRecording();
+    this.stopClips();
+    this.cameraStream?.getTracks().forEach(t => t.stop());
+    this.cameraStream = null;
     api.overlayClose();
     this.signal.send({ t: "stream.stop" });
     this.publisher?.close();
@@ -850,6 +979,78 @@ class Core {
     await recorder.stop();
     set({ recording: null, lastRecording: recorder.path });
     toast("Enregistrement terminé", "success");
+  }
+
+  // ---------------------------------------------------------------- clips
+
+  /**
+   * Les clips suivent ce qu'on a sous les yeux : son propre stream, sinon celui qu'on regarde en grand.
+   * Une seule mémoire tourne à la fois, et elle repart de zéro si la source change.
+   */
+  private followClips() {
+    const { publish, subs, focused, settings } = get();
+    const seconds = settings?.stream.clipSeconds ?? 0;
+    const sub = !publish ? (subs[focused ?? ""] ?? Object.values(subs)[0]) : undefined;
+    const media = publish ? (this.opened && this.mixer ? new MediaStream([this.opened.track, this.mixer.track]) : null) : sub && sub.quality.video && sub.state === "connected" ? new MediaStream(sub.media.getTracks()) : null;
+    const key = media?.getVideoTracks()[0] && !publish?.paused && seconds ? `${media.getVideoTracks()[0]!.id}:${seconds}` : null;
+    if (key === this.clipSource) return;
+    this.stopClips();
+    if (!key || !media || !ClipBuffer.supported) return;
+    this.clipSource = key;
+    this.clipBuffer = new ClipBuffer(seconds);
+    try {
+      this.clipBuffer.start(media, publish ? publish.target.kbps : (sub?.stats?.kbps ?? 8000));
+    } catch (e) {
+      console.warn("clips :", e);
+      this.stopClips();
+    }
+  }
+
+  private stopClips() {
+    this.clipBuffer?.stop();
+    this.clipBuffer = null;
+    this.clipSource = null;
+  }
+
+  async saveClip() {
+    const buffer = this.clipBuffer;
+    if (get().clipSaving) return;
+    if (!buffer) return toast(get().settings?.stream.clipSeconds ? "Rien à garder pour l'instant : diffuse ou regarde un stream." : "Les clips sont coupés dans Paramètres, Diffusion.", "info");
+    set({ clipSaving: true });
+    try {
+      const data = await buffer.save();
+      if (!data) return toast("Clip trop court : réessaie dans quelques secondes.", "info");
+      const publish = get().publish;
+      const name = publish ? publish.title || publish.sourceName : memberOf(get().subs[get().focused ?? ""]?.ownerId ?? "")?.name ?? "stream";
+      const file = await saveClipFile(data, name);
+      playSound("unmute", get().settings!.soundEffects);
+      toast(`Clip gardé : ${Math.round(buffer.lastSeconds)} s`, "success", 7000, { label: "Voir le fichier", run: () => api.reveal(file) });
+    } catch (e) {
+      this.reportError(e);
+    } finally {
+      set({ clipSaving: false });
+    }
+  }
+
+  // ---------------------------------------------------------------- bulle caméra
+
+  async setCamera(deviceId: string | null) {
+    if (!this.publisher) return;
+    const previous = this.cameraStream;
+    let stream: MediaStream | null = null;
+    if (deviceId !== null) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 30 } } });
+      } catch (e) {
+        return toast(`Caméra : ${(e as Error).message}`, "error");
+      }
+      void this.updateSettings({ stream: { ...get().settings!.stream, cameraId: deviceId } });
+    }
+    this.cameraStream = stream;
+    await this.publisher.setCamera(stream?.getVideoTracks()[0] ?? null);
+    previous?.getTracks().forEach(t => t.stop());
+    patchPublish({ camera: stream });
+    this.updateAnnounce({ camera: !!stream });
   }
 
   private onViewersChanged(viewers: string[]) {
@@ -934,6 +1135,7 @@ class Core {
     if (action === "toggleMic") return this.toggleMute();
     if (action === "toggleDeafen") return this.toggleDeafen();
     if (action === "pauseStream") return void this.setPaused(!get().publish?.paused);
+    if (action === "saveClip") return void this.saveClip();
     if (get().publish) return void this.stopLive();
     if (get().room) {
       api.showWindow();
@@ -995,6 +1197,7 @@ class Core {
     if (state.publish) {
       const s = state.publish.stats;
       lines.push(`Capture : ${state.publish.nativeCapture ? "native" : "Chromium"}`);
+      lines.push(`Clips : ${this.clipBuffer ? `${Math.round(this.clipBuffer.bufferedSeconds)} s en mémoire` : "non"}`);
       lines.push(`Diffusion : ${state.publish.sourceName}, ${s ? `${s.width}x${s.height} ${s.fps} fps ${(s.kbps / 1000).toFixed(1)} Mb/s ${s.codec} ${s.encoder} limite=${s.limit}` : "pas de spectateur"}`);
       for (const v of state.publish.viewers) {
         lines.push(`  → ${memberOf(v.id)?.name ?? v.id} : ${v.state} ${v.stats ? `${(v.stats.kbps / 1000).toFixed(1)} Mb/s ${v.stats.path?.relay ? `relais ${v.stats.path.protocol}` : "direct"} ${v.stats.path?.rttMs ?? "?"} ms` : ""}`);

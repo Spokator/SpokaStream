@@ -41,6 +41,13 @@ export class Recorder {
   }
 }
 
+export async function saveClipFile(data: Uint8Array, name: string) {
+  const opened = await window.spoka.recordStart(`Clip ${safeName(name)} ${stamp()}.mp4`);
+  await window.spoka.recordWrite(opened.id, data.slice().buffer);
+  await window.spoka.recordStop(opened.id);
+  return opened.path;
+}
+
 export async function saveVideoFrame(video: HTMLVideoElement, name: string) {
   const canvas = document.createElement("canvas");
   canvas.width = video.videoWidth;

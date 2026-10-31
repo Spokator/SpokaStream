@@ -15,6 +15,9 @@ export interface StreamDefaults {
   maxViewers: number;
   allowDraw: boolean;
   normalizeAudio: boolean;
+  /** Durée gardée pour les clips, en secondes. 0 : pas de clips, donc pas d'encodage en plus. */
+  clipSeconds: number;
+  cameraId: string;
 }
 
 export interface HotkeyMap {
@@ -22,6 +25,7 @@ export interface HotkeyMap {
   toggleDeafen: string;
   toggleStream: string;
   pauseStream: string;
+  saveClip: string;
 }
 
 export interface OverlaySettings {
@@ -67,6 +71,12 @@ export interface Settings {
   recordingsDir: string;
   recentRooms: RecentRoom[];
   chatPanelOpen: boolean;
+  /** Couleur d'accent de l'interface. */
+  accent: string;
+  /** Taille de l'interface, 1 = normale. */
+  uiScale: number;
+  /** Les bandes autour de l'image prennent ses couleurs. */
+  ambient: boolean;
 }
 
 export interface CaptureSource {
@@ -124,6 +134,7 @@ export type OverlayEvent =
   | { type: "reaction"; emoji: string; name: string }
   | { type: "chat"; name: string; color: string; text: string }
   | { type: "viewers"; count: number; names: string[] }
+  | { type: "poll"; poll: { question: string; closed: boolean; options: { text: string; votes: number }[] } | null }
   | { type: "stroke"; streamId: string; from: string; color: string; tool: "laser" | "pen"; id: string; points: number[]; end: boolean }
   | { type: "clear" }
   | { type: "settings"; settings: OverlaySettings };
@@ -138,6 +149,10 @@ export interface NotifyRequest {
   title: string;
   body: string;
   roomId?: string;
+}
+
+export interface YoutubeInfo {
+  title: string;
 }
 
 export interface NativeVideoRequest {
@@ -194,6 +209,8 @@ export interface SpokaApi {
   recordWrite(id: number, chunk: ArrayBuffer): Promise<void>;
   recordStop(id: number): Promise<void>;
   saveScreenshot(fileName: string, png: ArrayBuffer): Promise<string>;
+  /** null : la vidéo n'existe pas, ou YouTube interdit de la lire ailleurs que sur son site. */
+  youtubeInfo(videoId: string): Promise<YoutubeInfo | null>;
   reveal(path: string): void;
   pickFolder(): Promise<string | null>;
 
@@ -218,4 +235,5 @@ export const DEFAULT_HOTKEYS: HotkeyMap = {
   toggleDeafen: "Ctrl+Alt+D",
   toggleStream: "Ctrl+Alt+S",
   pauseStream: "Ctrl+Alt+P",
+  saveClip: "Ctrl+Alt+C",
 };

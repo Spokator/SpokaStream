@@ -1,12 +1,14 @@
-import { Activity, Camera, Circle, Eye, EyeOff, Gauge, Maximize, MousePointer2, Pencil, PictureInPicture2, Radio, Smile, Square, Users, Volume2, VolumeX } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Activity, Camera, Circle, Clapperboard, Eye, EyeOff, Gauge, Maximize, MousePointer2, Pencil, PictureInPicture2, Radio, Scissors, Smile, Square, TvMinimalPlay, Users, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { LatencyMode } from "@shared/ipc.ts";
 import type { DrawTool, Member, StreamInfo, ViewerQuality } from "@shared/protocol.ts";
 import { core } from "../engine/core.ts";
-import { get, set, useApp } from "../state/store.ts";
+import { get, set, TOGETHER, useApp } from "../state/store.ts";
 import { limitText, mbps, pathText, plural } from "../ui/format.ts";
-import { Avatar, Button, IconButton, Popover, Slider } from "../ui/kit.tsx";
+import { Avatar, Button, IconButton, isTyping, Popover, Slider, Uptime } from "../ui/kit.tsx";
 import { StrokeCanvas } from "../ui/strokes.ts";
+import { MessageText } from "./Chat.tsx";
+import { TogetherTile, useCanShare } from "./Together.tsx";
 
 export const REACTIONS = ["🔥", "😂", "😮", "❤️", "👏", "💀", "🎉", "👀"];
 
@@ -23,6 +25,10 @@ const LATENCIES: { value: LatencyMode; label: string; hint: string }[] = [
   { value: "stable", label: "Stable", hint: "Absorbe une connexion instable" },
 ];
 
+const MAX_ZOOM = 6;
+const CHAT_SHOWN_MS = 12_000;
+const AMBIENT_INTERVAL_MS = 200;
+
 function useMember(id: string): Member | undefined {
   return useApp(s => s.room?.members.find(m => m.id === id));
 }
@@ -37,6 +43,109 @@ function Video({ media, className, videoRef }: { media: MediaStream; className?:
     void video.play().catch(() => {});
   }, [media, ref]);
   return <video ref={ref} className={className} autoPlay playsInline muted />;
+}
+
+/** Les bandes autour de l'image prennent ses couleurs. Quelques images par seconde dans un minuscule canevas : ça ne coûte rien. */
+function Ambient({ video }: { video: React.RefObject<HTMLVideoElement | null> }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const context = canvas.current?.getContext("2d", { willReadFrequently: false });
+    if (!context) return;
+    const timer = setInterval(() => {
+      const element = video.current;
+      if (element?.videoWidth) context.drawImage(element, 0, 0, 32, 18);
+    }, AMBIENT_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [video]);
+  return <canvas ref={canvas} className="tile-ambient" width={32} height={18} aria-hidden />;
+}
+
+function useFullscreen(root: React.RefObject<HTMLElement | null>) {
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    const update = () => setFullscreen(!!root.current && document.fullscreenElement === root.current);
+    document.addEventListener("fullscreenchange", update);
+    return () => document.removeEventListener("fullscreenchange", update);
+  }, [root]);
+  return fullscreen;
+}
+
+const toggleFullscreen = (element: HTMLElement | null) => void (document.fullscreenElement ? document.exitFullscreen() : element?.requestFullscreen());
+
+/** Quand le panneau n'est plus là, le chat vient sur l'image : on continue à lire et à répondre sans sortir du plein écran. */
+function FloatingChat() {
+  const history = useApp(s => s.room?.history);
+  const [now, setNow] = useState(Date.now());
+  const [writing, setWriting] = useState(false);
+  const [text, setText] = useState("");
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || isTyping(e)) return;
+      e.preventDefault();
+      setWriting(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  const recent = (history ?? []).filter(m => m.kind === "user" && (writing || now - m.at < CHAT_SHOWN_MS)).slice(-6);
+  return (
+    <div className="floating-chat">
+      {recent.map(m => (
+        <div key={m.id} className="floating-line">
+          <b style={{ color: m.authorColor }}>{m.authorName}</b> {m.text ? <MessageText text={m.text} /> : "a envoyé une image"}
+        </div>
+      ))}
+      {writing && (
+        <input
+          className="floating-input"
+          autoFocus
+          value={text}
+          placeholder="Écris un message, Entrée pour envoyer"
+          aria-label="Message rapide"
+          onChange={e => setText(e.target.value)}
+          onBlur={() => setWriting(false)}
+          onKeyDown={e => {
+            if (e.key === "Escape") setWriting(false);
+            if (e.key !== "Enter") return;
+            if (text.trim()) core.sendChat(text.trim());
+            setText("");
+            setWriting(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Bulle caméra du diffuseur, reçue à côté de l'image : chacun peut la masquer sans rien changer pour les autres. */
+function CameraBubble({ media }: { media: MediaStream }) {
+  const [hidden, setHidden] = useState(false);
+  if (hidden) return null;
+  return (
+    <button type="button" className="tile-cam" title="Masquer la caméra" onClick={() => setHidden(true)}>
+      <Video media={media} />
+    </button>
+  );
+}
+
+function Pill({ stream, paused }: { stream: StreamInfo; paused: boolean }) {
+  return (
+    <span className="live-pill">
+      {paused ? (
+        "Pause"
+      ) : (
+        <>
+          En direct · <Uptime since={stream.startedAt} />
+        </>
+      )}
+    </span>
+  );
 }
 
 /** Zone réellement occupée par l'image dans la tuile : les dessins doivent tomber au même endroit chez tout le monde. */
@@ -204,8 +313,11 @@ function StatsOverlay({ streamId }: { streamId: string }) {
   );
 }
 
-function WatchTile({ stream, focused, onFocus }: { stream: StreamInfo; focused: boolean; onFocus: () => void }) {
+function WatchTile({ stream, focused, primary, onFocus }: { stream: StreamInfo; focused: boolean; primary: boolean; onFocus: () => void }) {
   const sub = useApp(s => s.subs[stream.id]);
+  const cinema = useApp(s => s.cinema);
+  const ambient = useApp(s => s.settings!.ambient);
+  const clipSaving = useApp(s => s.clipSaving);
   const owner = useMember(stream.ownerId);
   const latency = useApp(s => s.settings!.latency);
   const profileColor = useApp(s => s.settings!.profile.color);
@@ -215,6 +327,74 @@ function WatchTile({ stream, focused, onFocus }: { stream: StreamInfo; focused: 
   const box = useContentBox(video);
   const [tool, setTool] = useState<DrawTool | null>(null);
   const [showStats, setShowStats] = useState(false);
+  const [zoom, setZoom] = useState({ scale: 1, x: 0, y: 0 });
+  const fullscreen = useFullscreen(root);
+  const pan = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
+
+  /** Garde l'image dans le cadre : on ne peut pas la faire sortir en déplaçant le zoom. */
+  const applyZoom = (scale: number, x: number, y: number) => {
+    const bounds = root.current?.getBoundingClientRect();
+    const next = Math.max(1, Math.min(MAX_ZOOM, scale));
+    if (!bounds || next === 1) return setZoom({ scale: 1, x: 0, y: 0 });
+    const limitX = (bounds.width * (next - 1)) / 2;
+    const limitY = (bounds.height * (next - 1)) / 2;
+    setZoom({ scale: next, x: Math.max(-limitX, Math.min(limitX, x)), y: Math.max(-limitY, Math.min(limitY, y)) });
+  };
+
+  const onWheel = (e: WheelEvent) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const bounds = root.current!.getBoundingClientRect();
+    setZoom(current => {
+      const scale = Math.max(1, Math.min(MAX_ZOOM, current.scale * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
+      // Le point sous la souris reste sous la souris.
+      const ratio = scale / current.scale;
+      const pointerX = e.clientX - bounds.left - bounds.width / 2;
+      const pointerY = e.clientY - bounds.top - bounds.height / 2;
+      const limitX = (bounds.width * (scale - 1)) / 2;
+      const limitY = (bounds.height * (scale - 1)) / 2;
+      if (scale === 1) return { scale: 1, x: 0, y: 0 };
+      return {
+        scale,
+        x: Math.max(-limitX, Math.min(limitX, pointerX - (pointerX - current.x) * ratio)),
+        y: Math.max(-limitY, Math.min(limitY, pointerY - (pointerY - current.y) * ratio)),
+      };
+    });
+  };
+  const wheelHandler = useRef(onWheel);
+  wheelHandler.current = onWheel;
+
+  // React branche la molette en passif : sans écouteur à nous, impossible d'empêcher le défilement.
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const listener = (e: WheelEvent) => wheelHandler.current(e);
+    element.addEventListener("wheel", listener, { passive: false });
+    return () => element.removeEventListener("wheel", listener);
+  }, [!sub]);
+
+  useEffect(() => {
+    if (!primary) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e)) return;
+      const view = get().subs[stream.id];
+      if (!view) return;
+      const key = e.key.toLowerCase();
+      if (key === "m") core.setSubMuted(stream.id, !view.muted);
+      else if (key === "f") toggleFullscreen(root.current);
+      else if (key === "i") setShowStats(on => !on);
+      else if (key === "arrowup") core.setSubVolume(stream.id, Math.min(3, view.volume + 0.1));
+      else if (key === "arrowdown") core.setSubVolume(stream.id, Math.max(0, view.volume - 0.1));
+      else if (key === "+" || key === "=") setZoom(z => ({ ...z, scale: Math.min(MAX_ZOOM, z.scale * 1.25) }));
+      else if (key === "-") applyZoom(zoom.scale / 1.25, zoom.x, zoom.y);
+      else if (key === "0") setZoom({ scale: 1, x: 0, y: 0 });
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [primary, stream.id, zoom]);
+
   if (!sub) return null;
 
   const hasNoVideo = !sub.quality.video;
@@ -223,28 +403,51 @@ function WatchTile({ stream, focused, onFocus }: { stream: StreamInfo; focused: 
   const statusText = sub.state === "connecting" ? "Connexion au stream…" : sub.state === "unstable" ? "Connexion instable…" : sub.state === "failed" ? "Reconnexion…" : null;
 
   return (
-    <div className={`tile ${focused ? "is-focused" : ""}`} ref={root} onDoubleClick={() => void (document.fullscreenElement ? document.exitFullscreen() : root.current?.requestFullscreen())}>
-      <Video media={sub.media} videoRef={video} className="tile-video" />
+    <div
+      className={`tile ${focused ? "is-focused" : ""} ${zoom.scale > 1 ? "is-zoomed" : ""}`}
+      ref={root}
+      onDoubleClick={() => toggleFullscreen(root.current)}
+      onPointerDown={e => {
+        if (zoom.scale === 1 || tool || (e.target as HTMLElement).closest("button, input, .tile-bar")) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        pan.current = { x: e.clientX, y: e.clientY, originX: zoom.x, originY: zoom.y };
+      }}
+      onPointerMove={e => {
+        if (pan.current) applyZoom(zoom.scale, pan.current.originX + e.clientX - pan.current.x, pan.current.originY + e.clientY - pan.current.y);
+      }}
+      onPointerUp={() => (pan.current = null)}
+    >
+      {ambient && (focused || fullscreen) && <Ambient video={video} />}
+      <div className="tile-canvas" style={zoom.scale > 1 ? { transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})` } : undefined}>
+        <Video media={sub.media} videoRef={video} className="tile-video" />
+        <DrawLayer streamId={stream.id} box={box} tool={stream.allowDraw ? tool : null} color={profileColor} />
+      </div>
+      {stream.camera && !hasNoVideo && <CameraBubble media={sub.camera} />}
       {hasNoVideo && (
         <div className="tile-audio-only">
           <Avatar name={owner?.name ?? "?"} color={owner?.color} src={owner?.avatar} size={72} />
           <span>Son seul</span>
         </div>
       )}
-      <DrawLayer streamId={stream.id} box={box} tool={stream.allowDraw ? tool : null} color={profileColor} />
       <FloatingReactions streamId={stream.id} />
       {statusText && <div className="tile-status">{statusText}</div>}
+      {(fullscreen || (cinema && primary)) && <FloatingChat />}
 
       <div className="tile-top">
-        <span className="live-pill">{stream.paused ? "Pause" : "En direct"}</span>
+        <Pill stream={stream} paused={stream.paused} />
         <span className="tile-title">
           <b>{owner?.name ?? "?"}</b>
           {stream.title && <span>{stream.title}</span>}
         </span>
-        <span className="tile-chip">
+        <span className="tile-chip" title={stream.viewers.map(id => get().room?.members.find(m => m.id === id)?.name ?? "?").join(", ")}>
           <Users size={12} />
           {stream.viewers.length}
         </span>
+        {zoom.scale > 1 && (
+          <button type="button" className="tile-chip is-button" title="Enlever le zoom" onClick={() => setZoom({ scale: 1, x: 0, y: 0 })}>
+            Zoom {Math.round(zoom.scale * 100)} %
+          </button>
+        )}
         {recording && (
           <span className="tile-chip is-rec">
             <Circle size={9} fill="currentColor" /> REC
@@ -368,8 +571,14 @@ function WatchTile({ stream, focused, onFocus }: { stream: StreamInfo; focused: 
           <IconButton label="Capture d'écran" onClick={() => video.current && void core.screenshot(video.current, owner?.name ?? "stream")}>
             <Camera size={18} />
           </IconButton>
+          <IconButton label="Garder un clip des dernières secondes" disabled={clipSaving} onClick={() => void core.saveClip()}>
+            <Scissors size={18} />
+          </IconButton>
           <IconButton label={recording ? "Arrêter l'enregistrement" : "Enregistrer ce stream"} active={recording} onClick={() => void (recording ? core.stopRecording() : core.recordWatching(stream.id))}>
             {recording ? <Square size={16} /> : <Circle size={17} />}
+          </IconButton>
+          <IconButton label={cinema ? "Quitter le mode cinéma" : "Mode cinéma"} active={cinema} onClick={() => set({ cinema: !cinema })}>
+            <Clapperboard size={18} />
           </IconButton>
           <IconButton label="Fenêtre flottante, toujours au-dessus" onClick={() => openPopout(sub.media, owner?.name ?? "Stream")}>
             <PictureInPicture2 size={18} />
@@ -382,7 +591,7 @@ function WatchTile({ stream, focused, onFocus }: { stream: StreamInfo; focused: 
           <IconButton label="Ne plus regarder" onClick={() => core.unwatch(stream.id)}>
             <EyeOff size={18} />
           </IconButton>
-          <IconButton label="Plein écran" onClick={() => void (document.fullscreenElement ? document.exitFullscreen() : root.current?.requestFullscreen())}>
+          <IconButton label="Plein écran" onClick={() => toggleFullscreen(root.current)}>
             <Maximize size={18} />
           </IconButton>
         </div>
@@ -391,8 +600,9 @@ function WatchTile({ stream, focused, onFocus }: { stream: StreamInfo; focused: 
   );
 }
 
-function OwnTile({ stream, focused }: { stream: StreamInfo; focused: boolean }) {
+function OwnTile({ stream, focused, primary }: { stream: StreamInfo; focused: boolean; primary: boolean }) {
   const publish = useApp(s => s.publish);
+  const cinema = useApp(s => s.cinema);
   const video = useRef<HTMLVideoElement>(null);
   const box = useContentBox(video);
   if (!publish) return null;
@@ -403,11 +613,13 @@ function OwnTile({ stream, focused }: { stream: StreamInfo; focused: boolean }) 
       {publish.paused && <div className="tile-status">Stream en pause : les spectateurs ne voient plus ton écran</div>}
       <DrawLayer streamId={stream.id} box={box} tool={null} color="#ffffff" />
       <FloatingReactions streamId={stream.id} />
+      {publish.camera && <CameraBubble media={publish.camera} />}
+      {cinema && primary && <FloatingChat />}
       <div className="tile-top">
-        <span className="live-pill">{publish.paused ? "Pause" : "En direct"}</span>
+        <Pill stream={stream} paused={publish.paused} />
         <span className="tile-title">
           <b>Ton stream</b>
-          <span>{publish.sourceName}</span>
+          <span>{stream.title || publish.sourceName}</span>
         </span>
         <span className="tile-chip">
           <Users size={12} />
@@ -431,7 +643,7 @@ function StreamCard({ stream, onWatch }: { stream: StreamInfo; onWatch: () => vo
     <button type="button" className="stream-card" onClick={onWatch}>
       {stream.thumb ? <img src={stream.thumb} alt="" /> : <div className="stream-card-empty" />}
       <span className="stream-card-shade" />
-      <span className="live-pill">En direct</span>
+      <Pill stream={stream} paused={stream.paused} />
       <span className="stream-card-info">
         <Avatar name={owner?.name ?? "?"} color={owner?.color} src={owner?.avatar} size={26} />
         <span>
@@ -447,7 +659,7 @@ function StreamCard({ stream, onWatch }: { stream: StreamInfo; onWatch: () => vo
 }
 
 function EmptyStage() {
-  const canStream = useApp(s => s.room!.settings.whoCanStream === "everyone" || s.room!.ownerId === s.userId);
+  const canStream = useCanShare();
   const code = useApp(s => s.room!.code);
   return (
     <div className="stage-empty">
@@ -457,9 +669,14 @@ function EmptyStage() {
       <h2>Personne ne diffuse pour l'instant</h2>
       <p>Partage ton écran, une fenêtre, une caméra ou un fichier vidéo, avec le son de l'application de ton choix.</p>
       {canStream && (
-        <Button variant="live" icon={<Radio size={18} />} onClick={() => set({ goLiveOpen: true })}>
-          Lancer un stream
-        </Button>
+        <div className="stage-empty-actions">
+          <Button variant="live" icon={<Radio size={18} />} onClick={() => set({ goLiveOpen: true })}>
+            Lancer un stream
+          </Button>
+          <Button icon={<TvMinimalPlay size={17} />} onClick={() => set({ dialog: "together" })}>
+            Regarder YouTube ensemble
+          </Button>
+        </div>
       )}
       <p className="stage-empty-code">
         Code du salon : <b>{code}</b>
@@ -474,22 +691,25 @@ export function Stage({ layout }: { layout: "focus" | "grid" }) {
   const userId = useApp(s => s.userId);
   const focusedId = useApp(s => s.focused);
   const publishId = useApp(s => s.publish?.streamId);
+  const together = useApp(s => !!s.room!.together);
 
-  if (!streams.length) return <section className="stage"><EmptyStage /></section>;
+  if (!streams.length && !together) return <section className="stage"><EmptyStage /></section>;
 
   const isShown = (s: StreamInfo) => s.ownerId === userId || !!subs[s.id];
   const shown = streams.filter(s => isShown(s) && (s.ownerId !== userId || s.id === publishId));
   const others = streams.filter(s => !isShown(s));
   const main = shown.find(s => s.id === focusedId) ?? shown.find(s => s.ownerId !== userId) ?? shown[0];
   const focus = (id: string) => set({ focused: id });
+  const togetherFirst = together && (focusedId === TOGETHER || !main);
 
-  const tile = (stream: StreamInfo, focused: boolean) =>
-    stream.ownerId === userId ? <OwnTile key={stream.id} stream={stream} focused={focused} /> : <WatchTile key={stream.id} stream={stream} focused={focused} onFocus={() => focus(stream.id)} />;
+  const tile = (stream: StreamInfo, focused: boolean, primary: boolean) =>
+    stream.ownerId === userId ? <OwnTile key={stream.id} stream={stream} focused={focused} primary={primary} /> : <WatchTile key={stream.id} stream={stream} focused={focused} primary={primary} onFocus={() => focus(stream.id)} />;
 
-  if (layout === "grid" || !main) {
+  if (layout === "grid" || (!main && !together)) {
     return (
-      <section className={`stage stage-grid n${Math.min(streams.length, 6)}`}>
-        {shown.map(s => tile(s, false))}
+      <section className={`stage stage-grid n${Math.min(streams.length + Number(together), 6)}`}>
+        {together && <TogetherTile focused={false} onFocus={() => focus(TOGETHER)} />}
+        {shown.map((s, i) => tile(s, false, i === 0 && !together))}
         {others.map(s => (
           <StreamCard key={s.id} stream={s} onWatch={() => void core.watch(s.id)} />
         ))}
@@ -497,15 +717,20 @@ export function Stage({ layout }: { layout: "focus" | "grid" }) {
     );
   }
 
-  const rest = shown.filter(s => s !== main);
+  const rest = shown.filter(s => togetherFirst || s !== main);
   return (
     <section className="stage stage-focus">
-      <div className="stage-main">{tile(main, true)}</div>
-      {rest.length + others.length > 0 && (
+      <div className="stage-main">{togetherFirst ? <TogetherTile focused onFocus={() => {}} /> : tile(main!, true, true)}</div>
+      {rest.length + others.length + Number(together && !togetherFirst) > 0 && (
         <div className="stage-strip">
+          {together && !togetherFirst && (
+            <div className="strip-item">
+              <TogetherTile focused={false} onFocus={() => focus(TOGETHER)} />
+            </div>
+          )}
           {rest.map(s => (
             <div key={s.id} className="strip-item" onClick={() => focus(s.id)}>
-              {tile(s, false)}
+              {tile(s, false, false)}
             </div>
           ))}
           {others.map(s => (
