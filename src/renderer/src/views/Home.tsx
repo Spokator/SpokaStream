@@ -97,7 +97,7 @@ export function Home() {
                     </span>
                     <span className="room-card-text">
                       <b>{r.name}</b>
-                      <small>{live.length ? `${live.map(l => l.ownerName).join(", ")} en direct` : status ? plural(status.members, "personne") : "Hors ligne"}</small>
+                      <small>{live.length ? `${live.map(l => l.ownerName).join(", ")} en direct` : status?.party ? `Watch Party : ${status.party}` : status ? plural(status.members, "personne") : "Hors ligne"}</small>
                     </span>
                     {status?.online.length ? (
                       <span className="room-card-people">

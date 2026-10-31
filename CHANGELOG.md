@@ -1,5 +1,59 @@
 # Journal des versions
 
+## 1.4.0
+
+Plusieurs streams à la fois
+
+- **Cinq dispositions**, pour les spectateurs comme pour les diffuseurs : un grand avec un bandeau, un grand avec une colonne, grille, incrustation, et **libre**, où chaque image se glisse et se redimensionne, aimantée aux bords. Passer de l'une à l'autre ne coupe aucun lecteur.
+- **Glisser une image sur une autre** échange leurs places. Chacun garde son arrangement, sans rien changer chez les autres.
+- **Regarder les autres en diffusant** : quand un ami se lance aussi, une notification propose de l'ouvrir, et « Tout regarder » ouvre tout d'un coup.
+- **N'écouter qu'un stream**, ou faire suivre le son à l'image en grand.
+- **Qualité adaptée à la taille** : une petite image reçoit une petite définition. Le diffuseur et ta connexion respirent.
+- **Ton propre retour** peut se masquer, se mettre en grand et passer en plein écran.
+- **Plusieurs fenêtres flottantes** à la fois.
+
+Watch Party
+
+- **Regarder YouTube ensemble devient la Watch Party** : YouTube, ou l'adresse de n'importe quelle vidéo (.mp4, .webm, flux .m3u8). Chacun la lit chez lui, en pleine qualité.
+- **Une page qui contient une vidéo** : SpokaStream la trouve et récupère son titre.
+- **Un site qui garde sa vidéo pour lui** : ouvre la page dans SpokaStream et diffuse-la, image et son.
+- **Sous-titres** : un lien pour tout le salon, ou ton fichier .srt ou .vtt pour toi seul.
+- **File d'attente modifiable**, boutons et touches pour reculer ou avancer de 10 secondes, réactions sur la vidéo.
+- **Un film du PC** se pilote enfin : pause, position, répétition. Il ne repart plus en boucle tout seul à la fin.
+
+Nouvelle source
+
+- **Page web** : SpokaStream ouvre une page et diffuse son image et son son, et rien d'autre du PC. Comme une source navigateur d'OBS. Les vidéos protégées (Netflix, Disney+…) restent noires.
+
+Téléphone
+
+- **Le mode dessin se quitte** : un bandeau reste affiché avec un bouton Terminer.
+- **Glisser sur l'image** passe au stream voisin.
+- **Mini-vue** : un second stream en petit par-dessus le premier, à échanger d'un toucher.
+- **Double appui sur un bord** pour sauter de 10 secondes dans une Watch Party.
+- **Notifications** quand un ami passe en direct ou lance une Watch Party. Sur iPhone, il faut d'abord ajouter le site à l'écran d'accueil.
+- **Le volume** agit maintenant sur la Watch Party, ce qu'il ne faisait pas.
+- **Réactions** pendant une Watch Party.
+
+Paramètres
+
+- **Apparence** : thèmes Bleu nuit et Noir pur, couleur d'accent libre, taille du texte du chat, chat compact, moins d'animations.
+- **Son** : volume général des streams et des voix, test de la sortie.
+- **Diffusion** : codec, priorité et qualité du son par défaut, enregistrement automatique, régie à l'ouverture.
+- **Regarder** : qualité à l'ouverture et tous les réglages du multi-stream.
+- **Overlay** : taille, opacité et bouton pour l'essayer sans diffuser.
+- **Raccourcis** : un conflit est signalé, et on peut tout rétablir.
+- **Notifications** : mentions à part, silence pendant qu'on diffuse, test, volume des petits sons.
+- **Serveur** : l'adresse du site se colle telle quelle, retour au serveur SpokaStream en un clic.
+- **À propos** : à quoi sert le moteur audio, dossier des données, rétablir les réglages sans perdre son profil.
+- **Profil** : aperçu et couleur libre.
+
+Le reste
+
+- **SpokaAudio n'apparaît plus dans la liste des sons** : ce moteur interne s'y glissait pendant une capture, sans aucun son à offrir.
+- **QR code d'invitation** à côté du code du salon : un téléphone scanne et il est dans le salon.
+- **L'accueil** montre les Watch Party en cours.
+
 ## 1.3.0
 
 La régie

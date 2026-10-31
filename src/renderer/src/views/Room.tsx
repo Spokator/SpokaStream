@@ -1,7 +1,8 @@
-import { Check, Clapperboard, Columns2, Eye, Grid2x2, Headphones, HeadphoneOff, LayoutDashboard, LayoutGrid, Link2, LogOut, Lock, Mic, MicOff, Move, PanelBottom, PanelRightClose, PanelRightOpen, PhoneCall, PhoneOff, PictureInPicture2, Radio, Settings2, Square, Trash2, TvMinimalPlay, Unlock, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, Clapperboard, Columns2, Eye, Grid2x2, Headphones, HeadphoneOff, LayoutDashboard, LayoutGrid, Link2, LogOut, Lock, Mic, MicOff, Move, PanelBottom, PanelRightClose, PanelRightOpen, PhoneCall, PhoneOff, PictureInPicture2, QrCode, Radio, Settings2, Square, Trash2, TvMinimalPlay, Unlock, X } from "lucide-react";
+import qrcode from "qrcode-generator";
+import { useEffect, useMemo, useState } from "react";
 import { core } from "../engine/core.ts";
-import { get, set, useApp } from "../state/store.ts";
+import { get, set, toast, useApp } from "../state/store.ts";
 import type { WallMode } from "@shared/ipc.ts";
 import { Avatar, Button, Field, IconButton, isTyping, Modal, Popover, Segmented, Select, Toggle } from "../ui/kit.tsx";
 import { Chat } from "./Chat.tsx";
@@ -59,6 +60,7 @@ export function Room() {
             {copied ? <Check size={14} /> : <Link2 size={14} />}
             {copied ? "Lien copié" : room.code}
           </button>
+          <InviteMenu />
           {room.settings.locked && <Lock size={14} className="muted-icon" aria-label="Salon verrouillé" />}
           <div className="room-head-spacer" />
           <div className="avatar-stack">
@@ -115,6 +117,38 @@ export function Room() {
       )}
       {settingsOpen && <RoomSettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
+  );
+}
+
+/** Un téléphone n'a rien à installer : il scanne, et il est dans le salon. */
+function InviteMenu() {
+  const code = useApp(s => s.room!.code);
+  const link = core.inviteLink(code);
+  const picture = useMemo(() => {
+    const qr = qrcode(0, "M");
+    qr.addData(link);
+    qr.make();
+    return qr.createDataURL(5, 8);
+  }, [link]);
+  return (
+    <Popover
+      trigger={(open, toggle) => (
+        <IconButton label="Inviter : QR code pour téléphone" active={open} onClick={toggle}>
+          <QrCode size={16} />
+        </IconButton>
+      )}
+    >
+      {() => (
+        <div className="menu invite-menu">
+          <img src={picture} alt={`QR code du salon ${code}`} />
+          <b>Scanne avec ton téléphone</b>
+          <small>Le salon s'ouvre dans le navigateur, sans rien installer.</small>
+          <Button icon={<Link2 size={15} />} onClick={() => (window.spoka.copyText(link), toast("Lien copié", "success"))}>
+            Copier le lien
+          </Button>
+        </div>
+      )}
+    </Popover>
   );
 }
 

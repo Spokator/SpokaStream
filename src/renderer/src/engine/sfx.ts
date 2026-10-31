@@ -1,6 +1,9 @@
 // Petits sons d'interface, synthétisés : pas de fichier à embarquer, et ils restent discrets.
 
 let context: AudioContext | null = null;
+let level = 1;
+
+export const setSfxVolume = (volume: number) => void (level = volume);
 
 function tone(frequency: number, at: number, duration: number, volume: number) {
   context ??= new AudioContext();
@@ -10,7 +13,7 @@ function tone(frequency: number, at: number, duration: number, volume: number) {
   oscillator.type = "sine";
   oscillator.frequency.value = frequency;
   gain.gain.setValueAtTime(0, start);
-  gain.gain.linearRampToValueAtTime(volume, start + 0.012);
+  gain.gain.linearRampToValueAtTime(Math.max(0.0002, volume * level), start + 0.012);
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
   oscillator.connect(gain).connect(context.destination);
   oscillator.start(start);

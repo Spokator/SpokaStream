@@ -55,6 +55,9 @@ export function ProfileEditor({ name, color, avatar, autoFocus, onChange }: { na
           {PROFILE_COLORS.map(c => (
             <button key={c} type="button" aria-label={`Couleur ${c}`} className={`swatch ${c === color ? "is-on" : ""}`} style={{ background: c }} onClick={() => onChange({ name, color: c, avatar })} />
           ))}
+          <label className={`swatch swatch-custom ${PROFILE_COLORS.includes(color) ? "" : "is-on"}`} style={PROFILE_COLORS.includes(color) ? undefined : { background: color }} title="Ta propre couleur">
+            <input type="color" aria-label="Choisir une autre couleur" value={color} onChange={e => onChange({ name, color: e.target.value, avatar })} />
+          </label>
         </div>
       </div>
     </div>

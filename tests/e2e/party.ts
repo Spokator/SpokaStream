@@ -357,6 +357,88 @@ try {
       await phone.locator(".stage.shows-controls").waitFor();
       await shot({ page: phone }, "48-telephone-pointeur");
       await alice.page.getByRole("button", { name: "Arrêter le stream" }).click();
+      await alice.page.locator(".tile-own").waitFor({ state: "detached" });
+    });
+
+    await step("téléphone : deux diffuseurs, glisser pour changer, mini-vue", async () => {
+      await goLiveCamera(alice);
+      await goLiveCamera(bob);
+      const shown = () => phone.evaluate(() => document.querySelector(".top-title b")?.textContent ?? "");
+      const first = await poll("premier stream", shown, name => !!name, 20_000);
+      const stage = (await phone.locator(".stage").boundingBox())!;
+      const swipe = async () => {
+        await phone.mouse.move(stage.x + stage.width * 0.8, stage.y + stage.height / 2);
+        await phone.mouse.down();
+        await phone.mouse.move(stage.x + stage.width * 0.2, stage.y + stage.height / 2, { steps: 4 });
+        await phone.mouse.up();
+      };
+      await swipe();
+      const second = await poll("stream voisin", shown, name => !!name && name !== first, 8000);
+      assert.equal(await phone.locator(".live-dots i").count(), 2);
+
+      if (!(await phone.locator(".panes").isVisible())) await phone.getByRole("button", { name: "Afficher le chat" }).click();
+      await phone.getByRole("tab", { name: /En direct/ }).click();
+      await phone.getByRole("button", { name: `Garder ${first} en petit par-dessus` }).click();
+      await phone.locator(".mini-view").waitFor();
+      await poll("image de la mini-vue", () => phone.evaluate(() => (document.getElementById("mini-video") as HTMLVideoElement).videoWidth), w => w > 0, 20_000);
+      await shot({ page: phone }, "49-telephone-mini-vue");
+      await phone.getByRole("button", { name: "Mettre ce stream en grand" }).click();
+      await poll("échange", shown, name => name === first, 8000);
+      await phone.locator(".mini-view").waitFor();
+      await phone.getByRole("button", { name: "Fermer la mini-vue" }).first().click();
+      await phone.locator(".mini-view").waitFor({ state: "detached" });
+      for (const peer of [alice, bob]) await peer.page.getByRole("button", { name: "Arrêter le stream" }).click();
+      return `${first} puis ${second}`;
+    });
+  }
+  if (wanted("settings")) {
+    await step("paramètres : chaque onglet s'ouvre, les réglages agissent et se rétablissent", async () => {
+      const errors: string[] = [];
+      alice.page.on("pageerror", e => errors.push(String(e)));
+      await alice.page.evaluate(() => (window as any).__store.useApp.setState({ view: "settings" }));
+      const tabs = await alice.page.locator(".settings-nav button").allTextContents();
+      assert.equal(tabs.length, 10);
+      for (const [index, tab] of tabs.entries()) {
+        await alice.page.locator(".settings-nav button").nth(index).click();
+        await alice.page.locator(".settings-inner h1").first().waitFor();
+        await shot(alice, `50-parametres-${index}-${tab.replace(/[^a-zà-ÿ]/gi, "").toLowerCase()}`);
+      }
+      const nav = alice.page.locator(".settings-nav");
+      const data = () => alice.page.evaluate(() => ({ ...document.documentElement.dataset }));
+      await nav.getByRole("button", { name: "Apparence" }).click();
+      await alice.page.getByRole("radio", { name: "Noir pur" }).click().catch(() => alice.page.getByRole("button", { name: "Noir pur" }).click());
+      await poll("thème", data, d => d.theme === "black");
+      assert.equal(await alice.page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()), "#000");
+      await alice.page.getByRole("switch", { name: "Réduire les animations" }).click();
+      await poll("animations", data, d => d.motion === "off");
+      await shot(alice, "51-theme-noir");
+
+      await nav.getByRole("button", { name: "Son et voix" }).click();
+      await alice.page.getByRole("button", { name: "Tester la sortie" }).click();
+      await nav.getByRole("button", { name: "Overlay en jeu" }).click();
+      await alice.page.getByRole("button", { name: "Tester l'overlay" }).click();
+      await poll("overlay ouvert", () => alice.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), n => n === 2, 5000);
+      await poll("overlay refermé", () => alice.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), n => n === 1, 10_000);
+
+      await nav.getByRole("button", { name: "Raccourcis" }).click();
+      await alice.page.evaluate(() => (window as any).__core.updateSettings({ hotkeys: { ...(window as any).__store.useApp.getState().settings.hotkeys, marker: "Ctrl+Alt+M" } }));
+      await alice.page.getByText(/Déjà pris par/).first().waitFor();
+      await alice.page.getByRole("button", { name: "Rétablir les raccourcis d'origine" }).click();
+      await alice.page.getByText(/Déjà pris par/).first().waitFor({ state: "detached" });
+
+      await nav.getByRole("button", { name: "Serveur" }).click();
+      const address = alice.page.locator(".settings-inner input.input").first();
+      assert.equal(await address.inputValue(), serverUrl);
+
+      await nav.getByRole("button", { name: "À propos" }).click();
+      await alice.page.getByRole("button", { name: "Rétablir les réglages d'origine" }).click();
+      await alice.page.getByRole("button", { name: "Oui, tout rétablir" }).click();
+      await poll("réglages rétablis", data, d => d.theme === "dark" && d.motion === "on");
+      const name = await alice.page.evaluate(() => (window as any).__store.useApp.getState().settings.profile.name);
+      assert.equal(name, "Spoka", "le profil reste");
+      assert.deepEqual(errors, []);
+      await alice.page.evaluate(() => (window as any).__store.useApp.setState({ view: "room" }));
+      return `${tabs.length} onglets`;
     });
   }
   console.log(`${passed} étapes réussies`);

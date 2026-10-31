@@ -1,10 +1,10 @@
 /** @jsxImportSource preact */
-import { ChevronDown, Crown, Globe, Headphones, HeadphoneOff, ImagePlus, LogOut, Mic, MicOff, PhoneCall, PhoneOff, Pin, Plus, Radio, SendHorizontal, Share2, Smile, TvMinimalPlay, UserRound, Vote, X } from "lucide-preact";
+import { Bell, BellOff, ChevronDown, Crown, Globe, Headphones, HeadphoneOff, ImagePlus, LogOut, Mic, MicOff, PhoneCall, PhoneOff, PictureInPicture2, Pin, Plus, Radio, SendHorizontal, Share2, Smile, TvMinimalPlay, UserRound, Vote, X } from "lucide-preact";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { LIMITS } from "@shared/protocol.ts";
 import type { ChatMessage, Member, StreamInfo } from "@shared/protocol.ts";
 import { compressImage } from "../src/renderer/src/ui/image.ts";
-import { canShare, choose, fetchClip, joinVoice, leaveRoom, leaveVoice, nameOf, pollVote, react, REACTIONS, reactChat, sendChat, sendTyping, setTalking, toggleDeafen, toggleMic } from "./client.ts";
+import { canShare, choose, closeMini, fetchClip, joinVoice, leaveRoom, leaveVoice, nameOf, openMini, pollVote, react, REACTIONS, reactChat, sendChat, sendTyping, setTalking, toggleDeafen, toggleMic, togglePush } from "./client.ts";
 import { get, set, TOGETHER, useApp } from "./store.ts";
 import type { Tab } from "./store.ts";
 
@@ -327,18 +327,27 @@ export function Chat() {
 }
 
 function StreamRow({ stream, active }: { stream: StreamInfo; active: boolean }) {
+  const mini = useApp(s => s.mini === stream.id);
+  const shown = useApp(s => !!s.shown);
   return (
-    <button type="button" class={`stream ${active ? "is-on" : ""}`} data-stream={stream.id} onClick={() => choose(stream.id)}>
-      {stream.thumb ? <img src={stream.thumb} alt="" /> : <span class="thumb-empty" />}
-      <span>
-        <b>{nameOf(stream.ownerId)}</b>
-        <small>{stream.title || stream.sourceName}</small>
-        <small>
-          {stream.viewers.length} spectateur{stream.viewers.length > 1 ? "s" : ""}
-          {stream.paused ? " · en pause" : ""}
-        </small>
-      </span>
-    </button>
+    <div class="stream-row">
+      <button type="button" class={`stream ${active ? "is-on" : ""}`} data-stream={stream.id} onClick={() => choose(stream.id)}>
+        {stream.thumb ? <img src={stream.thumb} alt="" /> : <span class="thumb-empty" />}
+        <span>
+          <b>{nameOf(stream.ownerId)}</b>
+          <small>{stream.title || stream.sourceName}</small>
+          <small>
+            {stream.viewers.length} spectateur{stream.viewers.length > 1 ? "s" : ""}
+            {stream.paused ? " · en pause" : ""}
+          </small>
+        </span>
+      </button>
+      {shown && !active && (
+        <button type="button" class={`round ${mini ? "is-on" : ""}`} aria-label={mini ? "Fermer la mini-vue" : `Garder ${nameOf(stream.ownerId)} en petit par-dessus`} aria-pressed={mini} onClick={() => (mini ? closeMini() : void openMini(stream.id))}>
+          <PictureInPicture2 size={18} />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -402,6 +411,7 @@ function Salon() {
   const members = useApp(s => s.room?.members ?? []);
   const code = useApp(s => s.code);
   const dataMb = useApp(s => s.dataMb);
+  const push = useApp(s => s.push);
   const sorted = [...members].sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name, "fr"));
   return (
     <div class="pane-scroll">
@@ -416,6 +426,12 @@ function Salon() {
         <MemberRow key={m.id} member={m} />
       ))}
       <div class="pane-actions">
+        {push !== "unsupported" && (
+          <button type="button" disabled={push === "blocked"} onClick={() => void togglePush()}>
+            {push === "on" ? <BellOff size={16} /> : <Bell size={16} />}
+            {push === "on" ? "Ne plus être prévenu" : push === "blocked" ? "Notifications refusées dans les réglages du téléphone" : "Me prévenir quand un ami passe en direct"}
+          </button>
+        )}
         <button type="button" onClick={() => set({ sheet: "profile" })}>
           <UserRound size={16} /> Mon profil et mes réglages
         </button>

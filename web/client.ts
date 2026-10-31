@@ -49,6 +49,12 @@ for (const element of [video, camera]) {
 video.id = "video";
 camera.id = "camera";
 camera.muted = true;
+export const miniVideo = document.createElement("video");
+miniVideo.autoplay = true;
+miniVideo.playsInline = true;
+miniVideo.muted = true;
+miniVideo.setAttribute("playsinline", "");
+miniVideo.id = "mini-video";
 export const frame = document.createElement("iframe");
 frame.id = "together";
 frame.title = "Vidéo de la Watch Party";
@@ -58,6 +64,7 @@ const signal = new Signal();
 const socketUrl = `${location.origin.replace(/^http/, "ws")}/ws`;
 let iceServers: IceServer[] = [];
 let current: Subscription | null = null;
+let miniSub: Subscription | null = null;
 let chosen = false;
 let voice: Voice | null = null;
 let autoRung = 1;
@@ -120,6 +127,8 @@ export function boot() {
     statuses: {},
     recents: readRecents(),
     shown: null,
+    mini: null,
+    push: "unsupported",
     status: "",
     needsTap: "",
     stats: null,
@@ -177,7 +186,38 @@ export function boot() {
   setInterval(watchStats, STATS_MS);
   setInterval(expireTyping, 1000);
   setInterval(followSpeaking, 200);
-  if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").then(checkPush).catch(() => {});
+}
+
+const pushReady = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+
+/** Le téléphone peut refuser plus tard, depuis ses réglages : ce qu'il dit fait foi, pas ce qu'on a retenu. */
+async function checkPush() {
+  if (!pushReady() || !(await fetch("/push/key").then(r => r.ok, () => false))) return;
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  set({ push: Notification.permission === "denied" ? "blocked" : subscription ? "on" : "off" });
+  if (subscription) sendPush(subscription);
+}
+
+function sendPush(subscription: PushSubscription) {
+  const { endpoint, keys } = subscription.toJSON();
+  if (endpoint && keys?.p256dh && keys.auth) signal.send({ t: "push.subscribe", endpoint, p256dh: keys.p256dh, auth: keys.auth, rooms: get().recents.map(r => r.id) });
+}
+
+export async function togglePush() {
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (subscription) {
+    signal.send({ t: "push.unsubscribe", endpoint: subscription.endpoint });
+    await subscription.unsubscribe();
+    return set({ push: "off" });
+  }
+  if ((await Notification.requestPermission()) !== "granted") return set({ push: "blocked" });
+  const { key } = (await fetch("/push/key").then(r => r.json())) as { key: string };
+  const raw = Uint8Array.from(atob(key.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+  sendPush(await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: raw }));
+  set({ push: "on" });
 }
 
 function slowNetwork() {
@@ -193,6 +233,7 @@ export async function install() {
 
 function onConnected() {
   signal.send({ t: "room.subscribe", ids: get().recents.map(r => r.id) });
+  void checkPush().catch(() => {});
   const room = get().room;
   if (room) void signal.request({ t: "room.join", id: room.id }).catch(() => {});
   else if (get().screen === "room") void enter(get().code);
@@ -223,6 +264,7 @@ export async function enter(code: string, name = get().name) {
 
 export function leaveRoom(notify = true) {
   if (notify) signal.send({ t: "room.leave" });
+  closeMini();
   stopWatching();
   stopVoice();
   if (location.pathname !== "/") history.pushState(null, "", "/");
@@ -243,6 +285,7 @@ function remember(room: RoomState) {
   store("spoka-rooms", JSON.stringify(recents));
   set({ recents });
   signal.send({ t: "room.subscribe", ids: recents.map(r => r.id) });
+  void checkPush().catch(() => {});
 }
 
 export function forgetRoom(id: string) {
@@ -313,6 +356,7 @@ function onServer(m: ServerMessage) {
       return patchRoom(r => ({ streams: r.streams.map(s => (s.id === m.id ? { ...s, thumb: m.data } : s)) }));
     case "stream.remove":
       patchRoom(r => ({ streams: r.streams.filter(s => s.id !== m.id) }));
+      if (get().mini === m.id) closeMini();
       if (get().shown === m.id) {
         stopWatching();
         chosen = false;
@@ -335,6 +379,7 @@ function onRtc(from: string, session: string, data: unknown) {
   const payload = data as { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
   if (session.startsWith(CLIP_SESSION)) return void clips.onSignal(from, session, payload).catch(() => {});
   if (session === VOICE_SESSION) return void voice?.onSignal(from, payload).catch(() => {});
+  if (session === miniSub?.streamId) return void miniSub.onSignal(payload).catch(() => closeMini());
   if (session === current?.streamId) void current.onSignal(payload).catch(() => set({ status: "Connexion au stream impossible." }));
 }
 
@@ -402,7 +447,66 @@ export function show(id: string) {
 export function choose(id: string) {
   chosen = true;
   set({ tab: "chat" });
+  if (get().mini === id) closeMini();
   show(id);
+}
+
+/** Ce qu'on peut regarder ici, dans l'ordre de l'onglet En direct. */
+export function liveChoices() {
+  const { room, userId } = get();
+  const list = (room?.streams ?? []).filter(s => s.ownerId !== userId).map(s => s.id);
+  return room?.together ? [...list, TOGETHER] : list;
+}
+
+/** Glisser sur l'image passe au stream voisin, comme entre deux vidéos sur un réseau social. */
+export function swipeStream(step: number) {
+  const list = liveChoices();
+  if (list.length < 2) return;
+  const index = list.indexOf(get().shown ?? "");
+  const next = list[(index + step + list.length) % list.length]!;
+  navigator.vibrate?.(12);
+  choose(next);
+}
+
+/** Un second stream en petit, muet : une petite image suffit, la définition reste basse pour ne pas vider le forfait. */
+export async function openMini(id: string) {
+  closeMini();
+  const stream = get().room?.streams.find(s => s.id === id);
+  if (!stream) return;
+  const quality = QUALITIES[AUTO_STEPS[0]!]!.quality;
+  const sub = new Subscription(id, stream.ownerId, "balanced", () => iceServers, data => signal.send({ t: "rtc", to: stream.ownerId, session: id, data }));
+  miniSub = sub;
+  set({ mini: id, tab: "chat" });
+  sub.onTrack = () => {
+    if (miniSub !== sub) return;
+    if (miniVideo.srcObject !== sub.media) miniVideo.srcObject = sub.media;
+    void miniVideo.play().catch(() => {});
+  };
+  sub.onLost = () => {
+    if (miniSub === sub) void signal.request({ t: "stream.watch", id, on: true, quality }).catch(() => {});
+  };
+  await signal.request({ t: "stream.watch", id, on: true, quality }).catch(() => closeMini());
+}
+
+export function closeMini() {
+  if (miniSub) {
+    signal.send({ t: "stream.watch", id: miniSub.streamId, on: false });
+    miniSub.close();
+  }
+  miniSub = null;
+  miniVideo.srcObject = null;
+  set({ mini: null });
+}
+
+/** Le petit passe en grand, et le grand en petit. */
+export function swapMini() {
+  const { mini, shown } = get();
+  if (!mini) return;
+  const previous = shown && shown !== TOGETHER ? shown : null;
+  closeMini();
+  chosen = true;
+  show(mini);
+  if (previous) void openMini(previous);
 }
 
 async function watch(id: string) {

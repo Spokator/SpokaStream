@@ -258,6 +258,8 @@ export type ClientMessage =
   | { t: "together.next"; videoId: string }
   | { t: "together.remove"; index: number; videoId: string }
   | { t: "together.stop" }
+  | { t: "push.subscribe"; endpoint: string; p256dh: string; auth: string; rooms: string[] }
+  | { t: "push.unsubscribe"; endpoint: string }
   | { t: "reaction"; streamId: string | null; emoji: string }
   | { t: "draw"; streamId: string; stroke: Stroke }
   | { t: "draw.clear"; streamId: string }

@@ -112,15 +112,31 @@ Trois détails, mesurés sur OBS 31 :
 
 `tests/e2e/obs.ts` lance le vrai OBS dans une copie portable. **Ne pas écrire `global.ini` à la main** : cette copie bloque alors avant même d'ouvrir son journal. On la laisse créer sa configuration, puis on ne change que `service.json` et les sources audio du PC.
 
+### Page web
+
+La source navigateur s'appuie sur `setDisplayMediaRequestHandler` : `getDisplayMedia` rend l'image et le son d'une seule `WebFrameMain`, celle de la fenêtre ouverte par `WebSource`. Cette fenêtre a sa propre session persistante et aucune passerelle vers l'application.
+
 ### Overlay
 
 **Ne jamais redimensionner la fenêtre de l'overlay.** Elle couvre un écran entier et c'est son contenu qui se place sur la fenêtre capturée. La version qui suivait la fenêtre par `setBounds` figeait la page principale du diffuseur, avec le fil bloqué hors de JavaScript. Le mécanisme exact dans Chromium n'est pas élucidé, mais la bissection est nette : overlay coupé, plus de gel. Le parcours de bout en bout garde ce cas.
 
 Quand une fenêtre capturée change de taille, l'encodeur se réinitialise en 0,6 s, hors du fil de l'interface, et rien ne se fige. On a longtemps cru le contraire, jusqu'à documenter un arrêt de la page depuis la 1.0.1 : c'était l'outil de test. Playwright reçoit par DevTools chaque trame WebSocket de la capture native, ce canal sature, et une page parfaitement fluide semble muette pendant 30 s, avec des gigaoctets en attente dans le processus principal si le test cesse de lire. Une trace Perfetto du même moment montre 143 i/s et jamais plus de 31 ms entre deux images, pendant que Playwright annonce 15 s. **Toute mesure de fluidité se fait dans la page, jamais à travers DevTools.** Les mises en garde sur `setParameters` et le redimensionnement de l'overlay viennent de cette ancienne méthode : elles restent appliquées, mais n'ont pas été revérifiées.
 
-## Regarder ensemble
+## La scène
 
-YouTube refuse une page sans origine web, et l'application est chargée depuis un fichier. Le serveur sert donc `/player`, une page minuscule que l'application affiche en cadre et pilote par `postMessage`. Le cadre ne reçoit aucun clic : toutes les commandes sont les nôtres, et un geste passe toujours par le serveur avant de s'appliquer, chez celui qui l'a fait comme chez les autres. Aucune boucle possible, parce que l'état du lecteur n'est jamais renvoyé au salon.
+Toutes les dispositions passent par une seule fonction pure, `layoutWall` (`ui/wall.ts`), qui rend un rectangle par image. Chaque tuile reste au même endroit du DOM, en position absolue : changer de disposition ne remonte aucun composant, donc aucun lecteur ni le cadre de la Watch Party ne redémarre. Une disposition libre est gardée en parts de la scène, par personne et non par stream, parce qu'un stream change d'identifiant à chaque direct. Elle démarre de ce qui est à l'écran. Les petites images passent toujours devant les grandes, sinon une disposition venue de l'incrustation en cacherait une.
+
+Le son solo passe par `soloOf` dans le store, pour qu'un seul endroit décide de ce qu'on entend. La qualité suit la taille de la tuile : `fitSub` attend 1,5 s que la tuile se pose avant de renégocier, et ne plafonne jamais un stream seul à l'écran.
+
+## Watch Party
+
+Le serveur sert `/player`, une page minuscule que l'application et le site affichent en cadre et pilotent par `postMessage`. YouTube refuse une page sans origine web, et l'application est chargée depuis un fichier. Un fichier ou un flux HLS passe par la même page, dans un simple `<video>` : les états rendus sont ceux de YouTube, donc le reste du code ne voit aucune différence. `hls.js` n'est chargé qu'à la demande. Le titre et la vérification d'un lien se font dans le processus principal de l'application (`webSource.ts`), jamais sur le serveur : lui faire ouvrir une adresse donnée par un client permettrait de lui faire joindre n'importe quoi. Un `<video>` caché essaie ensuite vraiment le lien, seul moyen de savoir si le format passe.
+
+Une page https refuse une vidéo http, et un cadre `file:` ne change rien à ça : ces liens basculent vers « Diffuser cette page ».
+
+Un flux `captureStream()` meurt avec la fin du média. Le fichier diffusé tourne donc toujours en boucle, et `followFile` met en pause au retour au début quand personne n'a demandé la répétition.
+
+Le cadre ne reçoit aucun clic : toutes les commandes sont les nôtres, et un geste passe toujours par le serveur avant de s'appliquer, chez celui qui l'a fait comme chez les autres. Aucune boucle possible, parce que l'état du lecteur n'est jamais renvoyé au salon.
 
 Le serveur garde une position et l'instant où elle était vraie, et calcule la position réelle à chaque envoi : un arrivant reprend au bon endroit. Chaque client compare sa position toutes les 500 ms et ne se recale qu'au-delà de 1,5 s d'écart, sans jamais insister plus d'une fois toutes les 3 s : une publicité YouTube ne déclenche pas de rafale.
 
@@ -144,6 +160,10 @@ Une application servie par le serveur (`/` et `/w/CODE`), construite par `script
 La politique de sécurité n'autorise que ce serveur. Le chat y est écrit en `textContent`, jamais en HTML. Un téléphone demande 720p par défaut, avec un encodage dédié chez le diffuseur comme tout spectateur.
 
 Un bannissement repose sur le jeton de l'appareil : depuis un navigateur, une nouvelle identité se crée en vidant ses données. Pour un salon qui doit rester fermé, c'est le verrou qui protège.
+
+### Notifications
+
+`server/push.ts` applique Web Push sans dépendance : aes128gcm (RFC 8291) pour le contenu, VAPID (RFC 8292) pour l'identité. Les clés et les abonnements vivent dans `push.json`, à côté de `rooms.json`. L'adresse d'envoi vient du client : le serveur n'accepte que celles des services de push des navigateurs. Un même événement ne repart pas avant 10 minutes, et rien ne part dans la minute qui suit un démarrage, où les streams en cours s'annoncent à nouveau. L'envoi réel vers un téléphone n'est pas couvert par les tests : seuls le chiffrement et les règles d'envoi le sont.
 
 ## Prendre la main
 
@@ -191,6 +211,7 @@ Si une connexion vidéo tombe vraiment, le spectateur en redemande une après 6 
 | Commande | Ce qu'elle prouve |
 | --- | --- |
 | `npm test` | 54 tests : serveur, SDP, choix du codec, tampon audio, découpe MP4 |
+| `npm run test:party` | Deux diffuseurs, dispositions, Watch Party d'une URL, page web diffusée, film du PC, paramètres, gestes du téléphone |
 | `npm run test:e2e` | 42 étapes avec deux instances et un téléphone émulé : WebRTC, son, YouTube, gestes reçus par une vraie fenêtre, sortie WHIP de ffmpeg, formats de 320 à 1280 px, fenêtre de régie détachée |
 | `npm run test:obs` | Le vrai OBS, dans une copie isolée, jusqu'à l'image reçue par un spectateur |
 | `node --experimental-strip-types tests/e2e/run.ts --packaged` | La même chose sur l'application empaquetée |

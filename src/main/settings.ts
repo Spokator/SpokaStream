@@ -2,7 +2,7 @@ import { app } from "electron";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { DEFAULT_HOTKEYS, DEFAULT_REGIE, DEFAULT_SCREENS, DEFAULT_WALL } from "../shared/ipc.ts";
+import { DEFAULT_HOTKEYS, DEFAULT_REGIE, DEFAULT_SCREENS, DEFAULT_SERVER, DEFAULT_WALL } from "../shared/ipc.ts";
 import { DEFAULT_CAMERA_LAYOUT } from "../shared/protocol.ts";
 import type { Settings } from "../shared/ipc.ts";
 
@@ -13,7 +13,7 @@ function defaults(): Settings {
     token: randomBytes(32).toString("hex"),
     profile: { name: "", color: COLORS[Math.floor(Math.random() * COLORS.length)]!, avatar: null },
     onboarded: false,
-    serverUrl: process.env.SPOKASTREAM_SERVER ?? "wss://stream.chretieno.fr/ws",
+    serverUrl: process.env.SPOKASTREAM_SERVER ?? DEFAULT_SERVER,
     startWithWindows: false,
     startMinimized: false,
     closeToTray: true,
@@ -49,13 +49,23 @@ function defaults(): Settings {
       screens: DEFAULT_SCREENS,
     },
     hotkeys: DEFAULT_HOTKEYS,
-    overlay: { enabled: true, reactions: true, chat: true, viewers: true, corner: "top-right" },
+    overlay: { enabled: true, reactions: true, chat: true, viewers: true, corner: "top-right", size: 1, opacity: 1 },
     recordingsDir: path.join(app.getPath("videos"), "SpokaStream"),
     recentRooms: [],
     chatPanelOpen: true,
     accent: "#7c5cff",
     uiScale: 1,
     ambient: true,
+    theme: "dark",
+    reduceMotion: false,
+    chatSize: 13.5,
+    chatCompact: false,
+    streamVolume: 1,
+    voiceVolume: 1,
+    sfxVolume: 1,
+    watchQuality: 0,
+    notifyMentions: true,
+    quietWhileLive: false,
     scenes: [],
     obsKey: randomBytes(16).toString("hex"),
     regie: DEFAULT_REGIE,
@@ -92,6 +102,12 @@ export class SettingsStore {
 
   get current() {
     return this.value;
+  }
+
+  /** Ce qui fait l'identité de la personne reste : son profil, ses salons, ses scènes, ses clés, l'adresse du serveur. */
+  reset() {
+    const { token, profile, onboarded, serverUrl, recentRooms, scenes, obsKey, recordingsDir } = this.value;
+    return this.update({ ...defaults(), token, profile, onboarded, serverUrl, recentRooms, scenes, obsKey, recordingsDir });
   }
 
   update(patch: Partial<Settings>) {

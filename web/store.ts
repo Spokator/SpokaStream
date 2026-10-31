@@ -40,6 +40,10 @@ export interface WebState {
   statuses: Record<string, RoomStatus>;
   recents: RecentRoom[];
   shown: string | null;
+  /** Le second stream, en petit par-dessus le premier. */
+  mini: string | null;
+  /** Notifications de ce téléphone : "off", "on", ou "blocked" quand le téléphone les refuse. */
+  push: "unsupported" | "off" | "on" | "blocked";
   status: string;
   /** Le navigateur a coupé le son ou la lecture : il faut un geste de la personne. */
   needsTap: "" | "son" | "lecture";

@@ -19,6 +19,13 @@ export class Playback {
   private readonly buffer = new Float32Array(1024);
   private deafened = false;
   private outputId = "default";
+  private readonly bus = { stream: 1, voice: 1 };
+
+  /** Le volume général de tous les streams, ou de toutes les voix. */
+  setBus(kind: Channel["kind"], volume: number) {
+    this.bus[kind] = volume;
+    for (const channel of this.channels.values()) this.applyGain(channel);
+  }
 
   private ensure() {
     if (!this.context) {
@@ -72,7 +79,7 @@ export class Playback {
   private applyGain(channel: Channel) {
     if (!this.context) return;
     const silent = channel.muted || this.deafened;
-    channel.gain.gain.setTargetAtTime(silent ? 0 : channel.volume, this.context.currentTime, 0.02);
+    channel.gain.gain.setTargetAtTime(silent ? 0 : channel.volume * this.bus[channel.kind], this.context.currentTime, 0.02);
   }
 
   setVolume(id: string, volume: number) {

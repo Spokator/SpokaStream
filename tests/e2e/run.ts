@@ -19,6 +19,10 @@ const electronPath = createRequire(import.meta.url)("electron") as unknown as st
 // npm run test:e2e -- --packaged : le même parcours sur l'application empaquetée, avec ses vrais chemins.
 const packaged = process.argv.includes("--packaged");
 const packagedExe = process.env.SPOKASTREAM_EXE ?? path.join(root, "dist", "win-unpacked", "SpokaStream.exe");
+// CHROMIUM_CAPTURE=1 : tout le parcours sans la capture native, dont chaque trame passe par DevTools et sature ce canal sur un PC chargé.
+const chromiumCapture = process.env.CHROMIUM_CAPTURE === "1";
+// Une étape bloquée s'arrête toute seule : un essai ne doit jamais tourner sans fin sur le PC de quelqu'un.
+const STEP_LIMIT_MS = 240_000;
 
 const store = new MemoryStore();
 let server = await startServer({ port: 0, host: "127.0.0.1", store });
@@ -28,6 +32,8 @@ const serverUrl = `ws://127.0.0.1:${serverPort}/ws`;
 interface Peer {
   name: string;
   app: ElectronApplication;
+  /** Gardé dès le lancement : Playwright ne le rend plus une fois l'application fermée. */
+  child: ReturnType<ElectronApplication["process"]>;
   page: Page;
   errors: string[];
 }
@@ -38,7 +44,7 @@ async function launch(name: string, extraArgs: string[] = []): Promise<Peer> {
   const app = await electron.launch({
     executablePath: packaged ? packagedExe : electronPath,
     args: [...(packaged ? [] : [root]), ...extraArgs],
-    env: { ...process.env, SPOKASTREAM_USER_DATA: path.join(temp, name), SPOKASTREAM_SERVER: serverUrl },
+    env: { ...process.env, SPOKASTREAM_USER_DATA: path.join(temp, name), SPOKASTREAM_SERVER: serverUrl, ...(chromiumCapture ? { SPOKASTREAM_NO_NATIVE: "1" } : {}) },
   });
   const page = await app.firstWindow();
   const errors: string[] = [];
@@ -50,7 +56,7 @@ async function launch(name: string, extraArgs: string[] = []): Promise<Peer> {
     const w = BrowserWindow.getAllWindows()[0]!;
     w.setSize(1360, 860);
   });
-  return { name, app, page, errors };
+  return { name, app, child: app.process(), page, errors };
 }
 
 const steps: { name: string; ms: number; ok: boolean; detail?: string }[] = [];
@@ -58,7 +64,8 @@ async function step(name: string, fn: () => Promise<string | void>) {
   const started = Date.now();
   process.stdout.write(`… ${name}\n`);
   try {
-    const detail = (await fn()) ?? undefined;
+    let limit: ReturnType<typeof setTimeout> | undefined;
+    const detail = (await Promise.race([fn(), new Promise<never>((_, reject) => (limit = setTimeout(() => reject(new Error(`étape bloquée depuis ${STEP_LIMIT_MS / 1000} s`)), STEP_LIMIT_MS)))]).finally(() => clearTimeout(limit))) ?? undefined;
     steps.push({ name, ms: Date.now() - started, ok: true, detail });
     console.log(`  ✔ ${detail ?? ""}`);
   } catch (e) {
@@ -247,13 +254,16 @@ try {
         }),
     );
     console.log(`  interface du diffuseur : ${JSON.stringify(fluidity)}`);
+    // Les 60 i/s sont prouvés ici. Chaque trame native passe aussi par DevTools, et ce canal sature sur un PC chargé : la page reste
+    // fluide (voir ci-dessus) mais Playwright cesse de répondre, la 1.3.0 comprise. La suite du parcours tourne donc à 30 i/s.
+    if (!chromiumCapture) await alice.page.evaluate(() => (window as any).__core.updateEncoding({ fps: 30 }));
     await shot(alice, "05-en-direct-studio");
     await shot(bob, "06-spectateur");
     assert.equal(typeof settled, "number", String(settled));
-    assert.equal(after.nativeCapture, true, "la capture native doit être active");
-    assert.ok(after.stats.fps >= 48, `cadence trop basse : ${after.stats.fps} i/s`);
+    assert.equal(after.nativeCapture, !chromiumCapture, "capture attendue");
+    assert.ok(after.stats.fps >= (chromiumCapture ? 20 : 48), `cadence trop basse : ${after.stats.fps} i/s`);
     assert.equal(after.stats.hardware, true);
-    return `capture native, ${after.stats.width}x${after.stats.height}, ${after.stats.fps} i/s, ${after.stats.codec}, ${after.stats.encMs} ms/img`;
+    return `capture ${chromiumCapture ? "Chromium" : "native"}, ${after.stats.width}x${after.stats.height}, ${after.stats.fps} i/s, ${after.stats.codec}, ${after.stats.encMs} ms/img`;
   });
 
   await step("une fenêtre redimensionnée change la taille du stream sans couper", async () => {
@@ -292,6 +302,7 @@ try {
   });
 
   await step("le port des images refuse qui n'a pas le jeton", async () => {
+    if (chromiumCapture) return "sans objet : ce port n'existe qu'avec la capture native";
     const ports = spawnSync("powershell", ["-NoProfile", "-Command", `(Get-Process SpokaAudio | ForEach-Object { Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -OwningProcess $_.Id -ErrorAction SilentlyContinue }).LocalPort`], { timeout: 20_000 });
     const port = String(ports.stdout).trim().split(/\s+/)[0];
     assert.ok(port, "port du moteur introuvable");
@@ -1288,8 +1299,12 @@ try {
     if (peer.errors.length) console.log(`Erreurs ${peer.name} :\n  ${peer.errors.slice(0, 15).join("\n  ")}`);
   }
 } finally {
-  await a?.app.close().catch(() => {});
-  await b?.app.close().catch(() => {});
+  // Fermer une page saturée peut ne jamais rendre la main : passé 10 s, on arrête ce qu'on a lancé.
+  for (const peer of [a, b]) {
+    if (!peer) continue;
+    await Promise.race([peer.app.close().catch(() => {}), wait(10_000)]);
+    peer.child.kill();
+  }
   await edge?.close().catch(() => {});
   pattern.kill();
   await server.close();

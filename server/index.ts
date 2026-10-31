@@ -6,6 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { LIMITS } from "../src/shared/protocol.ts";
 import type { IceServer } from "../src/shared/protocol.ts";
 import { Hub } from "./hub.ts";
+import type { PushService } from "./push.ts";
 import type { Store } from "./store.ts";
 import { HLS_JS, ICON_192, ICON_512, VIEWER_HTML, VIEWER_JS } from "./viewer.gen.ts";
 
@@ -20,6 +21,8 @@ export interface ServerOptions {
   downloadUrl?: string;
   /** Derrière nginx : l'adresse réelle du client arrive dans X-Forwarded-For. */
   trustProxy?: boolean;
+  /** Notifications sur téléphone. Absent : le site n'en propose pas. */
+  push?: PushService;
 }
 
 export interface RunningServer {
@@ -68,10 +71,24 @@ const MANIFEST = JSON.stringify({
   ],
 });
 
-/** Rien n'est gardé hors ligne : un salon n'a de sens que connecté. Le fichier existe pour que l'installation soit proposée. */
+/** Rien n'est gardé hors ligne : un salon n'a de sens que connecté. Le fichier sert à l'installation et aux notifications. */
 const SERVICE_WORKER = `self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
 self.addEventListener("fetch", () => {});
+self.addEventListener("push", event => {
+  const data = event.data ? event.data.json() : {};
+  event.waitUntil(self.registration.showNotification(data.title || "SpokaStream", { body: data.body, icon: "/icon-192.png", badge: "/icon-192.png", tag: data.tag, data: { url: data.url } }));
+});
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+    const open = list.find(client => "focus" in client);
+    if (!open) return self.clients.openWindow(url);
+    open.navigate(url);
+    return open.focus();
+  }));
+});
 `;
 
 /** Le titre d'une vidéo : YouTube ne le donne pas à une page web, le serveur le demande à sa place. */
@@ -233,7 +250,7 @@ send({ type: "ready" });
 
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const downloadUrl = options.downloadUrl ?? "https://github.com/Spokator/SpokaStream/releases/latest";
-  const hub = new Hub({ store: options.store, serverName: options.serverName, iceServers: userId => iceServersFor(userId, options) });
+  const hub = new Hub({ store: options.store, serverName: options.serverName, push: options.push, iceServers: userId => iceServersFor(userId, options) });
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -254,6 +271,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       const gzip = /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""));
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", vary: "accept-encoding", ...(gzip ? { "content-encoding": "gzip" } : {}) });
       return res.end(gzip ? VIEWER_JS_GZIP : VIEWER_JS);
+    }
+    if (url.pathname === "/push/key" && options.push) {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ key: options.push.publicKey }));
     }
     if (url.pathname === "/hls.js") {
       const gzip = /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""));

@@ -110,6 +110,9 @@ export interface OverlaySettings {
   chat: boolean;
   viewers: boolean;
   corner: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  /** Taille des messages et du compteur, 1 = normale. */
+  size: number;
+  opacity: number;
 }
 
 /** Comment une personne arrange la scène : ces réglages sont les siens, ils ne changent rien chez les autres. */
@@ -181,6 +184,21 @@ export interface Settings {
   uiScale: number;
   /** Les bandes autour de l'image prennent ses couleurs. */
   ambient: boolean;
+  theme: "dark" | "midnight" | "black";
+  reduceMotion: boolean;
+  /** Taille du texte du chat, en pixels. */
+  chatSize: number;
+  chatCompact: boolean;
+  /** Volume général des streams et des voix, 1 = normal. */
+  streamVolume: number;
+  voiceVolume: number;
+  /** Volume des petits sons de l'interface, 1 = normal. */
+  sfxVolume: number;
+  /** Plafond de définition en ouvrant un stream. 0 : tout ce que le diffuseur envoie. */
+  watchQuality: number;
+  notifyMentions: boolean;
+  /** Aucune notification pendant qu'on diffuse : elles finiraient à l'image. */
+  quietWhileLive: boolean;
   scenes: Scene[];
   /** Clé de l'entrée OBS : elle ne quitte jamais ce PC. */
   obsKey: string;
@@ -305,6 +323,8 @@ export interface SpokaApi {
   selfPid: number;
   testMode: boolean;
   forceRelay: boolean;
+  /** Essais seulement : la capture de Chromium, qui ne sature pas le canal de DevTools. */
+  noNative: boolean;
   getSettings(): Promise<Settings>;
   setSettings(patch: Partial<Settings>): Promise<Settings>;
   onSettings(cb: (settings: Settings) => void): () => void;
@@ -357,6 +377,9 @@ export interface SpokaApi {
   /** Ouvre la page à diffuser. La capture qui suit vise cette page, et rien d'autre. */
   webOpen(url: string): Promise<boolean>;
   webClose(): void;
+  /** Revient aux réglages d'origine en gardant le profil, les salons, les scènes et les clés. */
+  resetSettings(): Promise<Settings>;
+  openDataFolder(): void;
   onWebClosed(cb: () => void): () => void;
   reveal(path: string): void;
   pickFolder(): Promise<string | null>;
@@ -375,6 +398,8 @@ export interface SpokaApi {
   logLine(line: string): void;
   diagnostics(): Promise<string>;
 }
+
+export const DEFAULT_SERVER = "wss://stream.chretieno.fr/ws";
 
 // Un raccourci global s'empare de la combinaison partout : Ctrl+Maj+M est celui de Discord, Ctrl+Maj+P celui de VS Code.
 export const DEFAULT_HOTKEYS: HotkeyMap = {

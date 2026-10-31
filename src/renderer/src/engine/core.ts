@@ -20,7 +20,7 @@ import { ObsIngest } from "./obs.ts";
 import { Publisher } from "./publisher.ts";
 import type { EncodingTarget } from "./publisher.ts";
 import { Recorder, saveClipFile, saveVideoFrame } from "./recorder.ts";
-import { playSound } from "./sfx.ts";
+import { playSound, setSfxVolume } from "./sfx.ts";
 import { RequestError, Signal } from "./signal.ts";
 import { Subscription } from "./subscription.ts";
 import { canPlay } from "./videoProbe.ts";
@@ -66,6 +66,11 @@ const SAME_EVENT_MS = 3000;
 const ASK_COOLDOWN_MS = 10_000;
 const ASK_TIMEOUT_MS = 30_000;
 const FIT_DELAY_MS = 1500;
+const START_QUALITIES = [
+  { maxHeight: 1080, maxKbps: 12000 },
+  { maxHeight: 720, maxKbps: 5000 },
+  { maxHeight: 480, maxKbps: 1500 },
+];
 /** Hauteur réelle de l'image à l'écran, et ce qu'il suffit de recevoir pour l'afficher nettement. */
 const FIT_TIERS = [
   { upTo: 300, maxHeight: 360, maxKbps: 900 },
@@ -139,6 +144,7 @@ class Core {
     const settings = await api.getSettings();
     set({ settings, audioEngine: await api.audioStatus(), update: await api.updateStatus() });
     this.playback.setOutput(settings.outputId);
+    this.applyVolumes(settings);
     useApp.subscribe(state => {
       const solo = soloOf(state);
       if (solo === this.lastSolo) return;
@@ -202,6 +208,7 @@ class Core {
       this.connect();
     }
     if (patch.outputId !== undefined) this.playback.setOutput(next.outputId);
+    this.applyVolumes(next);
     if (patch.voiceMode !== undefined || patch.pttKey !== undefined) {
       this.applyPttWatch();
       this.applyTransmit();
@@ -358,7 +365,7 @@ class Core {
       statuses[status.id] = status;
       const seen = this.lastLive.get(status.id);
       const now = new Set(status.live.map(l => l.ownerName));
-      if (seen && s.notifyLive && (status.id !== get().room?.id || !document.hasFocus())) {
+      if (seen && s.notifyLive && !this.quiet() && (status.id !== get().room?.id || !document.hasFocus())) {
         for (const name of now) {
           if (!seen.has(name)) api.notify({ title: `${name} est en direct`, body: `Dans ${status.name}`, roomId: status.id });
         }
@@ -383,7 +390,7 @@ class Core {
     else if (mentioned) this.log("people", `${message.authorName} t'a mentionné : ${message.text.slice(0, 60)}`);
     if (get().panelTab !== "chat" || !s.chatPanelOpen) set(state => ({ unread: state.unread + 1 }));
     playSound(mentioned ? "live" : "message", s.soundEffects && (mentioned || !document.hasFocus()));
-    if ((s.notifyMessages || mentioned) && !document.hasFocus()) api.notify({ title: mentioned ? `${message.authorName} t'a mentionné` : message.authorName, body: message.text.slice(0, 140), roomId: get().room?.id });
+    if ((s.notifyMessages || (mentioned && s.notifyMentions)) && !this.quiet() && !document.hasFocus()) api.notify({ title: mentioned ? `${message.authorName} t'a mentionné` : message.authorName, body: message.text.slice(0, 140), roomId: get().room?.id });
     if (this.publisher) api.overlaySend({ type: "chat", name: message.authorName, color: message.authorColor, text: message.text.slice(0, 200) });
   }
 
@@ -444,6 +451,36 @@ class Core {
     const others = get().room?.streams.filter(s => s.ownerId !== get().userId) ?? [];
     if (settings.wall.watchAll) return others.forEach(s => void this.watch(s.id));
     if (!this.subs.size && others[0] && !get().room?.together) void this.watch(others[0].id);
+  }
+
+  private quiet() {
+    return !!get().publish && !!get().settings?.quietWhileLive;
+  }
+
+  private applyVolumes(settings: Settings) {
+    this.playback.setBus("stream", settings.streamVolume);
+    this.playback.setBus("voice", settings.voiceVolume);
+    setSfxVolume(settings.sfxVolume);
+  }
+
+  /** Réglages de retour d'origine : le micro et le reste du moteur suivent comme après un changement à la main. */
+  async resetSettings() {
+    const next = await api.resetSettings();
+    set({ settings: next });
+    this.playback.setOutput(next.outputId);
+    this.applyVolumes(next);
+  }
+
+  /** Montre l'overlay quelques secondes, sans avoir à lancer un stream. */
+  async testOverlay() {
+    if (get().publish) return toast("L'overlay est déjà affiché pendant ton stream.", "info");
+    await api.overlayOpen({ settings: get().settings!.overlay });
+    setTimeout(() => {
+      api.overlaySend({ type: "viewers", count: 3, names: ["Pinoy", "Léa", "Sam"] });
+      api.overlaySend({ type: "chat", name: "Pinoy", color: "#34d399", text: "Voilà à quoi ressemble un message" });
+      api.overlaySend({ type: "reaction", emoji: "🔥", name: "Léa" });
+    }, 900);
+    setTimeout(() => api.overlayClose(), 6000);
   }
 
   /** Ouvre tous les streams du salon, y compris quand on diffuse soi-même. */
@@ -659,7 +696,8 @@ class Core {
       this.signal.send({ t: "rtc", to: stream.ownerId, session: streamId, data }),
     );
     this.subs.set(streamId, sub);
-    const quality: ViewerQuality = { ...DEFAULT_VIEWER_QUALITY };
+    const { maxHeight, maxKbps } = START_QUALITIES.find(q => q.maxHeight === settings.watchQuality) ?? { maxHeight: 0, maxKbps: 0 };
+    const quality: ViewerQuality = { ...DEFAULT_VIEWER_QUALITY, maxHeight, maxKbps };
     const volume = savedVolume(stream.ownerId);
     set(s => ({
       subs: { ...s.subs, [streamId]: { streamId, ownerId: stream.ownerId, state: "connecting", media: sub.media, camera: sub.camera, volume, muted: false, quality, stats: null, hasAudio: false } },

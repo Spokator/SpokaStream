@@ -4589,3 +4589,110 @@ body.regie-window {
   width: 280px;
   padding: 10px;
 }
+
+:root[data-theme="midnight"] {
+  --bg: #0a1020;
+  --surface: #101a30;
+  --surface-2: #16223c;
+  --surface-3: #1e2c4a;
+  --surface-4: #29395c;
+}
+
+:root[data-theme="black"] {
+  --bg: #000;
+  --surface: #0a0a0d;
+  --surface-2: #121216;
+  --surface-3: #1b1b21;
+  --surface-4: #26262e;
+}
+
+:root[data-motion="off"] *,
+:root[data-motion="off"] *::before,
+:root[data-motion="off"] *::after {
+  transition: none !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+.chat-list {
+  font-size: var(--chat-size, 13.5px);
+}
+
+:root[data-chat="compact"] .chat-list .chat-message {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+.swatch-custom {
+  position: relative;
+  overflow: hidden;
+  background: conic-gradient(#ef4444, #f59e0b, #34d399, #22d3ee, #7c5cff, #f472b6, #ef4444);
+  cursor: pointer;
+}
+
+.swatch-custom input,
+.accent-custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.accent-custom {
+  position: relative;
+  display: block;
+  width: 30px;
+  height: 30px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: conic-gradient(#ef4444, #f59e0b, #34d399, #22d3ee, #7c5cff, #f472b6, #ef4444);
+  cursor: pointer;
+}
+
+.profile-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.profile-preview > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.profile-preview > span span {
+  color: var(--muted);
+}
+
+.invite-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 248px;
+  padding: 14px;
+  text-align: center;
+}
+
+.invite-menu img {
+  width: 196px;
+  height: 196px;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+.invite-menu small {
+  color: var(--muted);
+}
+
+.wall-item.is-small .wall-grip {
+  left: auto;
+  right: 6px;
+  transform: none;
+}

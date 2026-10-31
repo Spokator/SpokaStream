@@ -79,7 +79,7 @@ export function OverlayView() {
         </div>
       )}
       {settings && (
-        <div className={`overlay-corner ${settings.corner}`}>
+        <div className={`overlay-corner ${settings.corner}`} style={{ zoom: settings.size ?? 1, opacity: settings.opacity ?? 1 }}>
           {settings.viewers && (
             <div className="overlay-viewers">
               <i />

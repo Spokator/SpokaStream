@@ -37,7 +37,7 @@ export interface OpenedSource {
 const NATIVE_START_TIMEOUT_MS = 3000;
 
 async function openNative(source: CaptureSource, fps: number, maxHeight: number): Promise<OpenedSource | null> {
-  if (!("MediaStreamTrackGenerator" in window)) return null;
+  if (!("MediaStreamTrackGenerator" in window) || window.spoka.noNative) return null;
   const started = await window.spoka.startNativeVideo({ sourceId: source.id, displayId: source.displayId, fps, maxHeight });
   if (!started) return null;
 

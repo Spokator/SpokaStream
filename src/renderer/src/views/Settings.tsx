@@ -1,13 +1,14 @@
-import { Bell, Check, Copy, Download, FolderOpen, Gauge, Info, Keyboard, Layers, Mic, Palette, Radio, Server, User } from "lucide-react";
+import { Bell, Check, Copy, Download, ExternalLink, FolderOpen, Gauge, Info, Keyboard, Layers, Mic, Palette, Radio, Server, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { HostStatus, HotkeyMap, LatencyMode, Settings } from "@shared/ipc.ts";
+import { DEFAULT_HOTKEYS, DEFAULT_SERVER } from "@shared/ipc.ts";
+import type { CodecChoice, HostStatus, HotkeyMap, LatencyMode, Settings, VideoPriority, WallMode } from "@shared/ipc.ts";
 import { core } from "../engine/core.ts";
 import { cachedBench, measureEncoders, rankResults } from "../engine/encoders.ts";
 import type { BenchResult } from "../engine/encoders.ts";
 import { set, toast, useApp } from "../state/store.ts";
 import type { SettingsSection } from "../state/store.ts";
-import { Button, Field, Meter, Segmented, Select, Toggle } from "../ui/kit.tsx";
-import { BITRATES, FPS_OPTIONS, RESOLUTIONS } from "./GoLive.tsx";
+import { Avatar, Button, Field, Meter, Segmented, Select, Slider, Toggle } from "../ui/kit.tsx";
+import { BITRATES, CODECS, FPS_OPTIONS, RESOLUTIONS } from "./GoLive.tsx";
 import { ProfileEditor } from "./Onboarding.tsx";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: typeof User }[] = [
@@ -40,6 +41,21 @@ function useDevices(kind: MediaDeviceKind) {
     return () => navigator.mediaDevices.removeEventListener("devicechange", load);
   }, [kind]);
   return devices;
+}
+
+/** Un petit son dans la sortie choisie, pour vérifier que c'est la bonne. */
+async function testOutput(deviceId: string) {
+  const context = new AudioContext() as AudioContext & { setSinkId?: (id: string) => Promise<void> };
+  if (deviceId !== "default") await context.setSinkId?.(deviceId).catch(() => {});
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.frequency.value = 660;
+  gain.gain.value = 0.12;
+  gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.6);
+  oscillator.connect(gain).connect(context.destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + 0.6);
+  setTimeout(() => void context.close(), 800);
 }
 
 /** Pour savoir si le micro marche sans rejoindre de vocal. */
@@ -159,12 +175,21 @@ export function HotkeyInput({ value, onChange }: { value: string; onChange: (acc
 
 function ProfileSection({ s }: { s: Settings }) {
   const [profile, setProfile] = useState(s.profile);
+  const changed = JSON.stringify({ ...profile, name: profile.name.trim() }) !== JSON.stringify(s.profile);
   return (
     <>
       <h1>Profil</h1>
+      <p className="muted-text">Pas de compte : ton profil vit sur ce PC. Change-le quand tu veux, tes amis voient le nouveau tout de suite.</p>
       <ProfileEditor {...profile} onChange={setProfile} />
-      <Button variant="primary" disabled={!profile.name.trim()} onClick={() => void core.updateProfile({ ...profile, name: profile.name.trim() }).then(() => toast("Profil enregistré", "success"))}>
-        Enregistrer
+      <div className="profile-preview" aria-label="Aperçu">
+        <Avatar name={profile.name || "?"} color={profile.color} src={profile.avatar} size={34} />
+        <span>
+          <b style={{ color: profile.color }}>{profile.name || "Ton pseudo"}</b>
+          <span>C'est comme ça que tes amis te voient dans le chat.</span>
+        </span>
+      </div>
+      <Button variant="primary" disabled={!profile.name.trim() || !changed} onClick={() => void core.updateProfile({ ...profile, name: profile.name.trim() }).then(() => toast("Profil enregistré", "success"))}>
+        {changed ? "Enregistrer" : "Enregistré"}
       </Button>
     </>
   );
@@ -176,6 +201,18 @@ function AppearanceSection({ s }: { s: Settings }) {
   return (
     <>
       <h1>Apparence</h1>
+      <Field label="Thème">
+        <Segmented
+          label="Thème"
+          value={s.theme}
+          options={[
+            { value: "dark", label: "Sombre" },
+            { value: "midnight", label: "Bleu nuit" },
+            { value: "black", label: "Noir pur" },
+          ]}
+          onChange={theme => update({ theme })}
+        />
+      </Field>
       <Field label="Couleur d'accent">
         <div className="accent-list" role="radiogroup" aria-label="Couleur d'accent">
           {ACCENTS.map(accent => (
@@ -183,6 +220,9 @@ function AppearanceSection({ s }: { s: Settings }) {
               {s.accent === accent && <Check size={15} />}
             </button>
           ))}
+          <label className="accent-custom" title="Ta propre couleur" style={ACCENTS.includes(s.accent) ? undefined : { background: s.accent }}>
+            <input type="color" aria-label="Choisir une autre couleur d'accent" value={s.accent} onChange={e => update({ accent: e.target.value })} />
+          </label>
         </div>
       </Field>
       <Field label="Taille de l'interface">
@@ -198,8 +238,27 @@ function AppearanceSection({ s }: { s: Settings }) {
           onChange={uiScale => update({ uiScale })}
         />
       </Field>
+      <Field label="Texte du chat">
+        <Segmented
+          label="Texte du chat"
+          value={s.chatSize}
+          options={[
+            { value: 12.5, label: "Petit" },
+            { value: 13.5, label: "Normal" },
+            { value: 15, label: "Grand" },
+            { value: 17, label: "Très grand" },
+          ]}
+          onChange={chatSize => update({ chatSize })}
+        />
+      </Field>
+      <Field label="Chat compact" hint="Moins d'espace entre les messages">
+        <Toggle label="Chat compact" checked={s.chatCompact} onChange={chatCompact => update({ chatCompact })} />
+      </Field>
       <Field label="Ambiance" hint="Les bandes autour de l'image prennent ses couleurs">
         <Toggle label="Ambiance" checked={s.ambient} onChange={ambient => update({ ambient })} />
+      </Field>
+      <Field label="Réduire les animations">
+        <Toggle label="Réduire les animations" checked={s.reduceMotion} onChange={reduceMotion => update({ reduceMotion })} />
       </Field>
     </>
   );
@@ -217,6 +276,13 @@ function VoiceSection({ s }: { s: Settings }) {
       <MicTest deviceId={s.micId} />
       <Field label="Sortie" hint="Pour la voix et le son des streams">
         <Select label="Sortie" value={s.outputId} options={outputs} onChange={outputId => update({ outputId })} />
+      </Field>
+      <Button onClick={() => void testOutput(s.outputId)}>Tester la sortie</Button>
+      <Field label="Volume des streams" hint={`${Math.round(s.streamVolume * 100)} %. Chaque stream garde son propre réglage en plus`}>
+        <Slider label="Volume des streams" value={s.streamVolume} min={0} max={1.5} step={0.05} onChange={streamVolume => update({ streamVolume })} />
+      </Field>
+      <Field label="Volume des voix" hint={`${Math.round(s.voiceVolume * 100)} %`}>
+        <Slider label="Volume des voix" value={s.voiceVolume} min={0} max={1.5} step={0.05} onChange={voiceVolume => update({ voiceVolume })} />
       </Field>
       <Field label="Mode du micro">
         <Segmented
@@ -315,6 +381,23 @@ function StreamSection({ s }: { s: Settings }) {
           onChange={maxViewers => setStream({ maxViewers })}
         />
       </Field>
+      <Field label="Codec par défaut" hint="Automatique choisit le meilleur que ton PC tient">
+        <Select<CodecChoice> label="Codec" value={s.stream.codec} options={CODECS} onChange={codec => setStream({ codec })} />
+      </Field>
+      <Field label="Priorité par défaut">
+        <Segmented<VideoPriority>
+          label="Priorité"
+          value={s.stream.priority}
+          options={[
+            { value: "motion", label: "Fluidité" },
+            { value: "detail", label: "Netteté" },
+          ]}
+          onChange={priority => setStream({ priority })}
+        />
+      </Field>
+      <Field label="Qualité du son">
+        <Select label="Qualité du son" value={s.stream.audioKbps} options={[128, 192, 256, 320, 510].map(value => ({ value, label: `${value} kb/s` }))} onChange={audioKbps => setStream({ audioKbps })} />
+      </Field>
       <Field label="Égaliser le volume du stream" hint="Remonte un son trop faible, sans jamais saturer">
         <Toggle label="Égaliser le volume" checked={s.stream.normalizeAudio} onChange={normalizeAudio => setStream({ normalizeAudio })} />
       </Field>
@@ -336,6 +419,12 @@ function StreamSection({ s }: { s: Settings }) {
       </Field>
       <Field label="Prendre la main" hint="Un ami peut demander à jouer à ta place. Rien ne se passe sans ton accord">
         <Toggle label="Accepter les demandes de main" checked={s.stream.allowControl} onChange={allowControl => setStream({ allowControl })} />
+      </Field>
+      <Field label="Enregistrer chaque stream" hint="L'enregistrement démarre avec le direct">
+        <Toggle label="Enregistrer chaque stream" checked={s.stream.autoRecord} onChange={autoRecord => setStream({ autoRecord })} />
+      </Field>
+      <Field label="Ouvrir la régie au lancement" hint="Sinon, elle reste à un clic dans la barre de direct">
+        <Toggle label="Ouvrir la régie au lancement" checked={s.regie.auto} onChange={auto => update({ regie: { ...s.regie, auto } })} />
       </Field>
       <Field label="Dossier des enregistrements" hint={s.recordingsDir}>
         <Button
@@ -369,8 +458,48 @@ function WatchSection({ s }: { s: Settings }) {
           onChange={latency => core.setLatency(latency)}
         />
       </Field>
-      <Field label="Regarder automatiquement" hint="Ouvre le premier stream du salon dès que tu arrives">
+      <Field label="Qualité à l'ouverture" hint="Tu peux la changer sur chaque stream. Une connexion limitée préfère 720p">
+        <Select
+          label="Qualité à l'ouverture"
+          value={s.watchQuality}
+          options={[
+            { value: 0, label: "Maximum" },
+            { value: 1080, label: "1080p" },
+            { value: 720, label: "720p" },
+            { value: 480, label: "480p économe" },
+          ]}
+          onChange={watchQuality => update({ watchQuality })}
+        />
+      </Field>
+      <Field label="Regarder automatiquement" hint="Ouvre un stream dès que tu arrives dans le salon">
         <Toggle label="Regarder automatiquement" checked={s.autoWatch} onChange={autoWatch => update({ autoWatch })} />
+      </Field>
+      <h2>Plusieurs streams à la fois</h2>
+      <Field label="Disposition">
+        <Select<WallMode>
+          label="Disposition"
+          value={s.wall.mode}
+          options={[
+            { value: "focus", label: "Un grand, bandeau en bas" },
+            { value: "side", label: "Un grand, colonne à droite" },
+            { value: "grid", label: "Grille" },
+            { value: "pip", label: "Incrustation" },
+            { value: "free", label: "Libre" },
+          ]}
+          onChange={mode => core.setWallMode(mode)}
+        />
+      </Field>
+      <Field label="Ouvrir tous les streams du salon" hint="Sinon, seulement le premier">
+        <Toggle label="Ouvrir tous les streams du salon" checked={s.wall.watchAll} onChange={watchAll => core.updateWall({ watchAll })} />
+      </Field>
+      <Field label="Le son suit l'image en grand" hint="Les autres streams restent muets">
+        <Toggle label="Le son suit l'image en grand" checked={s.wall.audioFollows} onChange={audioFollows => core.updateWall({ audioFollows })} />
+      </Field>
+      <Field label="Adapter la qualité à la taille" hint="Une petite image reçoit une petite définition : le diffuseur et ta connexion respirent">
+        <Toggle label="Adapter la qualité à la taille" checked={s.wall.fitQuality} onChange={fitQuality => core.updateWall({ fitQuality })} />
+      </Field>
+      <Field label="Voir mon retour quand je diffuse" hint="Le masquer économise un peu de carte graphique">
+        <Toggle label="Voir mon retour quand je diffuse" checked={s.wall.showOwn} onChange={showOwn => core.updateWall({ showOwn })} />
       </Field>
     </>
   );
@@ -394,6 +523,21 @@ function OverlaySection({ s }: { s: Settings }) {
       <Field label="Nombre de spectateurs">
         <Toggle label="Nombre de spectateurs" checked={s.overlay.viewers} onChange={viewers => setOverlay({ viewers })} />
       </Field>
+      <Field label="Taille">
+        <Segmented
+          label="Taille de l'overlay"
+          value={s.overlay.size}
+          options={[
+            { value: 0.85, label: "Petite" },
+            { value: 1, label: "Normale" },
+            { value: 1.25, label: "Grande" },
+          ]}
+          onChange={size => setOverlay({ size })}
+        />
+      </Field>
+      <Field label="Opacité" hint={`${Math.round(s.overlay.opacity * 100)} %`}>
+        <Slider label="Opacité de l'overlay" value={s.overlay.opacity} min={0.4} max={1} step={0.05} onChange={opacity => setOverlay({ opacity })} />
+      </Field>
       <Field label="Position">
         <Select
           label="Position"
@@ -407,6 +551,7 @@ function OverlaySection({ s }: { s: Settings }) {
           onChange={corner => setOverlay({ corner })}
         />
       </Field>
+      <Button onClick={() => void core.testOverlay()}>Tester l'overlay</Button>
     </>
   );
 }
@@ -426,11 +571,15 @@ function HotkeysSection({ s }: { s: Settings }) {
     <>
       <h1>Raccourcis</h1>
       <p className="muted-text">Ils fonctionnent partout, même en plein jeu. Dans l'application, appuie sur ? pour voir tous les autres.</p>
-      {(Object.keys(HOTKEY_LABELS) as (keyof HotkeyMap)[]).map(action => (
-        <Field key={action} label={HOTKEY_LABELS[action]}>
-          <HotkeyInput value={s.hotkeys[action]} onChange={accelerator => update({ hotkeys: { ...s.hotkeys, [action]: accelerator } })} />
-        </Field>
-      ))}
+      {(Object.keys(HOTKEY_LABELS) as (keyof HotkeyMap)[]).map(action => {
+        const twin = (Object.keys(HOTKEY_LABELS) as (keyof HotkeyMap)[]).find(other => other !== action && s.hotkeys[other] && s.hotkeys[other] === s.hotkeys[action]);
+        return (
+          <Field key={action} label={HOTKEY_LABELS[action]} hint={twin ? `Déjà pris par « ${HOTKEY_LABELS[twin]} » : un seul des deux marchera` : undefined}>
+            <HotkeyInput value={s.hotkeys[action]} onChange={accelerator => update({ hotkeys: { ...s.hotkeys, [action]: accelerator } })} />
+          </Field>
+        );
+      })}
+      <Button onClick={() => update({ hotkeys: DEFAULT_HOTKEYS })}>Rétablir les raccourcis d'origine</Button>
     </>
   );
 }
@@ -442,12 +591,24 @@ function NotificationsSection({ s }: { s: Settings }) {
       <Field label="Quand un ami lance un stream" hint="Même si SpokaStream est dans la zone de notification">
         <Toggle label="Streams" checked={s.notifyLive} onChange={notifyLive => update({ notifyLive })} />
       </Field>
-      <Field label="Nouveaux messages" hint="Quand la fenêtre n'est pas au premier plan">
+      <Field label="Quand quelqu'un te mentionne" hint="@toi ou @tous">
+        <Toggle label="Mentions" checked={s.notifyMentions} onChange={notifyMentions => update({ notifyMentions })} />
+      </Field>
+      <Field label="Tous les messages" hint="Quand la fenêtre n'est pas au premier plan">
         <Toggle label="Messages" checked={s.notifyMessages} onChange={notifyMessages => update({ notifyMessages })} />
       </Field>
+      <Field label="Silence pendant que je diffuse" hint="Une notification de Windows finirait à l'image">
+        <Toggle label="Silence pendant que je diffuse" checked={s.quietWhileLive} onChange={quietWhileLive => update({ quietWhileLive })} />
+      </Field>
+      <Button onClick={() => window.spoka.notify({ title: "SpokaStream", body: "Les notifications fonctionnent." })}>Tester une notification</Button>
       <Field label="Petits sons de l'interface">
         <Toggle label="Sons" checked={s.soundEffects} onChange={soundEffects => update({ soundEffects })} />
       </Field>
+      {s.soundEffects && (
+        <Field label="Volume des petits sons" hint={`${Math.round(s.sfxVolume * 100)} %`}>
+          <Slider label="Volume des petits sons" value={s.sfxVolume} min={0.1} max={2} step={0.1} onChange={sfxVolume => update({ sfxVolume })} />
+        </Field>
+      )}
       <h2>Au démarrage</h2>
       <Field label="Lancer avec Windows">
         <Toggle label="Lancer avec Windows" checked={s.startWithWindows} onChange={startWithWindows => update({ startWithWindows })} />
@@ -460,6 +621,13 @@ function NotificationsSection({ s }: { s: Settings }) {
       </Field>
     </>
   );
+}
+
+/** On peut coller l'adresse du site telle quelle : http(s), sans /ws, ou le nom seul. */
+function serverAddress(raw: string) {
+  const text = raw.trim().replace(/\/+$/, "");
+  const full = /^[a-z]+:\/\//i.test(text) ? text.replace(/^http/i, "ws") : `wss://${text}`;
+  return /\/ws$/.test(full) ? full : `${full}/ws`;
 }
 
 function ServerSection({ s }: { s: Settings }) {
@@ -488,7 +656,14 @@ function ServerSection({ s }: { s: Settings }) {
         <span className="label">Adresse du serveur</span>
         <div className="row-gap">
           <input className="input" value={url} spellCheck={false} onChange={e => setUrl(e.target.value)} />
-          <Button disabled={url === s.serverUrl || !url.trim()} onClick={() => update({ serverUrl: url.trim() })}>
+          <Button
+            disabled={url === s.serverUrl || !url.trim()}
+            onClick={() => {
+              const serverUrl = serverAddress(url);
+              setUrl(serverUrl);
+              update({ serverUrl });
+            }}
+          >
             Connecter
           </Button>
         </div>
@@ -496,6 +671,16 @@ function ServerSection({ s }: { s: Settings }) {
       <Field label="État">
         <span className="status-text">{connection === "online" ? `Connecté${hasRelay ? ", relais disponible" : ", sans relais"}` : connection === "connecting" ? "Connexion…" : "Hors ligne"}</span>
       </Field>
+      {s.serverUrl !== DEFAULT_SERVER && (
+        <Button
+          onClick={() => {
+            setUrl(DEFAULT_SERVER);
+            update({ serverUrl: DEFAULT_SERVER });
+          }}
+        >
+          Revenir au serveur SpokaStream
+        </Button>
+      )}
       <h2>Héberger sur ce PC</h2>
       <p className="muted-text">Pour jouer en réseau local sans aucun serveur. Tes amis sur le même réseau entrent l'adresse affichée ici.</p>
       {host?.running ? (
@@ -521,6 +706,8 @@ function ServerSection({ s }: { s: Settings }) {
 
 function AboutSection() {
   const updateState = useApp(s => s.update);
+  const engine = useApp(s => s.audioEngine);
+  const [confirmReset, setConfirmReset] = useState(false);
   const status =
     updateState.state === "ready"
       ? `Version ${updateState.version} prête`
@@ -560,7 +747,35 @@ function AboutSection() {
         >
           Copier le diagnostic
         </Button>
+        <Button icon={<ExternalLink size={15} />} onClick={() => window.spoka.openExternal("https://github.com/Spokator/SpokaStream/releases")}>
+          Nouveautés
+        </Button>
       </div>
+      <h2>Le moteur audio</h2>
+      <p className="muted-text">SpokaAudio est le petit programme installé avec SpokaStream. C'est lui qui capte le son d'une seule application au lieu de tout le PC, et qui donne les images à haute cadence. Il démarre et s'arrête tout seul : il n'y a rien à lancer ni à régler. Il apparaît dans le Gestionnaire des tâches sous ce nom.</p>
+      <Field label="État">
+        <span className="status-text">{engine === "ready" ? "Prêt" : engine === "starting" ? "Démarrage…" : "Indisponible : les applications ne pourront pas être captées séparément"}</span>
+      </Field>
+      <h2>Données</h2>
+      <p className="muted-text">Tes réglages et ton identité restent sur ce PC. Le serveur ne garde que ton pseudo, ta couleur et l'historique des salons.</p>
+      <div className="row-gap">
+        <Button icon={<FolderOpen size={15} />} onClick={() => window.spoka.openDataFolder()}>
+          Ouvrir le dossier des données
+        </Button>
+        {confirmReset ? (
+          <>
+            <Button variant="danger" onClick={() => void core.resetSettings().then(() => (setConfirmReset(false), toast("Réglages rétablis", "success")))}>
+              Oui, tout rétablir
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirmReset(false)}>
+              Annuler
+            </Button>
+          </>
+        ) : (
+          <Button onClick={() => setConfirmReset(true)}>Rétablir les réglages d'origine</Button>
+        )}
+      </div>
+      <p className="muted-text">Ton profil, tes salons, tes scènes et tes clés sont gardés.</p>
     </>
   );
 }

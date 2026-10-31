@@ -8,7 +8,7 @@ function subscribe<A extends unknown[]>(channel: string, cb: (...args: A) => voi
   return () => void ipcRenderer.removeListener(channel, listener);
 }
 
-const info = ipcRenderer.sendSync("sync:info") as Pick<SpokaApi, "version" | "isPackaged" | "selfPid" | "testMode" | "forceRelay">;
+const info = ipcRenderer.sendSync("sync:info") as Pick<SpokaApi, "version" | "isPackaged" | "selfPid" | "testMode" | "noNative" | "forceRelay">;
 
 // Un MessagePort ne passe pas par contextBridge : il rejoint la page par postMessage, seule voie prévue par Electron.
 ipcRenderer.on("audio:port", (event, message: { captureId: number }) => {
@@ -60,6 +60,8 @@ const api: SpokaApi = {
   videoInfo: url => ipcRenderer.invoke("video:info", url),
   webOpen: url => ipcRenderer.invoke("web:open", url),
   webClose: () => ipcRenderer.send("web:close"),
+  resetSettings: () => ipcRenderer.invoke("settings:reset"),
+  openDataFolder: () => ipcRenderer.send("open-data"),
   onWebClosed: cb => subscribe("web:closed", cb),
   recordStart: fileName => ipcRenderer.invoke("record:start", fileName),
   recordWrite: (id, chunk) => ipcRenderer.invoke("record:write", id, chunk),

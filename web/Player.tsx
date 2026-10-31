@@ -1,10 +1,10 @@
 /** @jsxImportSource preact */
-import { Camera, Captions, Gauge, Maximize, MessageSquare, Minimize, MousePointer2, Pause, PictureInPicture2, Play, Radio, RotateCcw, RotateCw, SkipForward, Square, Users, Volume2, VolumeX } from "lucide-preact";
+import { Camera, Captions, Gauge, Maximize, MessageSquare, Minimize, MousePointer2, Pause, PictureInPicture2, Play, Radio, RotateCcw, RotateCw, SkipForward, Square, Users, Volume2, VolumeX, X } from "lucide-preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { DEFAULT_CAMERA_LAYOUT } from "@shared/protocol.ts";
 import { StrokeCanvas } from "../src/renderer/src/ui/strokes.ts";
 import type { StrokeEvent } from "./client.ts";
-import { audioOnly, camera, canShare, capture, frame, loadSubtitles, nameOf, newStrokeId, playerClock, react, REACTIONS, sendStroke, setTogetherVolume, streamShown, strokes, tapped, togetherPlay, togetherPosition, togetherSeek, togetherSkip, togetherSkipBy, togetherStop, video } from "./client.ts";
+import { audioOnly, camera, canShare, capture, closeMini, floatReaction, frame, liveChoices, loadSubtitles, miniVideo, nameOf, newStrokeId, playerClock, react, REACTIONS, sendStroke, setTogetherVolume, streamShown, strokes, swapMini, swipeStream, tapped, togetherPlay, togetherPosition, togetherSeek, togetherSkip, togetherSkipBy, togetherStop, video } from "./client.ts";
 import { get, set, TOGETHER, useApp } from "./store.ts";
 
 const HIDE_MS = 3500;
@@ -12,6 +12,9 @@ const MAX_ZOOM = 5;
 const TAP_MS = 260;
 const TAP_MOVE = 12;
 const STROKE_MS = 40;
+const SWIPE_MIN = 70;
+const SWIPE_MS = 600;
+const SKIP_SECONDS = 10;
 
 const pipSupported = () => document.pictureInPictureEnabled || "webkitSetPresentationMode" in video;
 
@@ -96,6 +99,40 @@ function TogetherBar() {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Le second stream, à portée de pouce : le toucher l'échange avec le grand. */
+function MiniView() {
+  const mini = useApp(s => s.mini);
+  const host = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (mini) host.current?.append(miniVideo);
+  }, [mini]);
+  if (!mini) return null;
+  return (
+    <div class="mini-view">
+      <button type="button" class="mini-swap" aria-label="Mettre ce stream en grand" onClick={swapMini}>
+        <span ref={host} class="mini-host" />
+      </button>
+      <button type="button" class="mini-close" aria-label="Fermer la mini-vue" onClick={closeMini}>
+        <X size={13} />
+      </button>
+    </div>
+  );
+}
+
+function LiveDots() {
+  const shown = useApp(s => s.shown);
+  const count = useApp(s => (s.room?.streams.filter(x => x.ownerId !== s.userId).length ?? 0) + Number(!!s.room?.together));
+  if (count < 2) return null;
+  const list = liveChoices();
+  return (
+    <div class="live-dots" aria-hidden="true">
+      {list.map(id => (
+        <i key={id} class={id === shown ? "is-on" : ""} />
+      ))}
     </div>
   );
 }
@@ -254,10 +291,24 @@ export function Player() {
       stroke.current = null;
       return;
     }
-    if (!pointer || performance.now() - pointer.at > TAP_MS || Math.hypot(e.clientX - pointer.startX, e.clientY - pointer.startY) > TAP_MOVE) return;
+    if (!pointer) return;
+    const dx = e.clientX - pointer.startX;
+    const dy = e.clientY - pointer.startY;
+    if (zoom.scale === 1 && performance.now() - pointer.at < SWIPE_MS && Math.abs(dx) > SWIPE_MIN && Math.abs(dx) > Math.abs(dy) * 2) return swipeStream(dx < 0 ? 1 : -1);
+    if (performance.now() - pointer.at > TAP_MS || Math.hypot(dx, dy) > TAP_MOVE) return;
     const now = performance.now();
     if (now - lastTap.current < 300) {
       lastTap.current = 0;
+      // Dans une Watch Party, le double appui sur un bord saute comme sur YouTube.
+      if (isTogether) {
+        const rect = stage.current!.getBoundingClientRect();
+        const side = (e.clientX - rect.left) / rect.width;
+        if (canShare() && (side < 0.35 || side > 0.65)) {
+          togetherSkipBy(side < 0.35 ? -SKIP_SECONDS : SKIP_SECONDS);
+          floatReaction(side < 0.35 ? "⏪" : "⏩");
+        }
+        return;
+      }
       return setZoom(z => (z.scale > 1 ? { scale: 1, x: 0, y: 0 } : clampZoom(2.2, 0, 0)));
     }
     lastTap.current = now;
@@ -285,8 +336,13 @@ export function Player() {
         </div>
       </div>
       <div class="frame-host" ref={frameHost} />
+      {/* Le lecteur reste touchable au centre : un téléphone peut y demander un appui pour lancer le son. Les bords gardent les gestes. */}
+      {isTogether && <div class="party-zone is-left" />}
+      {isTogether && <div class="party-zone is-right" />}
       {audioOnly() && !isTogether && <div class="audio-only">Son seul</div>}
       {status && <div class="status">{status}</div>}
+      <LiveDots />
+      <MiniView />
       {needsTap && (
         <button type="button" class="tap-button" onClick={tapped}>
           {needsTap === "son" ? "Toucher pour activer le son" : "Toucher pour reprendre"}

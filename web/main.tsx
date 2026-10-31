@@ -60,6 +60,8 @@ function Recents() {
                   <small class="is-live">
                     <Radio size={12} /> {live.ownerName} en direct
                   </small>
+                ) : status?.party ? (
+                  <small class="is-live">Watch Party : {status.party}</small>
                 ) : (
                   <small>{status?.members ? `${status.members} en ligne` : "Personne pour l'instant"}</small>
                 )}

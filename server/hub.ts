@@ -29,6 +29,7 @@ import type {
   TogetherItem,
   ViewerQuality,
 } from "../src/shared/protocol.ts";
+import type { PushService } from "./push.ts";
 import type { Store, StoredRoom } from "./store.ts";
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -97,6 +98,7 @@ interface LiveTogether extends Together {
 
 export interface HubOptions {
   store: Store;
+  push?: PushService;
   iceServers: (userId: string) => IceServer[];
   serverName?: string;
   graceMs?: number;
@@ -104,6 +106,8 @@ export interface HubOptions {
 }
 
 const isString = (v: unknown, max: number): v is string => typeof v === "string" && v.length <= max;
+/** Après un redémarrage, les streams en cours s'annoncent à nouveau : ce ne sont pas des nouvelles. */
+const PUSH_QUIET_AFTER_BOOT_MS = 60_000;
 const clean = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max) : "");
 const isDataImage = (v: unknown, max: number): v is string =>
   typeof v === "string" && v.length <= max && /^data:image\/(png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(v);
@@ -179,13 +183,17 @@ export class Hub {
   private readonly serverName: string;
   private readonly graceMs: number;
   private readonly now: () => number;
+  private readonly push?: PushService;
+  private readonly bootedAt: number;
 
   constructor(options: HubOptions) {
     this.store = options.store;
+    this.push = options.push;
     this.iceServers = options.iceServers;
     this.serverName = options.serverName ?? "SpokaStream";
     this.graceMs = options.graceMs ?? GRACE_MS;
     this.now = options.now ?? Date.now;
+    this.bootedAt = this.now();
     const cutoff = this.now() - ROOM_MAX_IDLE_MS;
     for (const data of this.store.load()) {
       if (data.lastActivity < cutoff) continue;
@@ -329,6 +337,13 @@ export class Hub {
         return this.onTogetherControl(conn, msg.playing === true, msg.position);
       case "together.next":
         return this.onTogetherNext(conn, msg.videoId);
+      case "push.subscribe":
+        if (!conn.buckets.misc.take(now) || !conn.userId) return;
+        this.push?.subscribe({ endpoint: String(msg.endpoint).slice(0, 1024), p256dh: String(msg.p256dh).slice(0, 256), auth: String(msg.auth).slice(0, 64), userId: conn.userId, rooms: (Array.isArray(msg.rooms) ? msg.rooms : []).filter(id => isString(id, 64)).slice(0, 24) });
+        return;
+      case "push.unsubscribe":
+        if (isString(msg.endpoint, 1024)) this.push?.unsubscribe(msg.endpoint);
+        return;
       case "together.remove":
         return this.onTogetherRemove(conn, msg.index, msg.videoId);
       case "together.stop":
@@ -684,6 +699,7 @@ export class Hub {
     if (!room.together) {
       room.together = { ...item, playing: true, position: 0, anchor: this.now(), queue: [] };
       this.pushSystem(room, `${live.member.name} lance « ${item.title} »`);
+      this.notifyPhones(room, `party:${item.videoId}`, conn.userId!, `Watch Party dans ${room.data.name}`, `${live.member.name} lance « ${item.title} »`);
     } else {
       if (room.together.queue.length >= LIMITS.queue) return this.fail(conn, "bad_request");
       room.together.queue.push(item);
@@ -786,6 +802,14 @@ export class Hub {
     this.pushSystem(room, `${conn.profile!.name} a lancé un stream`);
     this.touchStatus(room);
     ack(true, undefined, { viewers: [], startedAt: stream.startedAt });
+    this.notifyPhones(room, `live:${userId}`, userId, `${conn.profile!.name} est en direct`, stream.title ? `${stream.title} · ${room.data.name}` : room.data.name);
+  }
+
+  private notifyPhones(room: Room, event: string, author: string, title: string, body: string) {
+    const { push } = this;
+    if (!push || this.now() - this.bootedAt < PUSH_QUIET_AFTER_BOOT_MS) return;
+    const here = new Set([author, ...[...room.members.values()].filter(m => m.member.online).map(m => m.member.id)]);
+    void push.notify(room.data.id, here, event, { title, body, url: `/w/${room.data.code}`, tag: room.data.id }).catch(() => {});
   }
 
   private onStreamUpdate(conn: Conn, patch: StreamPatch) {

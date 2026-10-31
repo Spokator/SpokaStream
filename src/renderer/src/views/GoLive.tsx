@@ -23,7 +23,7 @@ export const FPS_OPTIONS = [
   { value: 120, label: "120 i/s" },
 ];
 export const BITRATES = [2500, 5000, 8000, 12000, 20000, 30000, 40000, 60000, 80000, 120000].map(value => ({ value, label: `${mbps(value)} Mb/s` }));
-const CODECS: { value: CodecChoice; label: string }[] = [
+export const CODECS: { value: CodecChoice; label: string }[] = [
   { value: "auto", label: "Automatique" },
   { value: "video/AV1", label: "AV1" },
   { value: "video/H265", label: "H265" },

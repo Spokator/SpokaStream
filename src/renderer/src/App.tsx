@@ -49,6 +49,18 @@ function MainApp() {
     if (accent) document.documentElement.style.setProperty("--accent", accent);
   }, [accent]);
 
+  const theme = settings?.theme;
+  const reduceMotion = settings?.reduceMotion;
+  const chatSize = settings?.chatSize;
+  const chatCompact = settings?.chatCompact;
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = theme ?? "dark";
+    root.dataset.motion = reduceMotion ? "off" : "on";
+    root.dataset.chat = chatCompact ? "compact" : "normal";
+    if (chatSize) root.style.setProperty("--chat-size", `${chatSize}px`);
+  }, [theme, reduceMotion, chatSize, chatCompact]);
+
   if (!booted || !settings) return <div className="splash" />;
   if (!settings.onboarded) return <Onboarding />;
 

@@ -187,7 +187,7 @@ function diagnostics() {
 
 function wireIpc() {
   ipcMain.on("sync:info", e => {
-    e.returnValue = { version: app.getVersion(), isPackaged: app.isPackaged, selfPid: process.pid, testMode: !!testDataDir, forceRelay: !!testDataDir && process.env.SPOKASTREAM_FORCE_RELAY === "1" };
+    e.returnValue = { version: app.getVersion(), isPackaged: app.isPackaged, selfPid: process.pid, testMode: !!testDataDir, noNative: !!testDataDir && process.env.SPOKASTREAM_NO_NATIVE === "1", forceRelay: !!testDataDir && process.env.SPOKASTREAM_FORCE_RELAY === "1" };
   });
   ipcMain.handle("settings:get", () => settings.current);
   ipcMain.handle("settings:set", (_e, patch: Partial<Settings>) => {
@@ -199,6 +199,16 @@ function wireIpc() {
     if (next !== before) for (const w of BrowserWindow.getAllWindows()) w.webContents.send("settings:changed", next);
     return next;
   });
+
+  ipcMain.handle("settings:reset", () => {
+    const next = settings.reset();
+    registerHotkeys(next);
+    applyLoginItem(next);
+    applyScale();
+    for (const w of BrowserWindow.getAllWindows()) w.webContents.send("settings:changed", next);
+    return next;
+  });
+  ipcMain.on("open-data", () => void shell.openPath(app.getPath("userData")));
 
   ipcMain.handle("sources:list", () => listSources());
   ipcMain.handle("audio:status", () => engine.status);
