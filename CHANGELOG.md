@@ -1,5 +1,9 @@
 # Journal des versions
 
+## 1.0.1
+
+- Correction : un minuteur de vignette restait actif après chaque fin de stream.
+
 ## 1.0.0
 
 Première version.

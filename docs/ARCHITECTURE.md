@@ -111,7 +111,7 @@ Si une connexion vidéo tombe vraiment, le spectateur en redemande une après 6 
 | Commande | Ce qu'elle prouve |
 | --- | --- |
 | `npm test` | 33 tests : serveur, SDP, choix du codec, tampon audio |
-| `npm run test:e2e` | 25 étapes avec deux instances, WebRTC réel, son réel |
+| `npm run test:e2e` | 26 étapes avec deux instances, WebRTC réel, son réel |
 | `node --experimental-strip-types tests/e2e/run.ts --packaged` | La même chose sur l'application empaquetée |
 | `npm run test:production` | Le vrai serveur, avec la vidéo forcée par le relais TURN : PC → VPS → PC |
 

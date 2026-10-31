@@ -72,6 +72,7 @@ class Core {
   private sourceGone = false;
   private pauseCard: ReturnType<typeof createPauseCard> | null = null;
   private previewElement: HTMLVideoElement | null = null;
+  private previewTimer: ReturnType<typeof setInterval> | undefined;
   private recorder: Recorder | null = null;
   private sourceMixId: string | null = null;
   private announce: StreamAnnounce | null = null;
@@ -724,7 +725,7 @@ class Core {
       if (data) this.signal.send({ t: "stream.thumb", data });
     };
     setTimeout(send, 1500);
-    this.timers.push(setInterval(send, 6000));
+    this.previewTimer = setInterval(send, 6000);
   }
 
   /** audio : le nouveau son du stream, ou null pour garder celui en cours. Le son propre à un fichier suit toujours sa source. */
@@ -816,6 +817,7 @@ class Core {
     this.pauseCard = null;
     this.mixer?.dispose();
     this.mixer = null;
+    clearInterval(this.previewTimer);
     if (this.previewElement) this.previewElement.srcObject = null;
     this.previewElement = null;
     set(s => ({ publish: null, panelTab: s.panelTab === "studio" ? "chat" : s.panelTab }));

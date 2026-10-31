@@ -418,6 +418,35 @@ try {
     return `niveau de la voix reçue ${(level * 100).toFixed(0)} %`;
   });
 
+  await step("raccourcis globaux et appuyer pour parler, sans le focus", async () => {
+    const keys = (script: string) => {
+      const run = spawnSync("powershell", ["-NoProfile", "-Command", `
+        Add-Type -Name K -Namespace N -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, System.UIntPtr e);'
+        function Down($k) { [N.K]::keybd_event($k, 0, 0, [System.UIntPtr]::Zero) }
+        function Up($k) { [N.K]::keybd_event($k, 0, 2, [System.UIntPtr]::Zero) }
+        ${script}`], { timeout: 20_000 });
+      assert.equal(run.status, 0, String(run.stderr));
+    };
+    const muted = () => alice.page.evaluate(() => (window as any).__store.useApp.getState().muted as boolean);
+    const combo = "Down 0x11; Down 0x12; Down 0x4D; Up 0x4D; Up 0x12; Up 0x11";
+    assert.equal(await muted(), false);
+    keys(combo);
+    await poll("micro coupé par le raccourci", muted, m => m === true, 5000);
+    keys(combo);
+    await poll("micro rétabli par le raccourci", muted, m => m === false, 5000);
+
+    // F24 : une touche qui n'écrit rien dans l'application au premier plan.
+    await alice.page.evaluate(() => (window as any).__core.updateSettings({ voiceMode: "ptt", pttKey: 0x87, pttKeyName: "F24" }));
+    await wait(500);
+    const transmitting = () => alice.page.evaluate(() => (window as any).__core.voice.stream.getAudioTracks()[0].enabled as boolean);
+    await poll("micro fermé en attendant la touche", transmitting, on => on === false, 5000);
+    keys("Down 0x87");
+    await poll("micro ouvert touche enfoncée", transmitting, on => on === true, 5000);
+    keys("Up 0x87");
+    await poll("micro refermé touche relâchée", transmitting, on => on === false, 5000);
+    await alice.page.evaluate(() => (window as any).__core.updateSettings({ voiceMode: "open" }));
+  });
+
   await step("changer de source en direct, vers un fichier vidéo avec son", async () => {
     const file = path.join(temp, "extrait.mp4");
     await new Promise<void>((resolve, reject) =>
