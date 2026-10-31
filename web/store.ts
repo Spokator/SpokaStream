@@ -10,7 +10,7 @@ export interface RecentRoom {
   name: string;
 }
 
-export type Tab = "chat" | "live" | "room" | "regie";
+export type Tab = "chat" | "live" | "room";
 export type Sheet = null | "quality" | "profile" | "poll" | "together" | "share" | { message: ChatMessage };
 
 export interface Float {
@@ -40,6 +40,8 @@ export interface WebState {
   linked: boolean;
   /** Ce que diffuse un autre appareil du compte. */
   remote: RemoteState | null;
+  /** La régie couvre tout l'écran, par-dessus le salon qui continue à tourner dessous. */
+  deckOpen: boolean;
   /** Un message du serveur à montrer un moment. */
   notice: string;
   name: string;

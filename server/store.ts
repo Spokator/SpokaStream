@@ -13,6 +13,8 @@ export interface StoredRoom {
   pinned?: ChatMessage | null;
   createdAt: number;
   lastActivity: number;
+  /** Minutes de direct, tous streams confondus : ce que montre le classement des salons. */
+  liveMinutes?: number;
 }
 
 export interface Store {

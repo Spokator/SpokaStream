@@ -10,6 +10,10 @@ const LINK_LENGTH = 8;
 const LINK_TTL_MS = 5 * 60_000;
 const MAX_DEVICES = 8;
 const SAVE_DELAY_MS = 2000;
+const IPS_KEPT = 8;
+const SANCTIONS_KEPT = 40;
+const NOTES_KEPT = 40;
+const ROOMS_KEPT = 24;
 
 export interface DeviceRecord {
   accountId: string;
@@ -20,12 +24,39 @@ export interface DeviceRecord {
   lastSeen: number;
 }
 
+export interface Sanction {
+  at: number;
+  kind: "ban" | "unban" | "mute" | "unmute" | "warn" | "kick";
+  by: string;
+  reason: string;
+  /** 0 : sans limite de durée. */
+  until: number;
+}
+
+export interface AccountStats {
+  streams: number;
+  streamMinutes: number;
+  watchMinutes: number;
+  messages: number;
+}
+
 export interface AccountRecord extends Profile {
   id: string;
   firstSeen: number;
   lastSeen: number;
   banned?: boolean;
   banReason?: string;
+  /** 0 ou absent : sans limite de durée. */
+  bannedUntil?: number;
+  mutedUntil?: number;
+  muteReason?: string;
+  sanctions?: Sanction[];
+  notes?: { at: number; by: string; text: string }[];
+  stats?: AccountStats;
+  /** Les dernières adresses : c'est ce qui permet de voir qu'un banni revient sous un autre compte. */
+  ips?: { ip: string; at: number }[];
+  /** Les salons fréquentés, du plus récent au plus ancien : ils suivent la personne sur chaque appareil. */
+  rooms?: string[];
 }
 
 interface AccountsData {
@@ -69,8 +100,111 @@ export class Accounts {
     return this.data.devices[deviceId]?.accountId ?? deviceId;
   }
 
-  isBanned(accountId: string) {
-    return !!this.data.accounts[accountId]?.banned;
+  isBanned(accountId: string, now = Date.now()) {
+    const account = this.data.accounts[accountId];
+    if (!account?.banned) return false;
+    if (!account.bannedUntil || account.bannedUntil > now) return true;
+    // Une sanction à durée limitée se lève toute seule, sans que personne n'ait à y penser.
+    delete account.banned;
+    delete account.banReason;
+    delete account.bannedUntil;
+    this.save();
+    return false;
+  }
+
+  isMuted(accountId: string, now = Date.now()) {
+    const account = this.data.accounts[accountId];
+    if (!account?.mutedUntil) return false;
+    if (account.mutedUntil > now) return true;
+    delete account.mutedUntil;
+    delete account.muteReason;
+    this.save();
+    return false;
+  }
+
+  setMuted(accountId: string, until: number, reason = "") {
+    const account = this.data.accounts[accountId];
+    if (!account) return false;
+    if (until) {
+      account.mutedUntil = until;
+      account.muteReason = reason;
+    } else {
+      delete account.mutedUntil;
+      delete account.muteReason;
+    }
+    this.save();
+    return true;
+  }
+
+  addSanction(accountId: string, sanction: Sanction) {
+    const account = this.data.accounts[accountId];
+    if (!account) return;
+    account.sanctions = [sanction, ...(account.sanctions ?? [])].slice(0, SANCTIONS_KEPT);
+    this.save();
+  }
+
+  addNote(accountId: string, by: string, text: string, now: number) {
+    const account = this.data.accounts[accountId];
+    if (!account) return false;
+    account.notes = [{ at: now, by, text }, ...(account.notes ?? [])].slice(0, NOTES_KEPT);
+    this.save();
+    return true;
+  }
+
+  removeNote(accountId: string, at: number) {
+    const account = this.data.accounts[accountId];
+    if (!account?.notes) return false;
+    account.notes = account.notes.filter(note => note.at !== at);
+    this.save();
+    return true;
+  }
+
+  addStats(accountId: string, patch: Partial<AccountStats>) {
+    const account = this.data.accounts[accountId];
+    if (!account) return;
+    const stats = (account.stats ??= { streams: 0, streamMinutes: 0, watchMinutes: 0, messages: 0 });
+    for (const [key, value] of Object.entries(patch) as [keyof AccountStats, number][]) stats[key] += value;
+    this.save();
+  }
+
+  noteIp(accountId: string, ip: string, now: number) {
+    const account = this.data.accounts[accountId];
+    if (!account || !ip) return;
+    account.ips = [{ ip, at: now }, ...(account.ips ?? []).filter(row => row.ip !== ip)].slice(0, IPS_KEPT);
+    this.save();
+  }
+
+  noteRoom(accountId: string, roomId: string) {
+    const account = this.data.accounts[accountId];
+    if (!account) return false;
+    const already = account.rooms?.[0] === roomId;
+    if (already) return false;
+    account.rooms = [roomId, ...(account.rooms ?? []).filter(id => id !== roomId)].slice(0, ROOMS_KEPT);
+    this.save();
+    return true;
+  }
+
+  roomsOf(accountId: string) {
+    return this.data.accounts[accountId]?.rooms ?? [];
+  }
+
+  forgetRoom(accountId: string, roomId: string) {
+    const account = this.data.accounts[accountId];
+    if (!account?.rooms) return;
+    account.rooms = account.rooms.filter(id => id !== roomId);
+    this.save();
+  }
+
+  /** Les autres comptes vus depuis la même adresse. */
+  sharingIp(accountId: string) {
+    const mine = new Set(this.data.accounts[accountId]?.ips?.map(row => row.ip));
+    if (!mine.size) return [];
+    return Object.values(this.data.accounts).filter(account => account.id !== accountId && account.ips?.some(row => mine.has(row.ip))).map(account => ({ id: account.id, name: account.name, banned: !!account.banned }));
+  }
+
+  /** Un appareil jamais vu : c'est ce que compte « nouveaux comptes », et ce qu'un serveur fermé refuse. */
+  isNew(deviceId: string) {
+    return !this.data.devices[deviceId];
   }
 
   /** Un appareil rattaché reprend le profil du compte : c'est ce qui fait qu'on est la même personne partout. */
@@ -80,7 +214,7 @@ export class Accounts {
     this.data.devices[deviceId] = { accountId, addedAt: device?.addedAt ?? now, ...meta, lastSeen: now };
     const account = this.data.accounts[accountId];
     const linked = accountId !== deviceId;
-    this.data.accounts[accountId] = linked && account ? { ...account, lastSeen: now } : { ...profile, id: accountId, firstSeen: account?.firstSeen ?? now, lastSeen: now, ...(account?.banned ? { banned: true } : {}) };
+    this.data.accounts[accountId] = linked && account ? { ...account, lastSeen: now } : { ...account, ...profile, id: accountId, firstSeen: account?.firstSeen ?? now, lastSeen: now };
     this.save();
     const stored = this.data.accounts[accountId]!;
     return { accountId, profile: { name: stored.name, color: stored.color, avatar: stored.avatar } };
@@ -101,14 +235,18 @@ export class Accounts {
     return { code, expires: now + LINK_TTL_MS };
   }
 
-  /** Rend le compte rejoint, ou null : code faux, expiré, déjà utilisé, ou trop d'appareils. */
+  /** Rend le compte rejoint, ou null : code faux, expiré, déjà utilisé, ou trop d'appareils. Un appareil déjà lié à ce compte reçoit « same ». */
   claim(rawCode: string, deviceId: string, now: number) {
     const code = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
     const link = this.links.get(code);
     if (!link || link.expires < now) return null;
-    if (link.accountId === this.accountOf(deviceId)) return null;
+    if (link.accountId === this.accountOf(deviceId)) return "same";
     if (this.devicesOf(link.accountId).length >= MAX_DEVICES) return null;
     this.links.delete(code);
+    const target = this.data.accounts[link.accountId];
+    const before = this.data.accounts[deviceId];
+    // Ce que cet appareil fréquentait seul reste à portée de main une fois rattaché.
+    if (target && before?.rooms) target.rooms = [...new Set([...(target.rooms ?? []), ...before.rooms])].slice(0, ROOMS_KEPT);
     const device = this.data.devices[deviceId];
     if (device) device.accountId = link.accountId;
     else this.data.devices[deviceId] = { accountId: link.accountId, label: "", client: "web", version: "", addedAt: now, lastSeen: now };
@@ -133,15 +271,18 @@ export class Accounts {
     return true;
   }
 
-  setBanned(accountId: string, banned: boolean, reason = "") {
+  setBanned(accountId: string, banned: boolean, reason = "", until = 0) {
     const account = this.data.accounts[accountId];
     if (!account) return false;
     if (banned) {
       account.banned = true;
       account.banReason = reason;
+      if (until) account.bannedUntil = until;
+      else delete account.bannedUntil;
     } else {
       delete account.banned;
       delete account.banReason;
+      delete account.bannedUntil;
     }
     this.save();
     return true;
@@ -162,6 +303,12 @@ export class Accounts {
   }
 
   list() {
-    return Object.values(this.data.accounts).map(({ avatar: _avatar, ...account }) => ({ ...account, devices: this.devicesOf(account.id) }));
+    return Object.values(this.data.accounts).map(({ avatar: _avatar, notes: _notes, sanctions: _sanctions, ips: _ips, rooms: _rooms, ...account }) => ({ ...account, devices: this.devicesOf(account.id) }));
+  }
+
+  /** Tout ce qu'on sait d'un compte, pour sa fiche et pour le lui rendre s'il le demande. */
+  detail(accountId: string) {
+    const account = this.data.accounts[accountId];
+    return account ? { ...account, devices: this.devicesOf(accountId), sharingIp: this.sharingIp(accountId) } : null;
   }
 }

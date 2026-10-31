@@ -19,7 +19,7 @@ const temp = mkdtempSync(path.join(tmpdir(), "spokastream-remote-"));
 const electronPath = createRequire(import.meta.url)("electron") as unknown as string;
 const STEP_LIMIT_MS = 120_000;
 
-const server = await startServer({ port: 0, host: "127.0.0.1", store: new MemoryStore() });
+const server = await startServer({ port: 0, host: "127.0.0.1", store: new MemoryStore(), dataDir: path.join(temp, "data") });
 const base = `http://127.0.0.1:${server.port}`;
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -65,68 +65,208 @@ try {
   edge = await chromium.launch({ channel: "msedge", args: ["--autoplay-policy=no-user-gesture-required"] });
   const context = await edge.newContext({ ...devices["Pixel 7"] });
   const phone = await context.newPage();
-  const remote = () => phone.evaluate(() => (document.querySelector(".regie") ? "ouverte" : ""));
   const publish = () => pc.evaluate(() => (window as any).__store.useApp.getState().publish);
 
-  await step("lier le téléphone : QR code, même profil, salons conservés", async () => {
-    await pc.evaluate(() => (window as any).__store.useApp.setState({ view: "settings", settingsSection: "account" }));
-    await pc.getByRole("button", { name: "Lier mon téléphone" }).click();
-    const code = (await pc.locator(".link-panel code").textContent())!.trim();
-    await shot(pc, "60-lier-un-telephone");
-    await phone.goto(`${base}/link/${code}`);
-    await phone.getByText("Ce téléphone est lié").or(phone.locator(".notice")).first().waitFor({ state: "attached", timeout: 10_000 }).catch(() => {});
-    const accounts = async () => [await pc.evaluate(() => (window as any).__store.useApp.getState().accountId), await phone.evaluate(() => localStorage.getItem("spoka-name"))];
-    const [, name] = await poll("profil repris", accounts, ([, n]) => n === "Spoka");
-    await poll("appareil listé", () => pc.locator(".device-line").count(), n => n === 2, 8000);
-    await shot(pc, "61-mes-appareils");
-    return `téléphone devenu ${name}`;
-  });
-
-  await step("le PC diffuse : le téléphone voit la régie dès l'accueil", async () => {
-    await pc.evaluate(() => (window as any).__store.useApp.setState({ view: "home" }));
+  await step("lier le téléphone : le code va dans le seul champ de l'accueil, les salons et le PC suivent", async () => {
     await pc.locator(".home-card-primary").click();
     await pc.getByPlaceholder("La soirée film, Les potes…").fill("Soirée");
     await pc.getByRole("button", { name: "Créer le salon" }).click();
     await pc.locator(".room-code").waitFor();
+
+    await phone.goto(base);
+    const field = phone.getByLabel("Code du salon, ou code de liaison de ton PC");
+    await field.fill("ZZZZZZZZ");
+    await phone.getByLabel("Ton nom").fill("Moi");
+    await phone.getByRole("button", { name: "Continuer" }).click();
+    await phone.getByRole("alert").waitFor();
+    assert.match((await phone.getByRole("alert").textContent())!, /n'existe pas/);
+    await shot(phone, "60-telephone-accueil");
+
+    await pc.evaluate(() => (window as any).__store.useApp.setState({ view: "settings", settingsSection: "account" }));
+    await pc.getByRole("button", { name: "Lier mon téléphone" }).click();
+    const code = (await pc.locator(".link-panel code").textContent())!.trim();
+    await shot(pc, "61-lier-un-telephone");
+
+    // Le cas d'un iPhone : l'icône de l'écran d'accueil ne partage rien avec Safari, le code s'entre à la main.
+    await phone.getByLabel("Code du salon, ou code de liaison de ton PC").fill(code);
+    await phone.getByRole("button", { name: "Continuer" }).click();
+    await phone.locator(".account-head").waitFor();
+    await phone.locator(".recent", { hasText: "Soirée" }).waitFor();
+    await phone.getByText("Ton PC est en ligne").first().waitFor();
+    assert.equal(await phone.evaluate(() => localStorage.getItem("spoka-name")), "Spoka");
+    await pc.locator(".link-panel").waitFor({ state: "detached", timeout: 5000 });
+    await poll("appareil listé", () => pc.locator(".device-line").count(), n => n === 2, 8000);
+    await shot(phone, "62-telephone-lie");
+    await shot(pc, "63-mes-appareils");
+
+    const second = await edge!.newContext({ ...devices["Pixel 7"] });
+    const viaQr = await second.newPage();
+    await pc.getByRole("button", { name: "Lier mon téléphone" }).click();
+    const qr = (await pc.locator(".link-panel code").textContent())!.trim();
+    await viaQr.goto(`${base}/link/${qr}`);
+    await viaQr.locator(".recent", { hasText: "Soirée" }).waitFor();
+    await second.close();
+    return "le code entré à la main et le QR code mènent au même endroit : salons, nom, PC visible";
+  });
+
+  await step("le PC diffuse : la régie s'ouvre en grille de touches, 3×5 debout et 5×3 tourné", async () => {
+    await pc.evaluate(() => (window as any).__store.useApp.setState({ view: "room" }));
     await pc.getByRole("button", { name: "Diffuser", exact: true }).click();
     await pc.getByRole("tab", { name: "Caméra" }).click();
     await pc.locator(".device-row").first().click();
     await pc.getByRole("button", { name: "Lancer le stream" }).click();
     await pc.locator(".tile-own").waitFor({ timeout: 30_000 });
-    await phone.locator(".remote-card").waitFor({ timeout: 10_000 });
-    await shot(phone, "62-telephone-accueil-regie");
+    await pc.evaluate(() => (window as any).__core.saveScene("Jeu"));
+    await phone.locator(".remote-card:not(.is-idle)").waitFor({ timeout: 10_000 });
     await phone.locator(".remote-card").click();
-    await poll("régie ouverte", remote, v => v === "ouverte");
+    await phone.locator(".deck-grid").waitFor();
+    await phone.locator(".deck-clock").waitFor();
     assert.equal(await pc.locator(".tile-own").count(), 1, "le PC reste dans son salon");
     await wait(1200);
     assert.equal(await phone.locator("#video").evaluate((v: HTMLVideoElement) => (v.srcObject as MediaStream | null)?.getTracks().length ?? 0), 0, "le téléphone n'ouvre pas son propre stream tout seul");
-    await shot(phone, "63-telephone-regie");
+    const grid = () => phone.evaluate(() => {
+      const style = getComputedStyle(document.querySelector(".deck-grid")!);
+      const keys = [...document.querySelectorAll(".deck-grid > *")].map(k => k.getBoundingClientRect());
+      return { cols: style.gridTemplateColumns.split(" ").length, rows: style.gridTemplateRows.split(" ").length, keys: keys.length, minWidth: Math.min(...keys.map(k => k.width)), minHeight: Math.min(...keys.map(k => k.height)), bottom: Math.max(...keys.map(k => k.bottom)), height: innerHeight, overflow: document.documentElement.scrollWidth > innerWidth };
+    });
+    const portrait = await grid();
+    assert.deepEqual([portrait.cols, portrait.rows, portrait.keys], [3, 5, 15]);
+    assert.ok(portrait.minHeight >= 64 && portrait.bottom <= portrait.height, JSON.stringify(portrait));
+    await shot(phone, "64-regie-portrait");
+    await phone.setViewportSize({ width: 915, height: 412 });
+    await wait(300);
+    const landscape = await grid();
+    assert.deepEqual([landscape.cols, landscape.rows, landscape.keys], [5, 3, 15]);
+    assert.ok(landscape.minHeight >= 64 && landscape.minWidth >= 100 && landscape.bottom <= landscape.height && !landscape.overflow, JSON.stringify(landscape));
+    await shot(phone, "65-regie-paysage");
+    await phone.setViewportSize({ width: 740, height: 360 });
+    await wait(300);
+    const small = await grid();
+    assert.ok(small.minHeight >= 54 && small.bottom <= small.height, JSON.stringify(small));
+    await shot(phone, "66-regie-petit-paysage");
+    await phone.setViewportSize({ width: 915, height: 412 });
+    return `portrait ${Math.round(portrait.minWidth)}×${Math.round(portrait.minHeight)}, paysage ${Math.round(landscape.minWidth)}×${Math.round(landscape.minHeight)} px par touche`;
   });
 
-  await step("chaque geste du téléphone agit sur le PC", async () => {
-    await phone.getByRole("button", { name: "Pause", exact: true }).click();
+  await step("chaque touche agit sur le PC et n'affiche que ce qu'il renvoie", async () => {
+    const key = (name: string) => phone.getByRole("button", { name, exact: true });
+    await key("Pause").click();
     await poll("pause", publish, p => p.paused === true);
-    await phone.getByRole("button", { name: "Reprendre", exact: true }).click();
+    await key("Reprendre").waitFor();
+    await key("Reprendre").click();
     await poll("reprise", publish, p => p.paused === false);
+    await key("Pause").waitFor();
 
-    await phone.locator(".regie-chips button").first().click();
+    await key("Marqueur").click();
+    await poll("marqueur", () => pc.evaluate(() => (window as any).__store.useApp.getState().activity.some((a: any) => a.kind === "marker")), v => v);
+    await phone.getByRole("button", { name: "Marqueur : 1" }).waitFor();
+    await key("Micro").click();
+    await poll("micro", () => pc.evaluate(() => (window as any).__store.useApp.getState().muted), v => v === true);
+    await key("Micro coupé").waitFor();
+    await key("Micro coupé").click();
+    await key("Dessin").click();
+    await poll("dessin", publish, p => p.allowDraw === false);
+    await key("Dessin coupé").waitFor();
+    await key("Pause dans 5 minutes").click();
+    await poll("bandeau", publish, p => p.banner === "Pause dans 5 minutes");
+
+    // Un appui court sur Arrêter ne fait rien : il faut tenir.
+    await phone.getByRole("button", { name: "Arrêter, appui long" }).click();
+    await wait(400);
+    assert.ok(await publish(), "un toucher ne coupe pas le direct");
+
+    await phone.getByRole("tab", { name: "Scènes" }).click();
+    await key("Jeu").waitFor();
+    await shot(phone, "67-regie-scenes");
+    const screen = phone.locator(".deck-grid .key").nth(1);
+    await screen.click();
     await poll("écran d'attente", publish, p => p.paused === true && !!p.screen);
-    await phone.getByRole("button", { name: "Reprendre", exact: true }).click();
+    await poll("la touche s'allume", () => screen.getAttribute("aria-pressed"), v => v === "true", 3000);
+    await screen.click();
     await poll("fin de l'écran", publish, p => p.paused === false);
 
+    await phone.getByRole("tab", { name: "Son" }).click();
+    await phone.getByRole("tab", { name: "Touches" }).click();
+    await phone.getByRole("tab", { name: "Infos" }).click();
     await phone.getByLabel("Titre du stream").fill("Depuis le téléphone");
     await phone.getByLabel("Bandeau à l'image").click();
     await poll("titre", publish, p => p.title === "Depuis le téléphone");
-    await phone.getByLabel("Bandeau à l'image").fill("Pause dans 5 minutes");
-    await phone.getByLabel("Titre du stream").click();
-    await poll("bandeau", publish, p => p.banner === "Pause dans 5 minutes");
+    await shot(phone, "68-regie-details");
+    await phone.getByRole("tab", { name: "Touches" }).click();
 
-    await phone.getByRole("button", { name: "Marqueur" }).click();
-    await poll("marqueur", () => pc.evaluate(() => (window as any).__store.useApp.getState().activity.some((a: any) => a.kind === "marker")), v => v);
-    await phone.getByRole("button", { name: "Micro", exact: true }).click();
-    await poll("micro", () => pc.evaluate(() => (window as any).__store.useApp.getState().muted), v => v === true);
-    await phone.getByRole("button", { name: "Micro coupé" }).click();
-    return "pause, écran d'attente, titre, bandeau, marqueur, micro";
+    // La page Salon : un message tout prêt part dans le chat, sous le nom de la personne.
+    await phone.locator(".deck-pages").getByRole("tab", { name: "Salon" }).click();
+    await key("Merci d'être là !").click();
+    await poll("message dans le salon", () => pc.evaluate(() => (window as any).__store.useApp.getState().room.history.at(-1)?.text), text => text === "Merci d'être là !", 8000);
+    await phone.locator(".deck-ticker", { hasText: "Merci d'être là !" }).waitFor({ timeout: 4000 });
+    await shot(phone, "69-regie-salon");
+    return "pause, marqueur compté, micro, dessin, bandeau, appui long, scène, écran d'attente, titre, message";
+  });
+
+  await step("les touches se personnalisent et le restent après un rechargement", async () => {
+    await phone.getByRole("button", { name: "Modifier les touches" }).click();
+    await shot(phone, "70-regie-modifier");
+    await phone.getByRole("button", { name: "Ajouter une touche, emplacement 14" }).click();
+    await phone.getByRole("dialog", { name: "Choisir une touche" }).waitFor();
+    await shot(phone, "71-regie-choisir");
+    await phone.getByRole("dialog").getByRole("button", { name: "Caméra" }).click();
+    await phone.locator('.key[data-slot="13"]').waitFor();
+    const from = await phone.locator('.key[data-slot="13"]').boundingBox();
+    const to = await phone.locator('.key[data-slot="0"]').boundingBox();
+    await phone.mouse.move(from!.x + 20, from!.y + 20);
+    await phone.mouse.down();
+    await phone.mouse.move(to!.x + 20, to!.y + 20, { steps: 8 });
+    await phone.mouse.up();
+    await phone.getByRole("button", { name: "Terminé" }).click();
+    assert.match((await phone.locator('.key[data-slot="0"]').textContent())!, /Caméra/);
+    await phone.reload();
+    await phone.locator(".remote-card").or(phone.locator(".tab-regie")).first().waitFor();
+    await phone.locator(".remote-card").or(phone.locator(".tab-regie")).first().click();
+    await phone.locator(".deck-pages").getByRole("tab", { name: "Salon" }).click();
+    assert.match((await phone.locator('.key[data-slot="0"]').textContent())!, /Caméra/);
+  });
+
+  await step("la table de mixage : le curseur suit le doigt et le PC suit le curseur", async () => {
+    await pc.evaluate(() => (window as any).__core.setMixVolume?.("__aucun__", 1));
+    const mixed = await pc.evaluate(async () => {
+      const core = (window as any).__core;
+      await core.addAudio({ type: "device", deviceId: "default", label: "Micro de test" });
+      return (window as any).__store.useApp.getState().publish.mix.length;
+    });
+    await phone.getByRole("tab", { name: "Son" }).click();
+    if (!mixed) return "pas de source de son dans ce test : la vue affiche son message";
+    await phone.locator(".fader").first().waitFor({ timeout: 6000 });
+    const track = await phone.locator(".fader-track").first().boundingBox();
+    await phone.mouse.move(track!.x + track!.width / 2, track!.y + track!.height * 0.1);
+    await phone.mouse.down();
+    await phone.mouse.move(track!.x + track!.width / 2, track!.y + track!.height * 0.75, { steps: 6 });
+    await phone.mouse.up();
+    await shot(phone, "72-regie-son");
+    const level = await poll("volume", publish, p => Math.abs(p.mix[0].volume - 0.38) < 0.08);
+    await phone.locator(".fader > button").first().click();
+    await poll("coupé", publish, p => p.mix[0].muted === true);
+    return `volume ${level.mix[0].volume}`;
+  });
+
+  await step("appui long : le direct s'arrête, le téléphone propose alors de le relancer", async () => {
+    await phone.getByRole("tab", { name: "Touches" }).click();
+    await phone.locator(".deck-pages").getByRole("tab", { name: "Direct" }).click();
+    const stop = await phone.getByRole("button", { name: "Arrêter, appui long" }).boundingBox();
+    await phone.mouse.move(stop!.x + 20, stop!.y + 20);
+    await phone.mouse.down();
+    await wait(1400);
+    await phone.mouse.up();
+    await poll("direct arrêté", publish, p => !p);
+    await phone.getByRole("heading", { name: "La régie s'ouvre dès que ton PC diffuse" }).waitFor();
+    await shot(phone, "73-regie-pc-en-ligne");
+
+    await pc.evaluate(() => (window as any).__core.updateSettings({ allowRemoteStart: true }));
+    await phone.getByRole("heading", { name: "Lancer le direct" }).waitFor({ timeout: 6000 });
+    await shot(phone, "74-regie-lancer");
+    await phone.locator(".deck-launch .primary").click();
+    await poll("direct relancé", publish, p => !!p, 25_000);
+    await phone.locator(".deck-grid").waitFor({ timeout: 8000 });
+    return "stop par appui long, puis relance depuis le téléphone sur la même source";
   });
 
   await step("le panneau admin : billet, chiffres réels, actions", async () => {
@@ -160,16 +300,86 @@ try {
     await admin.getByText("Le son coupe parfois").waitFor({ timeout: 8000 });
     await shot(admin, "68-admin-retours");
 
-    await admin.getByRole("button", { name: "Serveur" }).click();
+    await admin.getByRole("button", { name: "Réglages" }).click();
     await admin.getByLabel("Texte de l'annonce").fill("Mise à jour dans 5 minutes");
     await admin.getByRole("button", { name: "Envoyer" }).click();
     await pc.getByText("Mise à jour dans 5 minutes").first().waitFor({ timeout: 8000 });
     await phone.locator(".notice", { hasText: "Mise à jour dans 5 minutes" }).waitFor({ timeout: 8000 });
     await shot(admin, "69-admin-serveur");
 
+    // Un vrai spectateur : c'est lui qui donne des mesures de qualité au panneau.
+    const watcher = await (await edge!.newContext({ ...devices["Pixel 7"] })).newPage();
+    const code = await pc.evaluate(() => (window as any).__store.useApp.getState().room.code);
+    await watcher.goto(`${base}/w/${code}`);
+    await watcher.getByLabel("Ton nom").fill("Léa");
+    await watcher.getByRole("button", { name: "Regarder" }).click();
+    await admin.getByRole("button", { name: "Diffusions" }).click();
+    await admin.getByRole("heading", { name: "Spoka", exact: true }).waitFor();
+    await admin.getByRole("cell", { name: "Directe" }).waitFor({ timeout: 25_000 });
+    await shot(admin, "80-admin-diffusions");
+
+    await admin.getByRole("button", { name: "Système" }).click();
+    await admin.getByRole("heading", { name: "Le serveur SpokaStream" }).waitFor();
+    await admin.locator(".chart", { hasText: "Mémoire du serveur" }).locator("svg").waitFor({ timeout: 25_000 });
+    await shot(admin, "81-admin-systeme");
+    await admin.getByRole("button", { name: "Statistiques" }).click();
+    await admin.locator(".stat", { hasText: "Diffusions" }).waitFor();
+    await shot(admin, "82-admin-statistiques");
+    await admin.getByRole("button", { name: "Alertes" }).click();
+    await admin.getByText("Le relais coturn est arrêté").waitFor();
+    await shot(admin, "83-admin-alertes");
+
+    await admin.getByRole("button", { name: "Modération" }).click();
+    await admin.getByLabel("Mots interdits, séparés par des virgules").fill("vilainmot");
+    await admin.getByRole("button", { name: "Enregistrer" }).click();
+    await admin.getByText("Enregistré.").waitFor();
+    await watcher.getByLabel("Écrire un message").or(watcher.getByPlaceholder(/message/i)).first().fill("Quel vilainmot");
+    await watcher.keyboard.press("Enter");
+    await poll("message filtré", () => pc.evaluate(() => (window as any).__store.useApp.getState().room.history.at(-1)?.text), text => text === "Quel •••••••••", 8000);
+    await admin.locator(".row-line, tr", { hasText: "Léa" }).first().waitFor();
+    await shot(admin, "84-admin-moderation");
+
+    await admin.getByRole("button", { name: "Salons" }).click();
+    await admin.getByRole("button", { name: "Gérer" }).first().click();
+    await admin.getByText(/^Chat, /).click();
+    await admin.getByRole("button", { name: "Supprimer le message de Léa" }).first().click();
+    await admin.getByText("Message supprimé.").waitFor();
+    await shot(admin, "85-admin-salon-gerer");
+
+    await admin.getByRole("button", { name: "Comptes" }).click();
+    await admin.locator(".card", { hasText: "Léa" }).getByRole("button", { name: "Gérer" }).click();
+    await admin.getByLabel("Motif pour Léa").fill("Langage");
+    await admin.getByRole("button", { name: "Rendre muet" }).click();
+    await admin.getByText("Cette personne ne peut plus écrire.").waitFor();
+    await admin.getByText("Sanctions et notes").click();
+    await admin.getByText("Rendu muet : Langage").waitFor();
+    await shot(admin, "86-admin-fiche-compte");
+
+    await admin.getByRole("button", { name: "Sauvegardes" }).click();
+    await admin.getByRole("button", { name: "Créer maintenant" }).click();
+    await admin.getByText("Sauvegarde créée.").waitFor();
+    await shot(admin, "87-admin-sauvegardes");
+
+    await admin.getByRole("button", { name: "Réglages" }).click();
+    await admin.getByText("Serveur fermé").click();
+    await admin.getByText("Réglage enregistré.").waitFor();
+    const stranger = await (await edge!.newContext({ ...devices["Pixel 7"] })).newPage();
+    await stranger.goto(`${base}/w/${code}`);
+    await stranger.getByLabel("Ton nom").fill("Inconnu");
+    await stranger.getByRole("button", { name: "Regarder" }).click();
+    await stranger.getByRole("alert").waitFor({ timeout: 8000 });
+    assert.match((await stranger.getByRole("alert").textContent())!, /n'accepte plus/);
+    await admin.getByText("Serveur fermé").click();
+    await admin.getByRole("button", { name: "Vue d'ensemble" }).click();
+    await admin.locator(".verdict").waitFor();
+    await shot(admin, "88-admin-vue-ensemble");
+
     await admin.getByRole("button", { name: "Salons" }).click();
     await admin.getByRole("button", { name: "Arrêter le stream de Spoka" }).click();
-    await poll("stream coupé par l'admin", () => phone.locator(".regie").count().then(async () => (await server.hub.stats).streams), n => n === 0, 10_000);
+    await poll("stream coupé par l'admin", async () => server.hub.stats.streams, n => n === 0, 10_000);
+    await admin.getByRole("button", { name: "Diffusions" }).click();
+    await admin.getByRole("heading", { name: "Diffusions terminées" }).waitFor();
+    await admin.getByRole("cell", { name: "Spoka" }).first().waitFor();
     assert.deepEqual(errors, []);
 
     const mobile = await browser.newPage();
@@ -177,7 +387,15 @@ try {
     await mobile.goto(`${base}/admin`);
     await mobile.getByRole("heading", { name: "Vue d'ensemble" }).waitFor();
     assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "le panneau déborde sur un téléphone");
+    assert.ok(await mobile.evaluate(() => document.querySelector(".panel > nav")!.getBoundingClientRect().height < 90), "le menu mange l'écran du téléphone");
     await shot(mobile, "70-admin-telephone");
+    for (const name of ["Système", "Diffusions", "Modération", "Statistiques", "Alertes", "Sauvegardes"]) {
+      await mobile.getByRole("button", { name }).click();
+      await mobile.getByRole("heading", { name, level: 1 }).waitFor();
+      await wait(400);
+      assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name} déborde sur un téléphone`);
+    }
+    await shot(mobile, "79-admin-telephone-page");
 
     return "billet à usage unique, journal, retour reçu, annonce, stream coupé";
   });
@@ -239,10 +457,15 @@ try {
     await modo.getByRole("button", { name: "Créer mon accès" }).click();
     await modo.getByRole("heading", { name: "Vue d'ensemble" }).waitFor();
     assert.equal(await modo.getByRole("button", { name: "Administrateurs" }).count(), 0, "un modérateur ne voit pas les accès");
-    assert.equal(await modo.getByRole("button", { name: "Serveur" }).count(), 0);
+    assert.equal(await modo.getByRole("button", { name: "Réglages" }).count(), 0);
+    assert.equal(await modo.getByRole("button", { name: "Sauvegardes" }).count(), 0);
+    await modo.getByRole("button", { name: "Modération" }).click();
+    await modo.getByRole("heading", { name: "Sanctions en cours" }).waitFor();
+    assert.equal(await modo.getByLabel("Mots interdits, séparés par des virgules").count(), 0, "un modérateur ne change pas les réglages");
+    assert.equal(await modo.evaluate(() => fetch("/admin/api/action", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "setConfig", patch: { closed: true } }) }).then(r => r.status)), 403, "le serveur refuse, l'écran ne fait que masquer");
 
     await page.getByRole("button", { name: "Comptes" }).click();
-    await page.getByRole("button", { name: "Gérer" }).first().click();
+    await page.locator(".card", { hasText: "Spoka" }).getByRole("button", { name: "Gérer" }).click();
     await page.getByLabel("Nouveau pseudo de Spoka").fill("Patron");
     await page.getByRole("button", { name: "Renommer" }).click();
     await page.getByText("Pseudo changé partout.").waitFor();

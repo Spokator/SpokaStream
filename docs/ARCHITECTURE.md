@@ -182,7 +182,13 @@ Il n'y a toujours ni mot de passe ni e-mail. Le jeton d'un appareil donne son id
 
 `userId` reste l'**appareil** : c'est lui qui est membre d'un salon et que WebRTC adresse. `accountId` est la **personne** : propriété des salons, bannissements et profil se décident là. Donner le même `userId` au téléphone aurait été plus simple, et il aurait éjecté le PC du salon à chaque connexion.
 
-La régie à distance passe par le serveur, sans WebRTC : le PC pousse `remote.state` quand quelque chose change, le téléphone envoie `remote.cmd`, et le serveur ne relaie qu'entre appareils du même compte. Ce que le téléphone affiche vient toujours du PC, jamais d'une supposition locale. Le PC n'exécute que la liste fermée de `onRemoteCommand`.
+La régie à distance passe par le serveur, sans WebRTC : le PC pousse `remote.state` quand quelque chose change, le téléphone envoie `remote.cmd`, et le serveur ne relaie qu'entre appareils du même compte. Ce que le téléphone affiche vient toujours du PC, jamais d'une supposition locale. Le PC n'exécute que la liste fermée de `onRemoteCommand`, et il renvoie son état juste après chaque commande : une touche qui s'allume une seconde plus tard donne envie d'appuyer deux fois.
+
+Les salons appartiennent à la personne : `account.rooms` les envoie à chaque connexion et à chaque liaison. Avant, la liste du téléphone ne venait que de sa mémoire locale, et un téléphone lié arrivait sur un accueil vide. Sur l'accueil, un seul champ tente d'abord une liaison, puis un salon : deux champs auraient rejoué l'erreur de mettre le code au mauvais endroit. Le code de liaison peut aussi se saisir à la main, parce que sur iPhone l'icône de l'écran d'accueil et Safari ne partagent pas leur stockage, donc pas leur identité : le QR code ne lie que Safari.
+
+Un PC allumé envoie aussi `remote.state` avec `idle` quand il ne diffuse pas : c'est ce qui dit au téléphone que le PC est là. Il n'y met de quoi lancer un direct que si `allowRemoteStart` est activé, désactivé par défaut puisque cela partage l'écran sans personne devant.
+
+La régie du téléphone (`web/deck.ts`, `web/Deck.tsx`) tient en quinze touches par page, comme un Stream Deck : 5×3 en paysage et 3×5 en portrait, donc tourner le téléphone ne change ni l'ordre ni le nombre de touches. `keyView` calcule ce que montre une touche à partir de l'état du PC, sans rien afficher : c'est ce qui se teste. Une touche qui attend le PC compare son apparence avant et après : si rien ne change dans les délais, elle le signale. La disposition reste sur le téléphone. La régie couvre le salon sans le démonter, pour que la vidéo et le vocal continuent dessous.
 
 ## Panneau d'administration
 
@@ -196,7 +202,21 @@ La session est un cookie `HttpOnly`, `SameSite=Strict`, de 12 h, et toute écrit
 
 Derrière nginx, l'adresse du client est le **dernier** maillon de `X-Forwarded-For` : le début de la liste est écrit par le client, et s'y fier rendrait tout blocage inutile.
 
-Le panneau ne montre ni le contenu du chat ni l'image : il compte, il ne lit pas. La sauvegarde contient en revanche l'historique du chat, puisque c'est son rôle. Le journal et les retours vivent en mémoire : ils repartent de zéro à chaque redémarrage, et journald garde le reste.
+Le panneau montre le chat d'un salon, parce qu'on ne modère pas ce qu'on ne peut pas lire, et chaque ouverture est notée au journal. L'image, elle, ne passe jamais par le serveur. La fiche d'un compte garde ses dernières adresses IP : c'est ce qui permet de voir qu'un banni revient sous un autre compte.
+
+Le journal (`journal.jsonl`) et les retours (`reports.json`) sont écrits sur le disque : c'est après un incident qu'on veut les relire. Les sessions du panneau et les blocages de connexion restent en mémoire : un redémarrage les efface.
+
+### Mesures
+
+`server/metrics.ts` lit `/proc` et les cgroups toutes les 10 secondes : aucun agent à installer, et rien ne change côté coturn ni nginx, qui appartiennent aussi à PinoyBot. Les cgroups donnent le processeur et la mémoire de chaque service, conteneurs compris, ainsi que les limites posées par systemd et le temps passé bridé. Hors de Linux, une mesure absente reste `null` : le panneau dit « pas de mesure » plutôt que zéro. Les points sont gardés 1 h à 10 s, 24 h à la minute et 30 jours au quart d'heure ; en résumant une tranche, une moyenne ferait disparaître les pics de connexions, donc ces mesures gardent le maximum.
+
+Le serveur ne voit passer aucune vidéo. Pour savoir comment va un direct, les appareils envoient `telemetry` toutes les 10 secondes : c'est **déclaré**, pas mesuré par le serveur. Le débit affiché sur le relais vient de là : coturn n'expose rien sans toucher à sa configuration. Une sonde HTTPS passe par l'adresse publique, comme un visiteur, et une requête STUN prouve que le relais répond, pas seulement que son service tourne.
+
+Les alertes (`server/alerts.ts`) ne se déclenchent qu'après avoir tenu le temps prévu. `server/usage.ts` garde 90 jours d'usage et le résumé des 300 dernières diffusions.
+
+### Sauvegardes
+
+`server/backups.ts` copie les fichiers de données dans `data/backups/`. Restaurer ne touche à rien pendant que le serveur tourne : un repère est posé, le serveur s'arrête, et le démarrage suivant remet les fichiers avant que quoi que ce soit ne les lise. Sinon, l'écriture finale de l'arrêt écraserait ce qu'on vient de restaurer. `admin-auth.json` n'en fait pas partie : restaurer une ancienne version ne doit pas ramener un ancien mot de passe. Ces copies sont sur le même disque que l'original : elles protègent d'une erreur, pas de la perte du serveur.
 
 ## SpokaSoundBoard
 
@@ -268,5 +288,4 @@ Santé : `GET /health`. Invitation : `/j/CODE` ouvre l'application, parce que Di
 
 - **Relais vidéo (SFU)** optionnel pour les grands groupes.
 - **Manette** dans la prise en main : il faudrait un pilote de manette virtuelle.
-- **Rôle de modérateur** et mode lent, pour les salons nombreux.
 - **Signature du code**, pour retirer l'avertissement de Windows.

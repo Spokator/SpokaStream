@@ -26,13 +26,20 @@ import type {
   StreamInfo,
   StreamPatch,
   RemoteState,
+  PublishTelemetry,
   Together,
   TogetherItem,
   ViewerQuality,
+  WatchTelemetry,
 } from "../src/shared/protocol.ts";
 import { Accounts } from "./accounts.ts";
+import { DEFAULT_CONFIG, maskWords, olderThan } from "./config.ts";
+import type { ConfigStore, ServerConfig } from "./config.ts";
+import type { Journal } from "./journal.ts";
+import type { Metrics } from "./metrics.ts";
 import type { PushService } from "./push.ts";
 import type { Store, StoredRoom } from "./store.ts";
+import type { Usage } from "./usage.ts";
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const GRACE_MS = 20_000;
@@ -80,6 +87,10 @@ interface Conn {
   web: boolean;
   room: Room | null;
   subscriptions: Set<string>;
+  /** Serveur fermé : cet appareil inconnu peut se rattacher à un compte, mais pas entrer dans un salon. */
+  guest: boolean;
+  lastChat: number;
+  telemetry: { at: number; publish: PublishTelemetry | null; watch: WatchTelemetry[] } | null;
   buckets: Record<"chat" | "image" | "draw" | "reaction" | "signal" | "room" | "misc", Bucket>;
 }
 
@@ -110,6 +121,10 @@ export interface HubOptions {
   accounts?: Accounts;
   /** Les comptes qui ont accès au panneau d'administration. */
   admins?: string[];
+  config?: ConfigStore;
+  metrics?: Metrics;
+  usage?: Usage;
+  journal?: Journal;
   iceServers: (userId: string) => IceServer[];
   serverName?: string;
   graceMs?: number;
@@ -120,6 +135,7 @@ const isString = (v: unknown, max: number): v is string => typeof v === "string"
 /** Après un redémarrage, les streams en cours s'annoncent à nouveau : ce ne sont pas des nouvelles. */
 const PUSH_QUIET_AFTER_BOOT_MS = 60_000;
 const REMOTE_STATE_BYTES = 16_000;
+const TELEMETRY_FRESH_MS = 30_000;
 const MAX_LOGS = 2000;
 const MAX_REPORTS = 300;
 const MAX_REPORT_DETAILS = 20_000;
@@ -149,6 +165,31 @@ const clampNumber = (v: unknown, min: number, max: number, fallback: number) => 
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
 };
+
+const cleanTelemetryPath = (v: { relay?: unknown; protocol?: unknown; rttMs?: unknown; kbps?: unknown }) => ({ kbps: clampNumber(v.kbps, 0, 1_000_000, 0), relay: v.relay === true, protocol: clean(v.protocol, 8), rttMs: v.rttMs == null ? null : clampNumber(v.rttMs, 0, 60_000, 0) });
+
+function cleanPublishTelemetry(p: Partial<PublishTelemetry> | null | undefined): PublishTelemetry | null {
+  if (!p || typeof p !== "object" || !isString(p.streamId, 64)) return null;
+  return {
+    streamId: p.streamId,
+    fps: clampNumber(p.fps, 0, 480, 0),
+    kbps: clampNumber(p.kbps, 0, 1_000_000, 0),
+    height: clampNumber(p.height, 0, 4320, 0),
+    codec: clean(p.codec, 16),
+    encoder: clean(p.encoder, 48),
+    hardware: p.hardware === true,
+    encMs: p.encMs == null ? null : clampNumber(p.encMs, 0, 10_000, 0),
+    limit: clean(p.limit, 16),
+    viewers: (Array.isArray(p.viewers) ? p.viewers : []).slice(0, LIMITS.membersPerRoom).filter(v => v && isString(v.id, 32)).map(v => ({ id: v.id, ...cleanTelemetryPath(v), retransmitPct: Math.max(0, Math.min(100, Number(v.retransmitPct) || 0)) })),
+  };
+}
+
+function cleanWatchTelemetry(list: unknown): WatchTelemetry[] {
+  return (Array.isArray(list) ? (list as Partial<WatchTelemetry>[]) : [])
+    .slice(0, 8)
+    .filter(w => w && isString(w.streamId, 64))
+    .map(w => ({ streamId: w.streamId!, ...cleanTelemetryPath(w), fps: clampNumber(w.fps, 0, 480, 0), height: clampNumber(w.height, 0, 4320, 0), lostPct: Math.max(0, Math.min(100, Number(w.lostPct) || 0)), jitterMs: clampNumber(w.jitterMs, 0, 60_000, 0), freezes: clampNumber(w.freezes, 0, 1_000_000, 0) }));
+}
 
 function cleanProfile(p: Partial<Profile> | undefined): Profile {
   return {
@@ -228,11 +269,23 @@ export class Hub {
   readonly reports: Report[] = [];
   /** Message de maintenance : tant qu'il existe, seuls les propriétaires et les administrateurs entrent. */
   maintenance = "";
+  private readonly configStore: ConfigStore | null;
+  private readonly metrics?: Metrics;
+  private readonly usage?: Usage;
+  private readonly journal?: Journal;
+  /** Pendant un direct : de quoi écrire son résumé quand il s'arrête. */
+  private readonly lives = new Map<string, { peakViewers: number; kbpsSum: number; kbpsCount: number; relaySeen: number; viewersSeen: number; lossSum: number; lossCount: number }>();
 
   constructor(options: HubOptions) {
     this.store = options.store;
     this.push = options.push;
     this.accounts = options.accounts ?? new Accounts();
+    this.configStore = options.config ?? null;
+    this.metrics = options.metrics;
+    this.usage = options.usage;
+    this.journal = options.journal;
+    this.logs.push(...(options.journal?.load() ?? []));
+    this.reports.push(...(options.journal?.loadReports() ?? []));
     this.admins = new Set(options.admins ?? []);
     this.iceServers = options.iceServers;
     this.serverName = options.serverName ?? "SpokaStream";
@@ -248,8 +301,14 @@ export class Hub {
   }
 
   log(level: LogEntry["level"], topic: string, text: string) {
-    this.logs.unshift({ at: this.now(), level, topic, text });
+    const entry = { at: this.now(), level, topic, text };
+    this.logs.unshift(entry);
     this.logs.length = Math.min(this.logs.length, MAX_LOGS);
+    this.journal?.add(entry, this.logs);
+  }
+
+  get config(): ServerConfig {
+    return this.configStore?.value ?? DEFAULT_CONFIG;
   }
 
   // ---------------------------------------------------------------- administration
@@ -274,11 +333,231 @@ export class Hub {
       party: room.together?.title ?? null,
       members: [...room.members.values()].map(({ member }) => ({ id: member.id, account: member.account ?? member.id, name: member.name, color: member.color, online: member.online, web: !!member.web, voice: !!member.voice })),
       streams: [...room.streams.values()].map(s => ({ id: s.id, ownerId: s.ownerId, ownerName: room.members.get(s.ownerId)?.member.name ?? "?", title: s.title, kind: s.kind, width: s.width, height: s.height, fps: s.fps, viewers: s.viewers.length, startedAt: s.startedAt, paused: s.paused })),
+      liveMinutes: room.data.liveMinutes ?? 0,
     }));
   }
 
+  /** Ce qu'il faut pour modérer un salon sans y entrer. */
+  adminRoom(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+    return {
+      name: room.data.name,
+      settings: room.data.settings,
+      history: room.data.history.slice(-200).map(m => ({ id: m.id, at: m.at, kind: m.kind, name: m.authorName, color: m.authorColor, text: m.text, image: !!m.image, clip: !!m.clip })),
+      poll: room.poll ? { id: room.poll.id, question: room.poll.question, closed: room.poll.closed } : null,
+      together: room.together ? { title: room.together.title, playing: room.together.playing, queue: room.together.queue.length } : null,
+      bans: room.data.bans.map(id => ({ id, name: this.adminName(id) })),
+    };
+  }
+
+  /** Comment va chaque direct, vu des deux côtés : ce que le diffuseur envoie et ce que chaque spectateur reçoit vraiment. */
+  adminHealth() {
+    const now = this.now();
+    const fresh = (conn: Conn | null | undefined) => (conn?.telemetry && now - conn.telemetry.at < TELEMETRY_FRESH_MS ? conn.telemetry : null);
+    return [...this.rooms.values()].flatMap(room =>
+      [...room.streams.values()].map(stream => {
+        const owner = room.members.get(stream.ownerId);
+        const sent = fresh(owner?.conn)?.publish;
+        const publish = sent?.streamId === stream.id ? sent : null;
+        return {
+          id: stream.id,
+          roomId: room.data.id,
+          room: room.data.name,
+          ownerId: stream.ownerId,
+          owner: owner?.member.name ?? "?",
+          title: stream.title,
+          kind: stream.kind,
+          startedAt: stream.startedAt,
+          paused: stream.paused,
+          announced: { width: stream.width, height: stream.height, fps: stream.fps },
+          publish: publish && { fps: publish.fps, kbps: publish.kbps, height: publish.height, codec: publish.codec, encoder: publish.encoder, hardware: publish.hardware, encMs: publish.encMs, limit: publish.limit },
+          viewers: stream.viewers.map(id => {
+            const live = room.members.get(id);
+            const sentTo = publish?.viewers.find(v => v.id === id);
+            const seen = fresh(live?.conn)?.watch.find(w => w.streamId === stream.id);
+            return { id, name: live?.member.name ?? "?", web: !!live?.member.web, kbps: seen?.kbps ?? sentTo?.kbps ?? null, fps: seen?.fps ?? null, height: seen?.height ?? null, lostPct: seen?.lostPct ?? null, jitterMs: seen?.jitterMs ?? null, freezes: seen?.freezes ?? null, relay: seen?.relay ?? sentTo?.relay ?? null, protocol: seen?.protocol || sentTo?.protocol || "", rttMs: seen?.rttMs ?? sentTo?.rttMs ?? null };
+          }),
+        };
+      }),
+    );
+  }
+
+  /** Le résumé de l'instant : ce que les courbes du panneau gardent. Tous ces chiffres sont déclarés par les appareils. */
+  telemetrySummary() {
+    let relayed = 0;
+    let direct = 0;
+    let relayKbps = 0;
+    let streamKbps = 0;
+    let loss = 0;
+    let losses = 0;
+    let rtt = 0;
+    let rtts = 0;
+    for (const health of this.adminHealth()) {
+      for (const viewer of health.viewers) {
+        if (viewer.relay === true) {
+          relayed++;
+          relayKbps += viewer.kbps ?? 0;
+        } else if (viewer.relay === false) direct++;
+        streamKbps += viewer.kbps ?? 0;
+        if (viewer.lostPct !== null) {
+          loss += viewer.lostPct;
+          losses++;
+        }
+        if (viewer.rttMs !== null) {
+          rtt += viewer.rttMs;
+          rtts++;
+        }
+      }
+    }
+    return { relayed, direct, relayKbps, streamKbps, lossPct: losses ? +(loss / losses).toFixed(2) : null, rttMs: rtts ? Math.round(rtt / rtts) : null };
+  }
+
+  /** Une minute de plus au compteur : qui diffuse, qui regarde, et ce qu'il faudra écrire à la fin de chaque direct. */
+  tickUsage() {
+    const usage = this.usage;
+    let viewers = 0;
+    let streams = 0;
+    let parties = 0;
+    const health = this.adminHealth();
+    for (const room of this.rooms.values()) {
+      if (room.together?.playing) parties++;
+      if (room.streams.size) room.data.liveMinutes = (room.data.liveMinutes ?? 0) + 1;
+      for (const stream of room.streams.values()) {
+        streams++;
+        viewers += stream.viewers.length;
+        this.accounts.addStats(room.members.get(stream.ownerId)?.member.account ?? stream.ownerId, { streamMinutes: 1 });
+        for (const id of stream.viewers) this.accounts.addStats(room.members.get(id)?.member.account ?? id, { watchMinutes: 1 });
+        const row = health.find(h => h.id === stream.id);
+        const live = this.lives.get(stream.id);
+        if (!live || !row) continue;
+        live.peakViewers = Math.max(live.peakViewers, stream.viewers.length);
+        if (row.publish) {
+          live.kbpsSum += row.publish.kbps;
+          live.kbpsCount++;
+        }
+        for (const viewer of row.viewers) {
+          if (viewer.relay !== null) live.viewersSeen++;
+          if (viewer.relay === true) live.relaySeen++;
+          if (viewer.lostPct !== null) {
+            live.lossSum += viewer.lostPct;
+            live.lossCount++;
+          }
+        }
+      }
+    }
+    if (!usage) return;
+    const summary = this.telemetrySummary();
+    usage.count("streamMinutes", streams);
+    usage.count("watchMinutes", viewers);
+    usage.count("partyMinutes", parties);
+    usage.count("relayMinutes", summary.relayed);
+    usage.count("directMinutes", summary.direct);
+    usage.peak("peakStreams", streams);
+    usage.peak("peakViewers", viewers);
+    usage.connections(this.conns.size);
+  }
+
+  adminMute(accountId: string, until: number, reason: string, by: string) {
+    if (until && this.isAdminAccount(accountId)) return false;
+    if (!this.accounts.setMuted(accountId, until, reason)) return false;
+    this.accounts.addSanction(accountId, { at: this.now(), kind: until ? "mute" : "unmute", by, reason, until });
+    for (const conn of this.conns) if (conn.accountId === accountId && until) this.send(conn, { t: "announce", text: reason ? `Tu ne peux plus écrire pour l'instant : ${reason}` : "Tu ne peux plus écrire pour l'instant.", level: "warning" });
+    return true;
+  }
+
+  adminWarn(accountId: string, text: string, by: string) {
+    this.accounts.addSanction(accountId, { at: this.now(), kind: "warn", by, reason: text, until: 0 });
+    return this.adminMessage(accountId, text);
+  }
+
+  adminDeleteMessage(roomId: string, id: string) {
+    const room = this.rooms.get(roomId);
+    const index = room?.data.history.findIndex(m => m.id === id) ?? -1;
+    if (!room || index < 0) return false;
+    room.data.history.splice(index, 1);
+    if (room.data.pinned?.id === id) {
+      room.data.pinned = null;
+      this.broadcast(room, { t: "chat.pinned", message: null });
+    }
+    this.persist();
+    this.broadcast(room, { t: "chat.deleted", id });
+    return true;
+  }
+
+  adminClearChat(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    for (const message of room.data.history.splice(0)) this.broadcast(room, { t: "chat.deleted", id: message.id });
+    this.persist();
+    return true;
+  }
+
+  adminRoomSay(roomId: string, text: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    this.pushSystem(room, text);
+    return true;
+  }
+
+  adminRoomSettings(roomId: string, patch: { whoCanStream?: unknown; maxKbps?: unknown }) {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    room.data.settings = { ...room.data.settings, whoCanStream: patch.whoCanStream === "owner" ? "owner" : patch.whoCanStream === "everyone" ? "everyone" : room.data.settings.whoCanStream, maxKbps: patch.maxKbps === undefined ? room.data.settings.maxKbps : clampNumber(patch.maxKbps, 0, 500_000, 0) };
+    this.persist();
+    this.broadcast(room, { t: "room.updated", name: room.data.name, settings: room.data.settings });
+    return true;
+  }
+
+  adminStopAll(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    for (const stream of [...room.streams.values()]) this.stopStreamOf(room, stream.ownerId);
+    return true;
+  }
+
+  adminStopParty(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room?.together) return false;
+    room.together = null;
+    this.pushTogether(room);
+    return true;
+  }
+
+  adminClosePoll(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room?.poll) return false;
+    room.poll.closed = true;
+    this.broadcast(room, { t: "poll", poll: room.poll });
+    return true;
+  }
+
+  /** Coupe tout de suite les connexions d'une adresse qu'on vient de bloquer. */
+  adminDropIp(ip: string) {
+    for (const conn of this.conns) if (conn.transport.ip === ip) conn.transport.close(4003, "admin");
+  }
+
+  private ipBlocked(ip: string) {
+    const now = this.now();
+    return this.config.blockedIps.some(row => row.ip === ip && (!row.until || row.until > now));
+  }
+
+  /** Ceux que le panneau a écartés et qui le sont encore. */
+  adminSanctions() {
+    const now = this.now();
+    return this.accounts
+      .list()
+      .filter(a => a.banned || (a.mutedUntil && a.mutedUntil > now))
+      .map(a => ({ id: a.id, name: a.name, banned: !!a.banned, banReason: a.banReason ?? "", bannedUntil: a.bannedUntil ?? 0, mutedUntil: a.mutedUntil ?? 0, muteReason: a.muteReason ?? "" }));
+  }
+
+  /** Les connexions en cours, y compris celles qui ne sont dans aucun salon. */
+  adminConnections() {
+    return [...this.conns].map(conn => ({ name: conn.profile?.name ?? "", accountId: conn.accountId, client: conn.web ? "site" : "application", version: conn.device.version, label: conn.device.label, ip: conn.transport.ip, room: conn.room?.data.name ?? null, guest: conn.guest }));
+  }
+
   private adminName(accountId: string) {
-    return this.accounts.list().find(a => a.id === accountId)?.name ?? "?";
+    return this.accounts.profileOf(accountId)?.name ?? "?";
   }
 
   adminUsers() {
@@ -347,8 +626,9 @@ export class Hub {
     return true;
   }
 
-  adminBan(accountId: string, banned: boolean, reason = "") {
-    if ((banned && this.isAdminAccount(accountId)) || !this.accounts.setBanned(accountId, banned, reason)) return false;
+  adminBan(accountId: string, banned: boolean, reason = "", until = 0, by = "") {
+    if ((banned && this.isAdminAccount(accountId)) || !this.accounts.setBanned(accountId, banned, reason, until)) return false;
+    this.accounts.addSanction(accountId, { at: this.now(), kind: banned ? "ban" : "unban", by, reason, until });
     if (banned) this.adminDisconnect(accountId, 4003);
     return true;
   }
@@ -440,11 +720,13 @@ export class Hub {
   get stats() {
     let members = 0;
     let streams = 0;
+    let viewers = 0;
     for (const room of this.rooms.values()) {
       members += room.members.size;
       streams += room.streams.size;
+      for (const stream of room.streams.values()) viewers += stream.viewers.length;
     }
-    return { rooms: this.rooms.size, connections: this.conns.size, members, streams };
+    return { rooms: this.rooms.size, connections: this.conns.size, members, streams, viewers };
   }
 
   connect(transport: Transport) {
@@ -459,6 +741,9 @@ export class Hub {
       web: false,
       room: null,
       subscriptions: new Set(),
+      guest: false,
+      lastChat: 0,
+      telemetry: null,
       buckets: {
         chat: new Bucket(3, 12, now),
         image: new Bucket(0.2, 4, now),
@@ -470,11 +755,13 @@ export class Hub {
       },
     };
     this.conns.add(conn);
+    if (this.metrics) this.metrics.traffic.wsOpen++;
     return conn;
   }
 
   disconnect(conn: Conn) {
     this.conns.delete(conn);
+    if (this.metrics) this.metrics.traffic.wsClose++;
     if (conn.remote) for (const sibling of this.siblings(conn)) this.send(sibling, { t: "remote.state", state: null });
     const room = conn.room;
     if (!room || !conn.userId) return;
@@ -498,6 +785,15 @@ export class Hub {
       return this.fail(conn, "bad_request");
     }
     if (!msg || typeof msg !== "object" || typeof msg.t !== "string") return this.fail(conn, "bad_request");
+    if (this.metrics) {
+      this.metrics.traffic.msgIn++;
+      this.metrics.traffic.wsIn += raw.length;
+      const row = this.metrics.messageTypes.get(msg.t);
+      if (row) {
+        row.count++;
+        row.bytes += raw.length;
+      } else if (this.metrics.messageTypes.size < 64) this.metrics.messageTypes.set(msg.t, { count: 1, bytes: raw.length });
+    }
     if (msg.t === "hello") return this.onHello(conn, msg);
     if (msg.t === "ping") return this.send(conn, { t: "pong", at: Number(msg.at) || 0 });
     if (!conn.userId) return this.reply(conn, msg, false, "not_authenticated");
@@ -553,6 +849,9 @@ export class Hub {
         return this.reply(conn, msg, true, undefined, this.accounts.devicesOf(conn.accountId!).map(({ id, label, client, version, addedAt, lastSeen }) => ({ id, label, client, version, addedAt, lastSeen, online: [...this.conns].some(c => c.userId === id), self: id === conn.userId, primary: id === conn.accountId })));
       case "account.revoke":
         return this.onAccountRevoke(conn, msg);
+      case "account.forget":
+        if (isString(msg.id, 32)) this.accounts.forgetRoom(conn.accountId!, msg.id);
+        return;
       case "admin.ticket":
         if (!this.isAdmin(conn.accountId!) || !this.onTicket) return this.reply(conn, msg, false, "forbidden");
         return this.reply(conn, msg, true, undefined, { ticket: this.onTicket(conn.accountId!) });
@@ -566,6 +865,11 @@ export class Hub {
         if (!conn.buckets.room.take(now) || !isString(msg.text, 4000)) return;
         this.reports.unshift({ id: randomBytes(6).toString("hex"), at: now, kind: msg.kind === "feedback" ? "feedback" : "error", name: conn.profile?.name ?? "?", accountId: conn.accountId!, client: conn.web ? "web" : "app", text: msg.text, details: isString(msg.details, MAX_REPORT_DETAILS) ? msg.details : "" });
         this.reports.length = Math.min(this.reports.length, MAX_REPORTS);
+        this.journal?.saveReports(this.reports);
+        return;
+      case "telemetry":
+        if (!conn.buckets.misc.take(now)) return;
+        conn.telemetry = { at: now, publish: cleanPublishTelemetry(msg.publish), watch: cleanWatchTelemetry(msg.watch) };
         return;
       case "voice.set": {
         const live = this.liveOf(conn);
@@ -691,22 +995,53 @@ export class Hub {
   private onHello(conn: Conn, msg: Extract<ClientMessage, { t: "hello" }>) {
     if (msg.protocol !== PROTOCOL_VERSION) return this.reply(conn, msg, false, "version");
     if (typeof msg.token !== "string" || !/^[0-9a-f]{64}$/.test(msg.token)) return this.reply(conn, msg, false, "bad_request");
+    if (this.ipBlocked(conn.transport.ip)) {
+      this.reply(conn, msg, false, "banned");
+      return conn.transport.close(4003, "blocked");
+    }
     // Pas de compte : le jeton aléatoire de l'appareil EST l'identité. Le serveur n'en garde que l'empreinte.
     const deviceId = createHash("sha256").update(msg.token).digest("hex").slice(0, 24);
     const web = msg.client === "web";
     const device = { client: web ? ("web" as const) : ("app" as const), version: clean(msg.version, 24), label: clean(msg.device, 60) };
-    const known = this.accounts.seen(deviceId, cleanProfile(msg.profile), device, this.now());
-    if (this.accounts.isBanned(known.accountId)) return this.reply(conn, msg, false, "banned");
+    const { closed, minVersion, webViewers, motd } = this.config;
+    if (!web && minVersion && device.version && olderThan(device.version, minVersion)) return this.reply(conn, msg, false, "version");
+    const fresh = this.accounts.isNew(deviceId);
+    // Serveur fermé, ou site réservé aux comptes connus : un inconnu n'est pas enregistré. Il peut seulement présenter un code de liaison, qui en fera un appareil connu.
+    const guest = fresh && (closed || (web && !webViewers));
+    const known = guest ? { accountId: deviceId, profile: cleanProfile(msg.profile) } : this.accounts.seen(deviceId, cleanProfile(msg.profile), device, this.now());
+    if (this.accounts.isBanned(known.accountId, this.now())) return this.reply(conn, msg, false, "banned");
     conn.userId = deviceId;
     conn.accountId = known.accountId;
     conn.device = device;
     conn.profile = known.profile;
     conn.web = web;
+    conn.guest = guest;
+    if (!guest) {
+      this.accounts.noteIp(known.accountId, conn.transport.ip, this.now());
+      this.usage?.seen(known.accountId);
+      this.usage?.connections(this.conns.size);
+      this.usage?.count(web ? "webConnections" : "appConnections");
+      if (fresh) this.usage?.count("newAccounts");
+    }
     this.send(conn, { t: "welcome", userId: deviceId, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers: this.iceServers(deviceId), serverName: this.serverName });
     this.send(conn, { t: "account.sync", profile: known.profile });
-    for (const sibling of this.siblings(conn)) if (sibling.remote) this.send(conn, { t: "remote.state", state: sibling.remote });
+    this.sendRooms(conn);
+    // Un PC en direct passe après un PC au repos : c'est lui que le téléphone doit garder sous les yeux.
+    for (const sibling of this.siblings(conn).filter(s => s.remote).sort((a, b) => Number(!!b.remote!.idle) - Number(!!a.remote!.idle))) this.send(conn, { t: "remote.state", state: sibling.remote });
     if (this.maintenance) this.send(conn, { t: "announce", text: this.maintenance, level: "warning" });
+    else if (motd) this.send(conn, { t: "announce", text: motd, level: "info" });
     this.reply(conn, msg, true);
+  }
+
+  /** Les salons appartiennent à la personne, pas à l'appareil : ceux dont elle est propriétaire, puis ceux qu'elle fréquente. */
+  private roomsOf(accountId: string) {
+    const owned = [...this.rooms.values()].filter(room => room.data.ownerId === accountId).sort((a, b) => b.data.lastActivity - a.data.lastActivity);
+    const visited = this.accounts.roomsOf(accountId).flatMap(id => this.rooms.get(id) ?? []);
+    return [...new Set([...visited, ...owned])].slice(0, 24).map(room => ({ id: room.data.id, code: room.data.code, name: room.data.name }));
+  }
+
+  private sendRooms(conn: Conn) {
+    if (!conn.guest) this.send(conn, { t: "account.rooms", rooms: this.roomsOf(conn.accountId!) });
   }
 
   private owns(room: Room, conn: Conn) {
@@ -736,18 +1071,24 @@ export class Hub {
     this.joinFailures.set(conn.transport.ip, bucket);
     const before = conn.accountId!;
     const accountId = this.accounts.claim(String(msg.code ?? ""), conn.userId!, this.now());
+    if (accountId === "same") return this.reply(conn, msg, true, undefined, { already: true });
     if (!accountId) return this.reply(conn, msg, false, bucket.take(this.now()) ? "bad_request" : "rate_limited");
     // Ce qui appartenait à l'appareil seul suit la personne.
     for (const room of this.rooms.values()) if (room.data.ownerId === before) room.data.ownerId = accountId;
     this.persist();
     conn.accountId = accountId;
+    conn.guest = false;
     this.log("info", "compte", `Appareil rattaché à ${conn.profile?.name ?? "?"}`);
     this.leaveRoom(conn);
     const known = this.accounts.seen(conn.userId!, conn.profile!, conn.device, this.now());
     conn.profile = known.profile;
     this.send(conn, { t: "welcome", userId: conn.userId!, accountId, admin: this.isAdmin(accountId), iceServers: this.iceServers(conn.userId!), serverName: this.serverName });
     this.send(conn, { t: "account.sync", profile: known.profile });
-    for (const sibling of this.siblings(conn)) if (sibling.remote) this.send(conn, { t: "remote.state", state: sibling.remote });
+    this.sendRooms(conn);
+    for (const sibling of this.siblings(conn)) {
+      this.send(sibling, { t: "account.linked", label: conn.device.label || "Un appareil" });
+      if (sibling.remote) this.send(conn, { t: "remote.state", state: sibling.remote });
+    }
     this.reply(conn, msg, true);
   }
 
@@ -767,9 +1108,11 @@ export class Hub {
     const name = clean(rawName, LIMITS.roomName);
     const ack = (ok: boolean, error?: ErrorCode, data?: unknown) => rid !== undefined && this.send(conn, { t: "ack", rid, ok, error, data });
     if (!name) return ack(false, "bad_request");
+    if (conn.guest) return ack(false, "closed");
     if (this.maintenance && !this.isAdmin(conn.accountId!)) return ack(false, "maintenance");
+    if (this.config.roomCreation === "admins" && !this.isAdmin(conn.accountId!)) return ack(false, "disabled");
     const owned = [...this.rooms.values()].filter(r => r.data.ownerId === conn.accountId).length;
-    if (owned >= LIMITS.roomsPerUser) return ack(false, "too_many_rooms");
+    if (owned >= Math.min(this.config.maxRooms, LIMITS.roomsPerUser)) return ack(false, "too_many_rooms");
     const now = this.now();
     const data: StoredRoom = {
       id: randomBytes(9).toString("base64url"),
@@ -786,6 +1129,7 @@ export class Hub {
     this.rooms.set(data.id, room);
     this.byCode.set(data.code, data.id);
     this.persist();
+    this.usage?.count("roomsCreated");
     this.log("info", "salon", `${conn.profile?.name ?? "?"} crée « ${name} »`);
     this.enter(conn, room);
     ack(true, undefined, { id: data.id, code: data.code });
@@ -795,6 +1139,7 @@ export class Hub {
     const code = clean(msg.code, 16).toUpperCase().replace(/[^A-Z0-9]/g, "");
     const id = isString(msg.id, 32) ? msg.id : "";
     const room = this.rooms.get(id || this.byCode.get(code) || "");
+    if (conn.guest) return this.reply(conn, msg, false, "closed");
     if (!room) {
       // Un code fait 8 caractères : on empêche surtout d'en essayer à la chaîne depuis une même adresse.
       const bucket = this.joinFailures.get(conn.transport.ip) ?? new Bucket(0.2, 12, this.now());
@@ -807,7 +1152,7 @@ export class Hub {
     const isOwner = this.owns(room, conn);
     if (this.maintenance && !isOwner && !this.isAdmin(conn.accountId!)) return this.reply(conn, msg, false, "maintenance");
     if (!already && room.data.settings.locked && !isOwner) return this.reply(conn, msg, false, "room_locked");
-    if (!already && room.members.size >= LIMITS.membersPerRoom) return this.reply(conn, msg, false, "room_full");
+    if (!already && room.members.size >= Math.min(this.config.maxMembers, LIMITS.membersPerRoom)) return this.reply(conn, msg, false, "room_full");
     this.enter(conn, room);
     this.reply(conn, msg, true, undefined, { id: room.data.id, code: room.data.code });
   }
@@ -815,6 +1160,7 @@ export class Hub {
   private enter(conn: Conn, room: Room) {
     if (conn.room && conn.room !== room) this.leaveRoom(conn);
     const userId = conn.userId!;
+    if (this.accounts.noteRoom(conn.accountId!, room.data.id)) for (const device of [conn, ...this.siblings(conn)]) this.sendRooms(device);
     const existing = room.members.get(userId);
     if (existing) {
       if (existing.grace) clearTimeout(existing.grace);
@@ -922,11 +1268,19 @@ export class Hub {
     const room = conn.room;
     const live = this.liveOf(conn);
     if (!room || !live) return;
+    if (this.accounts.isMuted(conn.accountId!, this.now())) return this.fail(conn, "muted");
+    const { slowSeconds, words } = this.config;
+    if (slowSeconds && !this.owns(room, conn) && this.now() - conn.lastChat < slowSeconds * 1000) return this.fail(conn, "rate_limited");
     const clip = cleanClip(rawClip);
     // Le texte d'un clip n'est lu que par les versions qui ne savent pas l'afficher.
-    const text = clip ? `🎬 Clip de ${clip.seconds} s` : typeof rawText === "string" ? rawText.trim().slice(0, LIMITS.chat) : "";
+    const written = clip ? `🎬 Clip de ${clip.seconds} s` : typeof rawText === "string" ? rawText.trim().slice(0, LIMITS.chat) : "";
+    const text = maskWords(written, words);
+    if (text !== written) this.log("warning", "modération", `Message de ${live.member.name} filtré dans « ${room.data.name} »`);
     const image = isDataImage(rawImage, LIMITS.image) ? rawImage : null;
     if (!text && !image) return;
+    conn.lastChat = this.now();
+    this.usage?.count("messages");
+    this.accounts.addStats(conn.accountId!, { messages: 1 });
     const message: ChatMessage = {
       id: randomBytes(8).toString("hex"),
       authorId: live.member.id,
@@ -1029,6 +1383,7 @@ export class Hub {
     const live = this.liveOf(conn);
     if (!room || !live) return;
     if (!this.canShare(room, conn)) return this.fail(conn, "forbidden");
+    if (!this.config.watchParty) return this.fail(conn, "disabled");
     const url = videoUrl(msg.url);
     const videoId = url ? randomBytes(6).toString("hex") : typeof msg.videoId === "string" ? youtubeId(msg.videoId) : null;
     if (!videoId) return this.fail(conn, "bad_request");
@@ -1036,6 +1391,7 @@ export class Hub {
     const item: TogetherItem = { videoId, title: clean(msg.title, LIMITS.title) || "Vidéo", byName: live.member.name, ...(url ? { url } : {}), ...(subtitles ? { subtitles } : {}) };
     if (!room.together) {
       room.together = { ...item, playing: true, position: 0, anchor: this.now(), queue: [] };
+      this.usage?.count("parties");
       this.pushSystem(room, `${live.member.name} lance « ${item.title} »`);
       this.notifyPhones(room, `party:${item.videoId}`, conn.userId!, `Watch Party dans ${room.data.name}`, `${live.member.name} lance « ${item.title} »`);
     } else {
@@ -1136,6 +1492,9 @@ export class Hub {
     room.statusThumbAt = 0;
     room.streams.set(id, stream);
     room.qualities.set(id, new Map());
+    this.lives.set(id, { peakViewers: 0, kbpsSum: 0, kbpsCount: 0, relaySeen: 0, viewersSeen: 0, lossSum: 0, lossCount: 0 });
+    this.usage?.count("streams");
+    this.accounts.addStats(conn.accountId!, { streams: 1 });
     this.broadcast(room, { t: "stream.add", stream });
     this.pushSystem(room, `${conn.profile!.name} a lancé un stream`);
     this.touchStatus(room);
@@ -1167,9 +1526,34 @@ export class Hub {
       if (stream.ownerId !== userId) continue;
       room.streams.delete(stream.id);
       room.qualities.delete(stream.id);
+      this.writeSession(room, stream);
       this.broadcast(room, { t: "stream.remove", id: stream.id });
       this.touchStatus(room);
     }
+  }
+
+  private writeSession(room: Room, stream: StreamInfo) {
+    const live = this.lives.get(stream.id);
+    this.lives.delete(stream.id);
+    const member = room.members.get(stream.ownerId)?.member;
+    const endedAt = this.now();
+    this.usage?.session({
+      id: stream.id,
+      startedAt: stream.startedAt,
+      endedAt,
+      accountId: member?.account ?? stream.ownerId,
+      name: member?.name ?? "?",
+      room: room.data.name,
+      title: stream.title,
+      kind: stream.kind,
+      height: stream.height,
+      fps: stream.fps,
+      peakViewers: Math.max(live?.peakViewers ?? 0, stream.viewers.length),
+      kbps: live?.kbpsCount ? Math.round(live.kbpsSum / live.kbpsCount) : 0,
+      relayShare: live?.viewersSeen ? Math.round((live.relaySeen / live.viewersSeen) * 100) : 0,
+      lossPct: live?.lossCount ? +(live.lossSum / live.lossCount).toFixed(2) : 0,
+    });
+    this.log("info", "stream", `${member?.name ?? "?"} arrête son stream dans « ${room.data.name} » après ${Math.round((endedAt - stream.startedAt) / 60_000)} min`);
   }
 
   private onStreamWatch(conn: Conn, msg: Extract<ClientMessage, { t: "stream.watch" }>) {
@@ -1268,15 +1652,24 @@ export class Hub {
   private broadcast(room: Room, msg: ServerMessage, exceptUserId?: string) {
     const data = JSON.stringify(msg);
     for (const [userId, live] of room.members) {
-      if (userId !== exceptUserId && live.conn) live.conn.transport.send(data);
+      if (userId !== exceptUserId && live.conn) this.write(live.conn, data);
     }
   }
 
+  private write(conn: Conn, data: string) {
+    if (this.metrics) {
+      this.metrics.traffic.msgOut++;
+      this.metrics.traffic.wsOut += data.length;
+    }
+    conn.transport.send(data);
+  }
+
   private send(conn: Conn, msg: ServerMessage) {
-    conn.transport.send(JSON.stringify(msg));
+    this.write(conn, JSON.stringify(msg));
   }
 
   private fail(conn: Conn, error: ErrorCode) {
+    if (this.metrics && error === "rate_limited") this.metrics.traffic.rejected++;
     this.send(conn, { t: "error", error });
   }
 

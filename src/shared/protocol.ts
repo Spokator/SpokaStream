@@ -199,9 +199,46 @@ export interface RemoteState {
   /** Nom de qui demande la main, et de qui l'a. */
   controlAsk: string | null;
   controller: string | null;
+  /** Le stream lui-même : le téléphone y envoie ses réactions. */
+  streamId?: string;
+  allowDraw?: boolean;
+  /** Ce que le PC a confirmé avoir fait : la touche du téléphone compte sur ces chiffres, pas sur le toucher. */
+  clips?: number;
+  markers?: number;
+  /** Le PC est allumé mais ne diffuse pas : le téléphone peut proposer de lancer le direct. */
+  idle?: boolean;
+  /** De quoi lancer depuis le téléphone, si le PC l'autorise. */
+  launch?: { rooms: { id: string; name: string }[]; scenes: { id: string; name: string }[]; last: string | null } | null;
 }
 
-export type RemoteCommand = "pause" | "resume" | "screen" | "scene" | "mute" | "deafen" | "camera" | "record" | "clip" | "marker" | "clear" | "title" | "banner" | "mixVolume" | "mixMute" | "kick" | "stop" | "controlAccept" | "controlRefuse" | "controlEnd" | "filePlay" | "fileSeek";
+export type RemoteCommand = "pause" | "resume" | "screen" | "scene" | "mute" | "deafen" | "camera" | "record" | "clip" | "marker" | "clear" | "title" | "banner" | "mixVolume" | "mixMute" | "kick" | "stop" | "controlAccept" | "controlRefuse" | "controlEnd" | "filePlay" | "fileSeek" | "allowDraw" | "goLive";
+
+/** Ce qu'un PC mesure de son direct. Le serveur ne voit passer aucune vidéo : pour qu'un administrateur sache comment va un stream, il faut que les appareils le disent. */
+export interface PublishTelemetry {
+  streamId: string;
+  fps: number;
+  kbps: number;
+  height: number;
+  codec: string;
+  encoder: string;
+  hardware: boolean;
+  encMs: number | null;
+  limit: string;
+  viewers: { id: string; kbps: number; relay: boolean; protocol: string; rttMs: number | null; retransmitPct: number }[];
+}
+
+export interface WatchTelemetry {
+  streamId: string;
+  fps: number;
+  kbps: number;
+  height: number;
+  lostPct: number;
+  jitterMs: number;
+  freezes: number;
+  relay: boolean;
+  protocol: string;
+  rttMs: number | null;
+}
 
 export interface RoomStatus {
   id: string;
@@ -246,7 +283,10 @@ export type ErrorCode =
   | "too_many_rooms"
   | "viewer_limit"
   | "stream_not_found"
-  | "maintenance";
+  | "maintenance"
+  | "muted"
+  | "closed"
+  | "disabled";
 
 /** Un geste de la personne qui a la main. Les coordonnées vont de 0 à 1 dans l'image. */
 export type ControlInput =
@@ -299,6 +339,8 @@ export type ClientMessage =
   | { t: "remote.state"; state: RemoteState | null }
   | { t: "remote.cmd"; cmd: RemoteCommand; arg?: string | number | boolean }
   | { t: "report"; kind: "error" | "feedback"; text: string; details?: string }
+  | { t: "telemetry"; publish?: PublishTelemetry | null; watch?: WatchTelemetry[] }
+  | { t: "account.forget"; id: string }
   | { t: "push.subscribe"; endpoint: string; p256dh: string; auth: string; rooms: string[] }
   | { t: "push.unsubscribe"; endpoint: string }
   | { t: "reaction"; streamId: string | null; emoji: string }
@@ -329,6 +371,10 @@ export type ServerMessage =
   | { t: "account.sync"; profile: Profile }
   | { t: "remote.state"; state: RemoteState | null }
   | { t: "remote.cmd"; cmd: RemoteCommand; arg?: string | number | boolean }
+  /** Les salons de la personne : ils la suivent sur tous ses appareils. */
+  | { t: "account.rooms"; rooms: { id: string; code: string; name: string }[] }
+  /** Un appareil vient de rejoindre le compte : le PC qui montrait le QR code peut le dire. */
+  | { t: "account.linked"; label: string }
   | { t: "announce"; text: string; level: "info" | "warning" }
   | { t: "room.state"; room: RoomState }
   | { t: "room.updated"; name: string; settings: RoomSettings }

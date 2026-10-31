@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { WebSocketServer, type WebSocket } from "ws";
 import { LIMITS } from "../src/shared/protocol.ts";
@@ -8,9 +9,13 @@ import type { IceServer } from "../src/shared/protocol.ts";
 import { AdminPanel } from "./admin.ts";
 import type { AdminAuth } from "./adminAuth.ts";
 import type { Accounts } from "./accounts.ts";
+import { ConfigStore } from "./config.ts";
 import { Hub } from "./hub.ts";
+import { Journal } from "./journal.ts";
+import { Metrics } from "./metrics.ts";
 import type { PushService } from "./push.ts";
 import type { Store } from "./store.ts";
+import { Usage } from "./usage.ts";
 import { HLS_JS, ICON_192, ICON_512, VIEWER_HTML, VIEWER_JS } from "./viewer.gen.ts";
 
 export interface ServerOptions {
@@ -34,6 +39,8 @@ export interface ServerOptions {
   /** Sous systemd, quitter revient à redémarrer. */
   canRestart?: boolean;
   adminAuth?: AdminAuth;
+  /** Le nom du service systemd : ses limites de mémoire et de processeur se lisent dans son cgroup. */
+  serviceName?: string;
 }
 
 export interface RunningServer {
@@ -271,10 +278,25 @@ send({ type: "ready" });
 
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const downloadUrl = options.downloadUrl ?? "https://github.com/Spokator/SpokaStream/releases/latest";
-  const hub = new Hub({ store: options.store, serverName: options.serverName, push: options.push, accounts: options.accounts, admins: options.admins, iceServers: userId => iceServersFor(userId, options) });
-  const admin = new AdminPanel({ hub, store: options.store, push: options.push, dataDir: options.dataDir, canRestart: options.canRestart, auth: options.adminAuth });
+  const data = (file: string) => options.dataDir && path.join(options.dataDir, file);
+  const config = new ConfigStore(data("config.json"));
+  const usage = new Usage(data("usage.json"));
+  const metrics = new Metrics({
+    file: data("metrics.json"),
+    stunHost: options.turnHost,
+    self: options.serviceName,
+    source: () => ({ ...hub.stats, ...hub.telemetrySummary() }),
+  });
+  const hub = new Hub({ store: options.store, serverName: options.serverName, push: options.push, accounts: options.accounts, admins: options.admins, config, metrics, usage, journal: new Journal(options.dataDir), iceServers: userId => iceServersFor(userId, options) });
+  const admin = new AdminPanel({ hub, store: options.store, metrics, usage, config, push: options.push, dataDir: options.dataDir, canRestart: options.canRestart, auth: options.adminAuth });
 
   const server = http.createServer((req, res) => {
+    const started = performance.now();
+    metrics.traffic.http++;
+    res.once("finish", () => {
+      metrics.traffic.httpMs += performance.now() - started;
+      if (res.statusCode >= 500) metrics.traffic.httpErrors++;
+    });
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname.startsWith("/admin") && admin.handle(req, res, url, clientIp(req, options))) return;
     if (url.pathname === "/health") {

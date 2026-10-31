@@ -5,7 +5,6 @@ import { LIMITS } from "@shared/protocol.ts";
 import type { ChatMessage, Member, StreamInfo } from "@shared/protocol.ts";
 import { compressImage } from "../src/renderer/src/ui/image.ts";
 import { canShare, choose, closeMini, fetchClip, joinVoice, leaveRoom, leaveVoice, nameOf, openMini, pollVote, react, REACTIONS, reactChat, sendChat, sendTyping, setTalking, toggleDeafen, toggleMic, togglePush } from "./client.ts";
-import { RegiePane } from "./Regie.tsx";
 import { get, set, TOGETHER, useApp } from "./store.ts";
 import type { Tab } from "./store.ts";
 
@@ -487,7 +486,6 @@ export function VoiceButton() {
 }
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "regie", label: "Régie" },
   { id: "chat", label: "Chat" },
   { id: "live", label: "En direct" },
   { id: "room", label: "Salon" },
@@ -503,7 +501,12 @@ export function Panes() {
   return (
     <section class="panes" aria-label="Salon">
       <div class="tabs" role="tablist">
-        {TABS.filter(t => t.id !== "regie" || remote).map(t => (
+        {remote && (
+          <button type="button" class="tab-regie" onClick={() => set({ deckOpen: true })}>
+            Régie
+          </button>
+        )}
+        {TABS.map(t => (
           <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} class={tab === t.id ? "is-on" : ""} onClick={() => set({ tab: t.id, ...(t.id === "chat" ? { unread: 0 } : {}) })}>
             {t.label}
             {badge(t.id) > 0 && <em class={t.id === "chat" ? "is-alert" : ""}>{badge(t.id)}</em>}
@@ -514,7 +517,6 @@ export function Panes() {
         </button>
       </div>
       <div class="pane">
-        {tab === "regie" && <RegiePane />}
         {tab === "chat" && <Chat />}
         {tab === "live" && <Live />}
         {tab === "room" && <Salon />}

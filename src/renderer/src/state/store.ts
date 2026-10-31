@@ -105,6 +105,8 @@ interface AppState {
   userId: string;
   /** Le compte : plusieurs appareils peuvent le partager. */
   accountId: string;
+  /** Quand un autre appareil vient de rejoindre le compte. */
+  linkedAt: number;
   /** Ce compte a accès au panneau d'administration. */
   admin: boolean;
   iceServers: IceServer[];
@@ -161,6 +163,7 @@ export const useApp = create<AppState>(() => ({
   unreachable: false,
   userId: "",
   accountId: "",
+  linkedAt: 0,
   admin: false,
   iceServers: [],
   serverName: "",

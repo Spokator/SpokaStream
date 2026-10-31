@@ -69,8 +69,13 @@ const ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
   too_many_rooms: "Tu as atteint le nombre maximum de salons.",
   viewer_limit: "Ce stream a atteint sa limite de spectateurs.",
   stream_not_found: "Ce stream vient de se terminer.",
+  muted: "Tu ne peux plus écrire pour l'instant.",
+  closed: "Ce serveur n'accepte plus de nouveaux appareils.",
+  disabled: "L'administrateur a désactivé cette fonction.",
+  maintenance: "Le serveur est en maintenance, réessaie dans un moment.",
 };
 
+const TELEMETRY_MS = 10_000;
 const LAYOUT_SEND_MS = 80;
 const HEALTH_POINTS = 120;
 const ACTIVITY_ITEMS = 120;
@@ -149,6 +154,7 @@ class Core {
   private lastSolo: string | null = null;
   private fileLoop = false;
   private lastRemote = "";
+  private clipsSaved = 0;
   private fileSeek = false;
 
   async boot() {
@@ -203,6 +209,7 @@ class Core {
     this.watchErrors();
 
     this.timers.push(setInterval(() => void this.pollStats(), 1000));
+    this.timers.push(setInterval(() => this.sendTelemetry(), TELEMETRY_MS));
     this.timers.push(setInterval(() => this.pollSpeaking(), 120));
     this.timers.push(setInterval(() => this.expireTyping(), 1000));
     this.timers.push(setInterval(() => this.followClips(), 1500));
@@ -263,8 +270,14 @@ class Core {
         return set({ userId: m.userId, accountId: m.accountId ?? m.userId, admin: !!m.admin, iceServers: m.iceServers, serverName: m.serverName });
       case "account.sync":
         return void this.applyAccountProfile(m.profile);
+      case "account.rooms":
+        return this.onAccountRooms(m.rooms);
+      case "account.linked":
+        toast(`${m.label} est lié à ton compte`, "success");
+        return set({ linkedAt: Date.now() });
       case "remote.cmd":
-        return void this.onRemoteCommand(m.cmd, m.arg);
+        // Le téléphone voit le résultat tout de suite : une touche qui s'allume une seconde plus tard donne envie d'appuyer deux fois.
+        return void this.onRemoteCommand(m.cmd, m.arg).finally(() => this.pushRemote());
       case "announce":
         return toast(m.text, m.level === "warning" ? "warning" : "info", 12_000);
       case "room.state":
@@ -486,6 +499,17 @@ class Core {
     set({ settings: await api.setSettings({ profile }) });
   }
 
+  /** Les salons du compte rejoignent ceux que ce PC connaissait : un PC rattaché les retrouve tout de suite. */
+  private onAccountRooms(rooms: { id: string; code: string; name: string }[]) {
+    const { recentRooms } = get().settings ?? { recentRooms: [] };
+    const known = new Set(recentRooms.map(r => r.id));
+    const added = rooms.filter(r => !known.has(r.id)).map(r => ({ ...r, at: 0 }));
+    if (!added.length) return;
+    const next = [...recentRooms, ...added].slice(0, 30);
+    void this.updateSettings({ recentRooms: next });
+    this.signal.send({ t: "room.subscribe", ids: next.map(r => r.id) });
+  }
+
   linkDevice() {
     return this.signal.request<{ code: string; expires: number }>({ t: "account.link" });
   }
@@ -531,9 +555,11 @@ class Core {
   private pushRemote() {
     const { publish, room, settings, muted, deafened, recording } = get();
     const name = (id: string | null) => (id ? (memberOf(id)?.name ?? "?") : null);
-    const state: RemoteState | null =
-      publish && room && settings
-        ? {
+    const state: RemoteState | null = !settings
+      ? null
+      : !publish || !room
+        ? this.idleRemote(settings)
+        : {
             roomId: room.id,
             roomName: room.name,
             roomCode: room.code,
@@ -556,16 +582,79 @@ class Core {
             file: publish.file ? { playing: publish.file.playing, time: Math.floor(publish.file.time), duration: publish.file.duration } : null,
             controlAsk: name(publish.controlAsk),
             controller: name(publish.controller),
-          }
-        : null;
+            streamId: publish.streamId,
+            allowDraw: publish.allowDraw,
+            clips: this.clipsSaved,
+            markers: get().activity.filter(a => a.kind === "marker").length,
+          };
     const text = JSON.stringify(state);
     if (text === this.lastRemote) return;
     this.lastRemote = text;
     this.signal.send({ t: "remote.state", state });
   }
 
+  /** Ce PC est allumé et ne diffuse pas. Le téléphone ne reçoit de quoi lancer un direct que si la personne l'a autorisé ici. */
+  private idleRemote(settings: Settings): RemoteState {
+    const room = get().room;
+    return {
+      roomId: room?.id ?? "",
+      roomName: room?.name ?? "",
+      roomCode: room?.code ?? "",
+      title: "",
+      source: "",
+      startedAt: 0,
+      paused: false,
+      screen: null,
+      screens: [],
+      scene: null,
+      scenes: [],
+      mix: [],
+      viewers: [],
+      stats: null,
+      muted: get().muted,
+      deafened: get().deafened,
+      camera: false,
+      banner: "",
+      recording: false,
+      file: null,
+      controlAsk: null,
+      controller: null,
+      idle: true,
+      launch: settings.allowRemoteStart
+        ? {
+            rooms: settings.recentRooms.slice(0, 8).map(({ id, name }) => ({ id, name })),
+            scenes: settings.scenes.filter(s => s.source).map(({ id, name }) => ({ id, name })),
+            last: settings.lastLive?.name ?? null,
+          }
+        : null,
+    };
+  }
+
+  /** Lance le direct depuis le téléphone : la source vient d'une scène, ou de la dernière diffusion. */
+  private async remoteGoLive(text: string) {
+    const settings = get().settings!;
+    if (!settings.allowRemoteStart || this.publisher) return;
+    const [roomId = "", sceneId = ""] = text.split("|");
+    const scene = settings.scenes.find(s => s.id === sceneId);
+    const saved = scene?.source ? { source: scene.source, audio: scene.audio ?? [] } : settings.lastLive;
+    if (!saved) return toast("Aucune source connue : lance un premier direct depuis ce PC.", "warning");
+    const source = await this.resolveScene(saved.source);
+    if (!source) return toast("La source demandée par le téléphone n'est plus disponible.", "warning");
+    if (get().room?.id !== roomId) {
+      const code = settings.recentRooms.find(r => r.id === roomId)?.code;
+      if (!code) return;
+      await this.joinRoom(code);
+      if (get().room?.id !== roomId) return;
+    }
+    const { stream } = settings;
+    toast("Direct lancé depuis ton téléphone", "info", 8000);
+    await this.goLive({ source, audio: await this.currentChoices(saved.audio), title: "", resolution: stream.resolution, fps: stream.fps, kbps: stream.kbps, codec: stream.codec, priority: stream.priority, audioKbps: stream.audioKbps, allowDraw: stream.allowDraw, maxViewers: stream.maxViewers });
+    if (scene) await this.applyScene(scene.id);
+  }
+
   /** Le serveur ne relaie que les appareils du même compte. Ici, seules ces commandes existent : un téléphone ne peut rien faire d'autre. */
   private async onRemoteCommand(cmd: RemoteCommand, arg?: string | number | boolean) {
+    if (cmd === "goLive") return this.remoteGoLive(String(arg ?? ""));
     const publish = get().publish;
     if (!publish) return;
     const text = String(arg ?? "");
@@ -617,6 +706,8 @@ class Core {
         return this.fileControl({ playing: arg === true });
       case "fileSeek":
         return this.fileControl({ time: Number(arg) || 0 });
+      case "allowDraw":
+        return this.updateStreamInfo({ allowDraw: arg === true });
     }
   }
 
@@ -687,6 +778,7 @@ class Core {
     } catch (e) {
       this.reportError(e);
       if (e instanceof RequestError && e.code === "room_not_found") {
+        this.signal.send({ t: "account.forget", id });
         await this.updateSettings({ recentRooms: get().settings!.recentRooms.filter(r => r.id !== id) });
       }
     }
@@ -713,7 +805,10 @@ class Core {
   deleteRoom() {
     const id = get().room?.id;
     this.signal.send({ t: "room.delete" });
-    if (id) void this.updateSettings({ recentRooms: get().settings!.recentRooms.filter(r => r.id !== id) });
+    if (id) {
+      this.signal.send({ t: "account.forget", id });
+      void this.updateSettings({ recentRooms: get().settings!.recentRooms.filter(r => r.id !== id) });
+    }
   }
 
   kickMember(userId: string, ban: boolean) {
@@ -1187,6 +1282,9 @@ class Core {
     }
     this.watchSource(opened);
     this.startPreviewLoop(preview);
+    this.clipsSaved = 0;
+    const remembered = this.sceneSourceOf(config.source);
+    if (remembered) void this.updateSettings({ lastLive: { source: remembered, name: opened.name, audio: config.audio } });
     this.openOverlay(config.source);
     playSound("live", get().settings!.soundEffects);
     this.pushTray();
@@ -1481,6 +1579,7 @@ class Core {
       if (!source) return;
       const title = this.clipTitle();
       const file = await saveClipFile(assembleClip(source.header, source.fragments), title);
+      this.clipsSaved++;
       playSound("unmute", get().settings!.soundEffects);
       toast(`Clip gardé : ${Math.round(source.seconds)} s`, "success", 7000, { label: "Revoir", run: () => this.showTaken(source, title, file) });
     } catch (e) {
@@ -2028,6 +2127,20 @@ class Core {
       const stats = await sub.stats();
       if (stats) patchSub(id, { stats });
     }
+  }
+
+  /** Le serveur ne voit passer aucune image : sans ces chiffres, un administrateur ne saurait pas comment va un direct. */
+  private sendTelemetry() {
+    const { publish, subs } = get();
+    const pathOf = (path: { relay: boolean; protocol: string; rttMs: number | null } | null | undefined) => ({ relay: !!path?.relay, protocol: path?.protocol ?? "", rttMs: path?.rttMs ?? null });
+    const sent = publish?.stats ?? null;
+    const watch = Object.values(subs).flatMap(sub => (sub.stats ? [{ streamId: sub.streamId, fps: sub.stats.fps, kbps: sub.stats.kbps, height: sub.stats.height, lostPct: sub.stats.lostPct, jitterMs: sub.stats.jitterMs, freezes: sub.stats.freezes, ...pathOf(sub.stats.path) }] : []));
+    if (!sent && !watch.length) return;
+    this.signal.send({
+      t: "telemetry",
+      publish: publish && sent ? { streamId: publish.streamId, fps: sent.fps, kbps: sent.kbps, height: sent.height, codec: sent.codec, encoder: sent.encoder, hardware: sent.hardware, encMs: sent.encMs, limit: sent.limit, viewers: publish.viewers.flatMap(v => (v.stats ? [{ id: v.id, kbps: v.stats.kbps, retransmitPct: v.stats.retransmitPct, ...pathOf(v.stats.path) }] : [])) } : null,
+      watch,
+    });
   }
 
   private pollSpeaking() {

@@ -52,6 +52,8 @@ function defaults(): Settings {
     overlay: { enabled: true, reactions: true, chat: true, viewers: true, corner: "top-right", size: 1, opacity: 1 },
     recordingsDir: path.join(app.getPath("videos"), "SpokaStream"),
     recentRooms: [],
+    allowRemoteStart: false,
+    lastLive: null,
     chatPanelOpen: true,
     accent: "#7c5cff",
     uiScale: 1,

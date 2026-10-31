@@ -1,12 +1,16 @@
 import path from "node:path";
 import { Accounts } from "./accounts.ts";
 import { AdminAuth } from "./adminAuth.ts";
+import { applyPendingRestore } from "./backups.ts";
 import { startServer } from "./index.ts";
 import { PushService } from "./push.ts";
 import { JsonStore } from "./store.ts";
 
 const env = process.env;
 const dataFile = path.resolve(env.DATA_FILE ?? "data/rooms.json");
+// Avant toute lecture : une restauration demandée depuis le panneau remet les fichiers ici.
+const restored = applyPendingRestore(path.dirname(dataFile));
+if (restored) console.log(`SpokaStream : sauvegarde ${restored} restaurée`);
 const store = new JsonStore(dataFile);
 const admins = (env.ADMIN_ACCOUNTS ?? "").split(",").map(id => id.trim()).filter(Boolean);
 const adminAuth = new AdminAuth(path.join(path.dirname(dataFile), "admin-auth.json"));
@@ -32,6 +36,7 @@ const running = await startServer({
   dataDir: path.dirname(dataFile),
   canRestart: !!env.INVOCATION_ID,
   adminAuth,
+  serviceName: env.INVOCATION_ID ? "spokastream-server" : undefined,
 });
 console.log(`SpokaStream : serveur prêt sur le port ${running.port}${env.TURN_HOST ? `, relais ${env.TURN_HOST}` : ", sans relais TURN"}`);
 

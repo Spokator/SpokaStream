@@ -22,6 +22,9 @@ const ERRORS: Partial<Record<ErrorCode, string>> = {
   viewer_limit: "Ce stream a atteint sa limite de spectateurs.",
   stream_not_found: "Ce stream vient de se terminer.",
   maintenance: "Le serveur est en maintenance, réessaie dans un moment.",
+  muted: "Tu ne peux plus écrire pour l'instant.",
+  closed: "Ce serveur n'accepte plus de nouveaux appareils. Lie celui-ci à ton compte avec un code.",
+  disabled: "L'administrateur a désactivé cette fonction.",
 };
 
 /** Du plus économe au plus beau. La qualité auto se promène sur cette échelle selon ce que le réseau supporte. */
@@ -36,6 +39,7 @@ const AUTO = 0;
 const AUDIO_ONLY = 4;
 const AUTO_STEPS = [3, 2, 1];
 const STATS_MS = 2000;
+const TELEMETRY_TICKS = 5;
 const AUTO_UP_AFTER_MS = 30_000;
 const SPEAKING_LEVEL = 0.03;
 
@@ -71,7 +75,9 @@ let voice: Voice | null = null;
 let autoRung = 1;
 let autoGoodSince = 0;
 let lastFreezes = 0;
+let statsTicks = 0;
 let wakeLock: { release(): Promise<void> } | null = null;
+let deckLock: { release(): Promise<void> } | null = null;
 let installEvent: (Event & { prompt(): Promise<void> }) | null = null;
 let nextFloat = 1;
 let strokeCount = 0;
@@ -130,6 +136,7 @@ export function boot() {
     admin: false,
     linked: false,
     remote: null,
+    deckOpen: false,
     notice: "",
     name,
     color,
@@ -243,7 +250,16 @@ export async function install() {
 }
 
 function onRemote(state: RemoteState | null) {
-  set(s => ({ remote: state, tab: !state && s.tab === "regie" ? "chat" : s.tab }));
+  set(s => ({ remote: state, deckOpen: !!state && s.deckOpen }));
+}
+
+/** Les salons suivent la personne, pas le téléphone : le compte complète ce que cet appareil connaissait déjà. */
+function onAccountRooms(rooms: RecentRoom[]) {
+  const known = new Set(get().recents.map(r => r.id));
+  const recents = [...get().recents, ...rooms.filter(r => !known.has(r.id))].slice(0, 24);
+  store("spoka-rooms", JSON.stringify(recents));
+  set({ recents });
+  signal.send({ t: "room.subscribe", ids: recents.map(r => r.id) });
 }
 
 function applyAccountProfile(next: Profile) {
@@ -267,9 +283,10 @@ export const remoteCommand = (cmd: RemoteCommand, arg?: string | number | boolea
 
 /** Rattache ce téléphone au compte du PC qui a créé le code. */
 export async function claimLink(code: string) {
-  await signal.request({ t: "account.claim", code });
+  const answer = await signal.request<{ already?: boolean } | undefined>({ t: "account.claim", code });
   set({ linked: true });
   void checkPush().catch(() => {});
+  return !answer?.already;
 }
 
 function onConnected() {
@@ -293,6 +310,19 @@ function unlockSound() {
   video.muted = false;
   video.srcObject = new MediaStream();
   void video.play().catch(() => {});
+}
+
+/** Un seul champ sur l'accueil : le code d'un salon, ou celui que montre le PC pour lier ce téléphone. */
+export async function enterCode(code: string, name?: string) {
+  const clean = code.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  if (!clean) return;
+  try {
+    const fresh = await claimLink(clean);
+    set({ error: "" });
+    return showNotice(fresh ? "Ce téléphone est lié à ton compte. Tes salons sont là." : "Ce téléphone était déjà lié à ton compte.");
+  } catch {
+    await enter(clean, name);
+  }
 }
 
 export async function enter(code: string, name = get().name) {
@@ -341,6 +371,7 @@ export function forgetRoom(id: string) {
   const recents = get().recents.filter(r => r.id !== id);
   store("spoka-rooms", JSON.stringify(recents));
   set({ recents });
+  signal.send({ t: "account.forget", id });
 }
 
 // ---------------------------------------------------------------- serveur
@@ -356,6 +387,8 @@ function onServer(m: ServerMessage) {
       return set({ userId: m.userId, accountId: m.accountId ?? m.userId, admin: !!m.admin });
     case "account.sync":
       return applyAccountProfile(m.profile);
+    case "account.rooms":
+      return onAccountRooms(m.rooms);
     case "remote.state":
       return onRemote(m.state);
     case "announce":
@@ -453,7 +486,12 @@ function onStatus(rooms: RoomStatus[]) {
   const statuses = { ...get().statuses };
   for (const status of rooms) statuses[status.id] = status;
   set({ statuses });
-  for (const status of rooms) if (!status.exists) forgetRoom(status.id);
+  for (const status of rooms) {
+    if (status.exists) continue;
+    const recents = get().recents.filter(r => r.id !== status.id);
+    store("spoka-rooms", JSON.stringify(recents));
+    set({ recents });
+  }
 }
 
 function onChat(message: ChatMessage) {
@@ -488,7 +526,7 @@ function pickStream() {
   const first = room?.streams.find(s => s.ownerId !== get().userId && !isMine(s));
   if (first) return show(first.id);
   if (room?.together) return show(TOGETHER);
-  if (get().remote) return set({ status: "Ton PC diffuse : tu pilotes tout depuis l'onglet Régie." });
+  if (get().remote && !get().remote!.idle) return set({ status: "Ton PC diffuse : tu pilotes tout depuis l'onglet Régie." });
   set({ status: room ? "Personne ne diffuse pour l'instant. Reste ici : le stream s'affichera tout seul." : "" });
 }
 
@@ -635,6 +673,26 @@ export function tapped() {
   if (get().shown === TOGETHER) sendPlayer({ cmd: "volume", volume: get().togetherVolume });
 }
 
+/** Une réaction envoyée sur le stream du PC, depuis la régie. */
+export function reactTo(streamId: string | undefined, emoji: string) {
+  const target = streamId ?? get().room?.streams.find(isMine)?.id;
+  if (!target) return;
+  signal.send({ t: "reaction", streamId: target, emoji });
+  navigator.vibrate?.(15);
+}
+
+/** L'écran reste allumé tant que la régie est ouverte. Le téléphone reprend ce verrou dès que la page repasse devant. */
+export async function deckAwake(on: boolean) {
+  if (!on) {
+    await deckLock?.release().catch(() => {});
+    deckLock = null;
+    return;
+  }
+  if (deckLock || document.hidden) return;
+  deckLock = (await (navigator as Navigator & { wakeLock?: { request(type: "screen"): Promise<{ release(): Promise<void> }> } }).wakeLock?.request("screen").catch(() => null)) ?? null;
+  deckLock && (deckLock as unknown as EventTarget).addEventListener?.("release", () => (deckLock = null));
+}
+
 /** L'écran ne s'éteint pas pendant qu'on regarde. */
 async function keepAwake() {
   if (wakeLock || !current || document.hidden) return;
@@ -656,6 +714,7 @@ async function watchStats() {
   if (!read) return;
   const stats: ViewStats = { height: read.height, fps: read.fps, kbps: read.kbps, lostPct: read.lostPct, relay: !!read.path?.relay };
   set(s => ({ stats, dataMb: s.dataMb + ((read.kbps + read.audioKbps) * STATS_MS) / 8_000_000 }));
+  if (++statsTicks % TELEMETRY_TICKS === 0) signal.send({ t: "telemetry", watch: [{ streamId: sub.streamId, fps: read.fps, kbps: read.kbps, height: read.height, lostPct: read.lostPct, jitterMs: read.jitterMs, freezes: read.freezes, relay: !!read.path?.relay, protocol: read.path?.protocol ?? "", rttMs: read.path?.rttMs ?? null }] });
   if (get().quality === AUTO) adaptQuality(read.lostPct, read.freezes);
 }
 

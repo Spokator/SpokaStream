@@ -177,6 +177,10 @@ export interface Settings {
   overlay: OverlaySettings;
   recordingsDir: string;
   recentRooms: RecentRoom[];
+  /** Le téléphone lié peut lancer un direct sur ce PC. Désactivé par défaut : cela partage l'écran sans que personne ne soit devant. */
+  allowRemoteStart: boolean;
+  /** La dernière source diffusée, reprise quand le téléphone lance le direct. */
+  lastLive: { source: SceneSource; name: string; audio: AudioChoice[] } | null;
   chatPanelOpen: boolean;
   /** Couleur d'accent de l'interface. */
   accent: string;

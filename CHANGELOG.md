@@ -1,5 +1,40 @@
 # Journal des versions
 
+## 1.6.0
+
+Ton téléphone, un vrai Stream Deck
+
+- **Tourne ton téléphone** : 15 touches par page, en 5×3 à l'horizontale et 3×5 à la verticale. L'ordre ne change pas, seule la grille pivote.
+- **Chaque touche montre l'état renvoyé par le PC** : elle s'allume quand c'est fait, tourne pendant qu'elle attend, et tremble si le PC ne répond pas. Le résultat arrive tout de suite, sans attendre la mise à jour suivante.
+- **À ta façon** : déplace les touches, renomme-les, choisis leur couleur, ajoute des pages. Messages tout prêts, bandeaux, réactions, scènes, écrans d'attente, sons, Watch Party et mesures du direct.
+- **Une table de mixage à curseurs verticaux**, qui agit pendant que le doigt glisse.
+- **Arrêter le direct demande un appui long** : impossible de couper par accident.
+- **L'écran reste allumé** tant que la régie est ouverte. Une bande affiche le dernier message du chat et qui arrive, et une demande de main fait vibrer le téléphone.
+- **Lance le direct depuis le téléphone** sur la dernière source ou une scène. Désactivé par défaut : à autoriser dans Paramètres, Compte.
+
+Lier son téléphone, sans se tromper
+
+- **Tes salons arrivent sur le téléphone** dès la liaison, et te suivent ensuite sur tous tes appareils.
+- **Un seul champ sur l'accueil** : il accepte le code d'un salon comme le code de liaison du PC. Le PC envoyait vers un menu qu'on ne trouvait que dans un salon.
+- **Le PC confirme** que le téléphone est lié, et le QR code se ferme.
+- **L'accueil d'un téléphone lié** montre ton nom, tes salons, et si ton PC est en ligne ou en direct.
+- **Sur iPhone**, Safari et l'icône de l'écran d'accueil sont deux appareils séparés : le PC l'explique, et le code se saisit dans l'icône.
+
+Panneau d'administration
+
+- **Système** : processeur (occupé, attente du disque, repris par l'hébergeur), mémoire et échange, tâches en attente, réseau, disque (débit, temps de réponse), réactivité du serveur, messages, requêtes, sondes depuis l'extérieur, de 1 heure à 30 jours. Les courbes survivent aux redémarrages.
+- **Ce qui consomme** : processeur et mémoire de chaque service de la machine, coturn, nginx, conteneurs et voisins compris, et les limites de SpokaStream avec le temps où il est bridé.
+- **Diffusions** : pour chaque direct, ce qu'envoie le diffuseur et ce que reçoit chaque spectateur (route directe ou relais, pertes, aller-retour, gels), puis l'historique des diffusions. Il faut une application 1.6 pour avoir les chiffres du diffuseur.
+- **Statistiques** : comptes actifs, temps de diffusion et regardé, pics, heures de pointe, part du relais, classements, jusqu'à 90 jours.
+- **Alertes** : 14 règles réglables, déclenchées seulement si le problème dure, avec historique et envoi sur Discord.
+- **Modération** : mots filtrés, délai entre les messages, adresses bloquées, sanctions en cours, connexions en direct avec leur adresse.
+- **Comptes** : fiche complète avec statistiques, adresses vues, autres comptes sur la même adresse, avertissements, silence ou bannissement à durée limitée, historique des sanctions, notes privées.
+- **Salons** : recherche, lecture du chat, suppression d'un message, message au salon, débit maximum, qui peut diffuser, arrêt de la Watch Party ou d'un sondage. Le chat étant maintenant lisible, chaque ouverture est notée au journal.
+- **Réglages** : serveur fermé aux inconnus, création de salons réservée, Watch Party, limites, message d'accueil, version minimale de l'application, maintenance prévue avec préavis, redémarrage dès que plus personne ne diffuse.
+- **Sauvegardes** : une par jour toute seule, à la demande, téléchargement et restauration en un clic. Les accès au panneau n'en font pas partie.
+- **Sécurité** : toutes les sessions ouvertes, fermer l'une d'elles, voir et lever un blocage de connexion.
+- **Journal et retours gardés** après un redémarrage, avec recherche et export pour Excel.
+
 ## 1.5.0
 
 Ton compte sur tous tes appareils

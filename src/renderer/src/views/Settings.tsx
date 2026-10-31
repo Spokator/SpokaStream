@@ -189,11 +189,17 @@ function LinkPanel({ onLinked }: { onLinked: () => void }) {
     return qr.createDataURL(5, 8);
   }, [url]);
 
+  const linkedAt = useApp(s => s.linkedAt);
+  useEffect(() => {
+    if (!linkedAt) return;
+    setLink(null);
+    onLinked();
+  }, [linkedAt]);
+
   useEffect(() => {
     if (!link) return;
     const timer = setInterval(() => {
       if (Date.now() > link.expires) setLink(null);
-      onLinked();
     }, 3000);
     return () => clearInterval(timer);
   }, [link]);
@@ -210,15 +216,16 @@ function LinkPanel({ onLinked }: { onLinked: () => void }) {
       <img src={picture} alt="QR code pour lier un téléphone" />
       <div>
         <b>Scanne avec ton téléphone</b>
-        <span>Ou entre ce code dans Mon profil, sur le site :</span>
+        <span>Ou ouvre {url.replace(/^https?:\/\//, "").split("/")[0]} sur ton téléphone et entre ce code :</span>
         <code>{link.code}</code>
         <small>Valable 5 minutes, une seule fois. Ne le donne à personne : il ouvre ton compte.</small>
+        <small>iPhone avec SpokaStream sur l'écran d'accueil : ouvre-le et entre le code. Le QR code ouvre Safari, que l'iPhone garde séparé.</small>
       </div>
     </div>
   );
 }
 
-function AccountSection() {
+function AccountSection({ s }: { s: Settings }) {
   const accountId = useApp(s => s.accountId);
   const admin = useApp(s => s.admin);
   const connection = useApp(s => s.connection);
@@ -234,6 +241,9 @@ function AccountSection() {
       <h1>Compte</h1>
       <p className="muted-text">Lie ton téléphone à ce PC : tu es la même personne partout, et pendant que ce PC diffuse, ton téléphone devient ta régie.</p>
       <LinkPanel onLinked={refresh} />
+      <Field label="Le téléphone peut lancer un direct" hint="Ton écran peut alors partir en direct sans que tu sois devant ce PC">
+        <Toggle label="Le téléphone peut lancer un direct" checked={s.allowRemoteStart} onChange={allowRemoteStart => void core.updateSettings({ allowRemoteStart })} />
+      </Field>
       <h2>Mes appareils</h2>
       {devices.map(device => (
         <div key={device.id} className="device-line">
@@ -961,7 +971,7 @@ export function SettingsView() {
       </nav>
       <div className="settings-body">
         <div className="settings-inner">
-          {section === "account" && <AccountSection />}
+          {section === "account" && <AccountSection s={settings} />}
           {section === "profile" && <ProfileSection s={settings} />}
           {section === "appearance" && <AppearanceSection s={settings} />}
           {section === "voice" && <VoiceSection s={settings} />}
