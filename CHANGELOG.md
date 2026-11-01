@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.6.6
+
+- **Moins de perte de FPS pendant un direct.** Quand tu joues, SpokaStream continuait de redessiner sa fenêtre à chaque image, même cachée derrière le jeu : le point rouge « en direct » et les vumètres l'y obligeaient. Sans le focus, ils se calment, et ton retour passe à 15 images/s. Le stream envoyé à tes spectateurs ne change pas. L'application utilise 20 à 30 % de temps de carte graphique en moins pendant que tu joues.
+- **Capture de jeu plus légère** : l'image est recopiée à côté du jeu, plus dans son fil, comme le fait OBS.
+
 ## 1.6.5
 
 - **Fini l'écran bleu.** L'application pouvait se retrouver sur son fond d'écran, sans rien d'affiché, et il fallait la quitter pour la relancer. Ça arrivait avec au moins deux flux à l'écran, au moment où la scène n'avait pas encore de taille. C'est corrigé, et si une autre erreur d'affichage survient un jour, l'application se répare toute seule sans couper ton direct.

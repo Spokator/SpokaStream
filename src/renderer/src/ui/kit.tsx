@@ -111,7 +111,12 @@ export function Uptime({ since }: { since: number }) {
   return <>{duration(now - since)}</>;
 }
 
-/** Le niveau se met à jour à 60 images/s en touchant le DOM directement : ça ne coûte aucun rendu React. */
+const BACKGROUND_METER_MS = 100;
+
+/**
+ * Le niveau se met à jour à chaque image en touchant le DOM directement : ça ne coûte aucun rendu React.
+ * Sans le focus, il ralentit : chaque mise à jour redessine la fenêtre sur la carte graphique, pendant qu'un jeu tourne.
+ */
 export function Meter({ read }: { read: () => number }) {
   const bar = useRef<HTMLElement>(null);
   const reader = useRef(read);
@@ -119,11 +124,14 @@ export function Meter({ read }: { read: () => number }) {
   useEffect(() => {
     let frame = 0;
     let shown = 0;
-    const tick = () => {
+    let last = 0;
+    const tick = (now: number) => {
+      frame = requestAnimationFrame(tick);
+      if (!document.hasFocus() && now - last < BACKGROUND_METER_MS) return;
+      last = now;
       const next = Math.max(reader.current(), shown * 0.9);
       shown = next;
       if (bar.current) bar.current.style.width = `${Math.round(next * 100)}%`;
-      frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);

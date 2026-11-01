@@ -70,6 +70,15 @@ static LARGE_INTEGER frequency, lastFrame;
 static SwapFunction realSwapBuffers, realWglSwapBuffers;
 static DWORD lastAttach, lastCheck;
 
+// Recopier 8 Mo dans le fil du jeu lui coûtait 2 ms par image (mesuré : 18 % d'images en moins). Un fil à part s'en charge, comme dans OBS.
+enum CopyState : LONG { kCopyIdle, kCopyRunning, kCopyDone };
+static volatile LONG copyState = kCopyIdle;
+static HANDLE copyWake;
+static const void* copySource;
+static int copySlot, copyWidth, copyHeight;
+/** Le tampon que le fil de copie lit encore : il reste ouvert jusqu'à ce que le fil du jeu le referme. */
+static int mappedBuffer = -1;
+
 static void attach() {
   if (shared) return;
   // Le lecteur crée la mémoire avant de nous charger. Une capture relancée la rouvre sous le même nom.
@@ -117,8 +126,30 @@ static bool loadGl() {
   return true;
 }
 
-/** Recopie l'image la plus ancienne déjà lue par la carte. Lire sans attendre garde le jeu fluide : deux images de retard au plus. */
+static DWORD WINAPI copyLoop(void*) {
+  for (;;) {
+    WaitForSingleObject(copyWake, INFINITE);
+    memcpy((uint8_t*)shared + kHeaderBytes + copySlot * kSlotBytes, copySource, (size_t)copyWidth * copyHeight * 4);
+    shared->width[copySlot] = copyWidth;
+    shared->height[copySlot] = copyHeight;
+    InterlockedExchange(&shared->latest, copySlot);
+    if (frameEvent) SetEvent(frameEvent);
+    InterlockedExchange(&copyState, kCopyDone);
+  }
+}
+
+/** Referme le tampon d'une copie finie. Seul le fil du jeu peut parler à OpenGL. */
+static void closeCopy() {
+  if (copyState != kCopyDone) return;
+  bindBuffer(GL_PIXEL_PACK_BUFFER, buffers[mappedBuffer]);
+  unmapBuffer(GL_PIXEL_PACK_BUFFER);
+  mappedBuffer = -1;
+  InterlockedExchange(&copyState, kCopyIdle);
+}
+
+/** Confie l'image la plus ancienne déjà lue par la carte au fil de copie. Lire sans attendre garde le jeu fluide : deux images de retard au plus. */
 static void deliver(int index, int width, int height) {
+  if (copyState != kCopyIdle) return;
   LONG latest = shared->latest;
   int slot = latest == 0 ? 1 : 0;
   // Le lecteur est encore sur cet emplacement : on saute cette image plutôt que de la lui écrire dessus.
@@ -126,12 +157,13 @@ static void deliver(int index, int width, int height) {
   bindBuffer(GL_PIXEL_PACK_BUFFER, buffers[index]);
   void* pixels = mapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
   if (!pixels) return;
-  memcpy((uint8_t*)shared + kHeaderBytes + slot * kSlotBytes, pixels, (size_t)width * height * 4);
-  unmapBuffer(GL_PIXEL_PACK_BUFFER);
-  shared->width[slot] = width;
-  shared->height[slot] = height;
-  InterlockedExchange(&shared->latest, slot);
-  if (frameEvent) SetEvent(frameEvent);
+  copySource = pixels;
+  copySlot = slot;
+  copyWidth = width;
+  copyHeight = height;
+  mappedBuffer = index;
+  InterlockedExchange(&copyState, kCopyRunning);
+  SetEvent(copyWake);
 }
 
 /**
@@ -156,7 +188,8 @@ static void capture(HDC dc) {
   if (!shared) return;
   InterlockedIncrement(&shared->heartbeat);
   if (readerGone()) {
-    detach();
+    // La copie écrit encore dans cette mémoire : on la lâchera à l'image suivante.
+    if (copyState != kCopyRunning) detach();
     return;
   }
   LARGE_INTEGER now;
@@ -183,7 +216,11 @@ static void capture(HDC dc) {
   glGetIntegerv(GL_PACK_SKIP_PIXELS, &oldSkipPixels);
   glGetIntegerv(GL_PACK_SKIP_ROWS, &oldSkipRows);
 
-  if (width != bufferWidth || height != bufferHeight) {
+  closeCopy();
+  bool resized = width != bufferWidth || height != bufferHeight;
+  // Ce tampon est encore lu par la copie, ou la fenêtre change de taille pendant ce temps : on laisse passer cette image.
+  bool busy = mappedBuffer >= 0 && (resized || mappedBuffer == nextBuffer);
+  if (resized && !busy) {
     for (int i = 0; i < kBuffers; i++) {
       bindBuffer(GL_PIXEL_PACK_BUFFER, buffers[i]);
       bufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)width * height * 4, nullptr, GL_STREAM_READ);
@@ -201,13 +238,15 @@ static void capture(HDC dc) {
   glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
   glPixelStorei(GL_PACK_SKIP_ROWS, 0);
 
-  int index = nextBuffer;
-  // Le tampon qu'on va réutiliser est le plus ancien : sa lecture est finie, on le livre avant de l'écraser.
-  if (bufferFilled[index]) deliver(index, width, height);
-  bindBuffer(GL_PIXEL_PACK_BUFFER, buffers[index]);
-  glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
-  bufferFilled[index] = true;
-  nextBuffer = (index + 1) % kBuffers;
+  if (!busy) {
+    int index = nextBuffer;
+    // On lit dans le tampon le plus ancien. Le suivant est prêt : c'est lui qu'on donne à copier.
+    bindBuffer(GL_PIXEL_PACK_BUFFER, buffers[index]);
+    glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
+    bufferFilled[index] = true;
+    nextBuffer = (index + 1) % kBuffers;
+    if (bufferFilled[nextBuffer]) deliver(nextBuffer, width, height);
+  }
 
   bindBuffer(GL_PIXEL_PACK_BUFFER, (GLuint)oldPack);
   bindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)oldFramebuffer);
@@ -269,6 +308,9 @@ static void patchImports(HMODULE module) {
 
 static DWORD WINAPI watch(void* self) {
   QueryPerformanceFrequency(&frequency);
+  copyWake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+  HANDLE copier = CreateThread(nullptr, 0, copyLoop, nullptr, 0, nullptr);
+  if (copier) CloseHandle(copier);
   // Un jeu charge ses bibliothèques au fil de l'eau : Java en particulier ne charge sa fenêtre qu'après le démarrage.
   for (;;) {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());

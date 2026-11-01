@@ -77,6 +77,8 @@ const ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
 };
 
 const TELEMETRY_MS = 10_000;
+/** Le retour de son propre stream quand l'application n'a pas le focus. La piste envoyée n'est pas touchée. */
+const BACKGROUND_PREVIEW_FPS = 15;
 const LAYOUT_SEND_MS = 80;
 const HEALTH_POINTS = 120;
 const ACTIVITY_ITEMS = 120;
@@ -118,6 +120,7 @@ class Core {
   private sourceGone = false;
   private pauseCard: ReturnType<typeof createPauseCard> | null = null;
   private previewElement: HTMLVideoElement | null = null;
+  private previewTrack: MediaStreamTrack | null = null;
   private previewTimer: ReturnType<typeof setInterval> | undefined;
   private recorder: Recorder | null = null;
   private clipBuffer: ClipBuffer | null = null;
@@ -215,6 +218,10 @@ class Core {
     this.timers.push(setInterval(() => this.expireTyping(), 1000));
     this.timers.push(setInterval(() => this.followClips(), 1500));
     this.timers.push(setInterval(() => get().hand?.state === "granted" && this.handSub()?.sendControl({ t: "alive" }), 1000));
+
+    window.addEventListener("focus", () => this.followFocus());
+    window.addEventListener("blur", () => this.followFocus());
+    this.followFocus();
 
     void ClipBuffer.hasHardwareEncoder().then(hardware => (this.clipHardware = hardware));
     if (settings.onboarded) this.connect();
@@ -1232,7 +1239,7 @@ class Core {
     const { cameraLayout } = get().settings!.stream;
     this.healthHistory.length = 0;
     this.lastViewers = new Set();
-    const preview = new MediaStream([opened.track]);
+    const preview = this.openPreview(opened.track);
     set({
       publish: {
         streamId,
@@ -1363,6 +1370,21 @@ class Core {
     });
   }
 
+  private openPreview(track: MediaStreamTrack) {
+    this.previewTrack?.stop();
+    this.previewTrack = track.clone();
+    this.followFocus();
+    return new MediaStream([this.previewTrack]);
+  }
+
+  /** Quand on joue, rien ne doit forcer la fenêtre à se redessiner à chaque image : c'est le jeu qui en paierait le prix. */
+  private followFocus() {
+    const focused = document.hasFocus();
+    document.documentElement.classList.toggle("is-blurred", !focused);
+    const fps = focused ? (get().publish?.target.fps ?? 60) : BACKGROUND_PREVIEW_FPS;
+    void this.previewTrack?.applyConstraints({ frameRate: { max: fps } }).catch(() => {});
+  }
+
   private startPreviewLoop(preview: MediaStream) {
     const video = document.createElement("video");
     video.muted = true;
@@ -1402,7 +1424,7 @@ class Core {
     this.watchSource(next);
     if (!get().publish!.paused) await this.publisher.replaceVideo(next.track, next.height);
     previous.stop();
-    const preview = new MediaStream([next.track]);
+    const preview = this.openPreview(next.track);
     if (this.previewElement) this.previewElement.srcObject = preview;
     patchPublish({ preview, sourceName: next.name, kind: next.kind, nativeCapture: next.native });
     this.updateAnnounce({ kind: next.kind, sourceName: next.name, width: next.width, height: next.height });
@@ -1502,6 +1524,8 @@ class Core {
     clearInterval(this.previewTimer);
     if (this.previewElement) this.previewElement.srcObject = null;
     this.previewElement = null;
+    this.previewTrack?.stop();
+    this.previewTrack = null;
     set(s => ({ publish: null, panelTab: s.panelTab === "studio" ? "chat" : s.panelTab }));
     this.pushTray();
   }

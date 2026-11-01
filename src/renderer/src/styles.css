@@ -179,6 +179,10 @@ a {
   animation: pulse 1.6s ease-in-out infinite;
 }
 
+.is-blurred .titlebar-live i {
+  animation: none;
+}
+
 .titlebar-live.is-paused {
   background: rgba(245, 176, 65, 0.14);
   color: var(--warn);
