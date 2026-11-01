@@ -1,5 +1,9 @@
 # Journal des versions
 
+## 1.6.8
+
+- **La bonne icône dans la barre des tâches.** Windows pouvait afficher l'atome d'Electron à la place de celle de SpokaStream. L'application lui indique maintenant quelle icône montrer.
+
 ## 1.6.7
 
 - **La capture de jeu se règle au lancement du stream.** Quand tu choisis une fenêtre, l'option apparaît à côté de la qualité. Pendant le direct, le panneau Source et caméra indique si elle est active.

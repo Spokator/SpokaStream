@@ -13,7 +13,7 @@ import { AppTray } from "./tray.ts";
 import { Updater } from "./updater.ts";
 import { videoInfo, WebSource } from "./webSource.ts";
 import { WhipServer } from "./whip.ts";
-import { appIcon, createMainWindow, Overlay } from "./windows.ts";
+import { APP_ID, appIcon, createMainWindow, Overlay } from "./windows.ts";
 
 // Mesuré sur Electron 45 avec une RTX 5070 : sans WebRtcAV1HWEncode, AV1 reste sur le processeur (libaom) ; avec, il passe sur NVENC.
 // Ne pas ajouter ZeroCopyDesktopCapture seul : plus aucune image ne sort de la capture.
@@ -31,7 +31,7 @@ app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 const PROTOCOL = "spokastream";
 const testDataDir = process.env.SPOKASTREAM_USER_DATA;
 if (testDataDir) app.setPath("userData", testDataDir);
-app.setAppUserModelId("com.spokator.spokastream");
+app.setAppUserModelId(APP_ID);
 
 if (!testDataDir && !app.requestSingleInstanceLock()) {
   app.exit(0);

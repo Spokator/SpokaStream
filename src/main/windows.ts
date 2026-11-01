@@ -7,6 +7,12 @@ import type { AudioEngine } from "./audioEngine.ts";
 const preload = path.join(import.meta.dirname, "../preload/index.cjs");
 const rendererUrl = process.env.ELECTRON_RENDERER_URL;
 
+/**
+ * Windows garde une icône par identifiant : un essai lancé par electron.exe sous le vrai identifiant
+ * laisse l'atome d'Electron dans la barre des tâches de la vraie application.
+ */
+export const APP_ID = app.isPackaged && !process.env.SPOKASTREAM_USER_DATA ? "com.spokator.spokastream" : "com.spokator.spokastream.dev";
+
 export function appIcon() {
   const file = app.isPackaged ? path.join(process.resourcesPath, "icon.png") : path.join(app.getAppPath(), "build", "icon.png");
   return nativeImage.createFromPath(file);
@@ -40,6 +46,8 @@ export function createMainWindow(startHidden: boolean, onCloseRequest: (e: Elect
     webPreferences,
   });
   win.removeMenu();
+  // Dit à la barre des tâches quelle icône montrer, au lieu de la laisser reprendre celle qu'elle a en mémoire.
+  if (app.isPackaged) win.setAppDetails({ appId: APP_ID, appIconPath: process.execPath, appIconIndex: 0, relaunchCommand: `"${process.execPath}"`, relaunchDisplayName: "SpokaStream" });
   win.on("close", onCloseRequest);
   win.once("ready-to-show", () => {
     if (!startHidden) win.show();
