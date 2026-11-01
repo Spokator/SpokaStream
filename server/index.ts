@@ -14,6 +14,7 @@ import { Hub } from "./hub.ts";
 import { Journal } from "./journal.ts";
 import { Metrics } from "./metrics.ts";
 import type { PushService } from "./push.ts";
+import { privacyPage } from "./privacy.ts";
 import type { Store } from "./store.ts";
 import { Usage } from "./usage.ts";
 import { HLS_JS, ICON_192, ICON_512, VIEWER_HTML, VIEWER_JS } from "./viewer.gen.ts";
@@ -302,6 +303,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     if (url.pathname === "/health") {
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify({ ok: true, uptime: Math.round(process.uptime()), ...hub.stats }));
+    }
+    if (url.pathname === "/confidentialite") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return res.end(privacyPage(PAGE_STYLE));
     }
     const invite = url.pathname.match(/^\/j\/([A-Za-z0-9]{4,16})$/);
     if (invite) {

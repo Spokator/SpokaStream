@@ -168,6 +168,14 @@ async function panel() {
   return { running, base, post, ticket: () => running.hub.onTicket!("admin-compte") };
 }
 
+test("la politique de confidentialité est servie", async () => {
+  const running = await startServer({ port: 0, host: "127.0.0.1", store: new MemoryStore() });
+  const page = await fetch(`http://127.0.0.1:${running.port}/confidentialite`);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /Politique de confidentialité/);
+  await running.close();
+});
+
 test("le dernier maillon de X-Forwarded-For est la seule adresse fiable", () => {
   const req = (header: string) => ({ headers: { "x-forwarded-for": header }, socket: { remoteAddress: "127.0.0.1" } }) as never;
   assert.equal(clientIp(req("1.1.1.1, 8.8.4.4"), { trustProxy: true }), "8.8.4.4", "le début de la liste est écrit par le client");

@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.6.9
+
+- **Une politique de confidentialité**, dans Paramètres, À propos, et sur `stream.chretieno.fr/confidentialite`. Elle dit ce que le serveur garde, ce qui passe directement entre vous et ce qui reste sur ton PC. Le texte de l'application était incomplet : il ne parlait ni des adresses IP ni des statistiques.
+- **Préparation du Microsoft Store.** Rien ne change pour la version que tu as.
+
 ## 1.6.8
 
 - **La bonne icône dans la barre des tâches.** Sur le PC de développement, un raccourci laissé par les tests faisait passer SpokaStream pour Electron. Les tests ont maintenant leur propre identifiant. Rien à faire sur les autres PC.

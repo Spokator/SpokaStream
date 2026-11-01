@@ -333,6 +333,8 @@ export interface NativeVideo {
 export interface SpokaApi {
   version: string;
   isPackaged: boolean;
+  /** Installée depuis le Microsoft Store : c'est lui qui met à jour, et le lancement avec Windows n'existe pas sous cette forme. */
+  store: boolean;
   selfPid: number;
   testMode: boolean;
   forceRelay: boolean;

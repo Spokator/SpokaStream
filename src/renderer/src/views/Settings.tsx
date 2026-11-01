@@ -1,4 +1,4 @@
-import { AudioLines, Bell, Check, Copy, Download, ExternalLink, Laptop, ShieldCheck, Smartphone, Trash2, FolderOpen, Gauge, Info, Keyboard, Layers, Mic, Palette, Radio, Server, User } from "lucide-react";
+import { AudioLines, Bell, Check, Copy, Download, ExternalLink, FolderOpen, Gauge, Info, Keyboard, Laptop, Layers, Mic, Palette, Radio, Server, Shield, ShieldCheck, Smartphone, Trash2, User } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_HOTKEYS, DEFAULT_SERVER, isVirtualInput } from "@shared/ipc.ts";
 import type { CodecChoice, HostStatus, HotkeyMap, LatencyMode, Settings, SoundboardInfo, VideoPriority, WallMode } from "@shared/ipc.ts";
@@ -763,12 +763,16 @@ function NotificationsSection({ s }: { s: Settings }) {
         </Field>
       )}
       <h2>Au démarrage</h2>
-      <Field label="Lancer avec Windows">
-        <Toggle label="Lancer avec Windows" checked={s.startWithWindows} onChange={startWithWindows => update({ startWithWindows })} />
-      </Field>
-      <Field label="Démarrer dans la zone de notification">
-        <Toggle label="Démarrer réduit" checked={s.startMinimized} onChange={startMinimized => update({ startMinimized })} />
-      </Field>
+      {!window.spoka.store && (
+        <>
+          <Field label="Lancer avec Windows">
+            <Toggle label="Lancer avec Windows" checked={s.startWithWindows} onChange={startWithWindows => update({ startWithWindows })} />
+          </Field>
+          <Field label="Démarrer dans la zone de notification">
+            <Toggle label="Démarrer réduit" checked={s.startMinimized} onChange={startMinimized => update({ startMinimized })} />
+          </Field>
+        </>
+      )}
       <Field label="La croix réduit dans la zone de notification" hint="Sinon, elle quitte l'application">
         <Toggle label="Réduire à la fermeture" checked={s.closeToTray} onChange={closeToTray => update({ closeToTray })} />
       </Field>
@@ -894,7 +898,9 @@ function AboutSection() {
             : updateState.state === "error"
               ? "Vérification impossible"
               : updateState.state === "unsupported"
-                ? "Disponible dans la version installée"
+                ? window.spoka.store
+                  ? "Mises à jour par le Microsoft Store"
+                  : "Disponible dans la version installée"
                 : "";
   return (
     <>
@@ -936,8 +942,11 @@ function AboutSection() {
         <span className="status-text">{engine === "ready" ? "Prêt" : engine === "starting" ? "Démarrage…" : "Indisponible : les applications ne pourront pas être captées séparément"}</span>
       </Field>
       <h2>Données</h2>
-      <p className="muted-text">Tes réglages et ton identité restent sur ce PC. Le serveur ne garde que ton pseudo, ta couleur et l'historique des salons.</p>
+      <p className="muted-text">Tes réglages, ton identité, tes clips et tes enregistrements restent sur ce PC. Le serveur garde ton profil, tes salons avec leur chat, quelques statistiques et tes dernières adresses IP.</p>
       <div className="row-gap">
+        <Button icon={<Shield size={15} />} onClick={() => window.spoka.openExternal(`${settings.serverUrl.replace(/^ws/, "http").replace(/\/ws$/, "")}/confidentialite`)}>
+          Politique de confidentialité
+        </Button>
         <Button icon={<FolderOpen size={15} />} onClick={() => window.spoka.openDataFolder()}>
           Ouvrir le dossier des données
         </Button>

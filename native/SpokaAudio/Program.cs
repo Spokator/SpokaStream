@@ -114,6 +114,8 @@ internal static class Program
             case "keys.watch":
                 keys.Watch(request["keys"]!.AsArray().Select(k => (int)k!));
                 return null;
+            case "video.borderless":
+                return ScreenCapture.AskForBorderless(TimeSpan.FromMilliseconds((int)request["waitMs"]!));
             case "video.start":
             {
                 _video?.Dispose();

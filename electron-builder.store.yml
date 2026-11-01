@@ -1,0 +1,29 @@
+# La version Microsoft Store : npm run dist:store
+# identityName et publisher viennent de la réservation du nom dans Partner Center (Gestion des produits, Identité du produit).
+# Tant qu'ils ne sont pas remplacés, ce paquet ne sert qu'aux essais avec le mode développeur.
+extends: electron-builder.yml
+
+directories:
+  output: dist-store
+  buildResources: build
+
+protocols:
+  - name: SpokaStream
+    schemes:
+      - spokastream
+
+publish: null
+
+appx:
+  identityName: Spokator.SpokaStream
+  publisher: CN=Spokator
+  publisherDisplayName: Spokator
+  applicationId: SpokaStream
+  displayName: SpokaStream
+  backgroundColor: "#0b0d14"
+  languages:
+    - fr-FR
+  minVersion: 10.0.19041.0
+  maxVersionTested: 10.0.26100.0
+  customManifestPath: store-manifest.xml
+  artifactName: SpokaStream-${version}.${ext}

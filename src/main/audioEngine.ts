@@ -7,6 +7,8 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { AudioEngineStatus, NativeVideo } from "../shared/ipc.ts";
 
+const BORDERLESS_WAIT_MS = 60_000;
+
 const FRAME_JSON = 1;
 const FRAME_AUDIO = 2;
 const MAX_FRAME = 8 * 1024 * 1024;
@@ -155,7 +157,7 @@ export class AudioEngine extends EventEmitter<{ status: [AudioEngineStatus]; key
     else pending.resolve(message.result);
   }
 
-  request<T = unknown>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
+  request<T = unknown>(cmd: string, args: Record<string, unknown> = {}, timeoutMs = 5000): Promise<T> {
     const child = this.child;
     if (!child) return Promise.reject(new Error("moteur audio indisponible"));
     const id = this.nextId++;
@@ -163,7 +165,7 @@ export class AudioEngine extends EventEmitter<{ status: [AudioEngineStatus]; key
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`délai dépassé : ${cmd}`));
-      }, 5000);
+      }, timeoutMs);
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
       child.stdin.write(`${JSON.stringify({ id, cmd, ...args })}\n`);
     });
@@ -188,6 +190,11 @@ export class AudioEngine extends EventEmitter<{ status: [AudioEngineStatus]; key
   watchKeys(keys: number[]) {
     this.watchedKeys = keys;
     return this.request("keys.watch", { keys });
+  }
+
+  /** Attend la réponse de la personne à la question de Windows : le moteur ne répond à rien d'autre pendant ce temps. */
+  askBorderless() {
+    return this.request<string>("video.borderless", { waitMs: BORDERLESS_WAIT_MS }, BORDERLESS_WAIT_MS + 1000);
   }
 
   startVideo(target: { hwnd: number } | { x: number; y: number }, fps: number, maxHeight: number, game: boolean) {

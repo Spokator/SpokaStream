@@ -65,6 +65,7 @@ let quitting = false;
 let pendingDeepLink: string | null = null;
 const engine = new AudioEngine();
 const overlay = new Overlay(engine);
+let borderlessAsked = false;
 const updater = new Updater();
 const host = new LocalHost();
 const whip = new WhipServer(() => settings.current.obsKey);
@@ -102,7 +103,7 @@ app.on("second-instance", (_e, argv) => {
 });
 
 function applyLoginItem(s: Settings) {
-  if (!app.isPackaged) return;
+  if (!app.isPackaged || process.windowsStore) return;
   app.setLoginItemSettings({ openAtLogin: s.startWithWindows, args: s.startMinimized ? ["--hidden"] : [] });
 }
 
@@ -205,7 +206,7 @@ function diagnostics() {
 
 function wireIpc() {
   ipcMain.on("sync:info", e => {
-    e.returnValue = { version: app.getVersion(), isPackaged: app.isPackaged, selfPid: process.pid, testMode: !!testDataDir, noNative: !!testDataDir && process.env.SPOKASTREAM_NO_NATIVE === "1", forceRelay: !!testDataDir && process.env.SPOKASTREAM_FORCE_RELAY === "1" };
+    e.returnValue = { version: app.getVersion(), isPackaged: app.isPackaged, store: !!process.windowsStore, selfPid: process.pid, testMode: !!testDataDir, noNative: !!testDataDir && process.env.SPOKASTREAM_NO_NATIVE === "1", forceRelay: !!testDataDir && process.env.SPOKASTREAM_FORCE_RELAY === "1" };
   });
   ipcMain.handle("settings:get", () => settings.current);
   ipcMain.handle("settings:set", (_e, patch: Partial<Settings>) => {
@@ -234,7 +235,11 @@ function wireIpc() {
   ipcMain.handle("audio:capture-start", (e, mode: "include" | "exclude", pid: number) => engine.startCapture(e.sender, mode, pid));
   ipcMain.handle("audio:capture-stop", (_e, captureId: number) => engine.stopCapture(captureId));
   ipcMain.handle("audio:watch-keys", (_e, keys: number[]) => engine.watchKeys(keys));
-  ipcMain.handle("video:start", (_e, request: NativeVideoRequest) => {
+  ipcMain.handle("video:start", async (_e, request: NativeVideoRequest) => {
+    if (process.windowsStore && !borderlessAsked) {
+      borderlessAsked = true;
+      await engine.askBorderless().then(answer => logLine(`cadre de capture : ${answer}`), e => logLine(`cadre de capture : ${e.message}`));
+    }
     const isWindow = request.sourceId.startsWith("window:");
     const display = screen.getAllDisplays().find(d => String(d.id) === request.displayId) ?? screen.getPrimaryDisplay();
     const center = screen.dipToScreenPoint({ x: display.bounds.x + display.bounds.width / 2, y: display.bounds.y + display.bounds.height / 2 });

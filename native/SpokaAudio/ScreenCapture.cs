@@ -34,6 +34,7 @@ public sealed class ScreenCapture : IVideoCapture
     /// Deux connexions en parallèle n'y changent rien : au-delà, une définition ne peut plus tenir sa cadence.
     /// </summary>
     private const double TransportBytesPerSecond = 340e6;
+    private const int AppModelNoPackage = 15700;
     private const int MinimumUsefulFps = 48;
 
     private readonly ID3D11Device _device;
@@ -57,6 +58,21 @@ public sealed class ScreenCapture : IVideoCapture
     public string Url => _server.Url;
     public int Width => _converter.Width;
     public int Height => _converter.Height;
+
+    /// <summary>
+    /// Une application du Store doit demander à Windows de retirer le cadre jaune, une fois, avec l'accord de la personne.
+    /// Hors du Store, IsBorderRequired suffit. Sans cet accord, le cadre reste sur son écran, mais il n'est pas dans le stream.
+    /// </summary>
+    public static string AskForBorderless(TimeSpan patience)
+    {
+        var length = 0u;
+        if (GetCurrentPackageFullName(ref length, null) == AppModelNoPackage) return "unpackaged";
+        var answer = GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Borderless).AsTask();
+        return answer.Wait(patience) ? answer.Result.ToString() : "timeout";
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetCurrentPackageFullName(ref uint length, char[]? name);
 
     /// <summary>Rend null si cette machine ou cette définition seraient mieux servies par la capture de Chromium.</summary>
     public static ScreenCapture? TryStart(IntPtr window, IntPtr monitor, int fps, int maxHeight, Action onClosed)
