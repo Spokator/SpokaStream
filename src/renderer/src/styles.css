@@ -4780,3 +4780,35 @@ body.regie-window {
 .device-line small {
   color: var(--muted);
 }
+
+.crash-guard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100vh;
+  padding: 24px;
+  text-align: center;
+}
+
+.crash-guard h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.crash-guard p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.crash-guard button {
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}

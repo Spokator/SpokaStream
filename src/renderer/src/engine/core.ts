@@ -15,6 +15,7 @@ import type { ClipSource } from "./clips.ts";
 import { CLIP_SESSION, ClipShare } from "./clipShare.ts";
 import { benchClass, cachedBench, measureEncoders, rankResults } from "./encoders.ts";
 import type { BenchResult } from "./encoders.ts";
+import { rememberRoom } from "@shared/rooms.ts";
 import { assembleClip, fragmentTimes } from "./mp4.ts";
 import { ObsIngest } from "./obs.ts";
 import { Publisher } from "./publisher.ts";
@@ -392,7 +393,7 @@ class Core {
 
   private rememberRoom(id: string, name: string, code: string) {
     const settings = get().settings!;
-    const recentRooms = [{ id, name, code, at: Date.now() }, ...settings.recentRooms.filter(r => r.id !== id)].slice(0, 30);
+    const recentRooms = rememberRoom(settings.recentRooms, { id, name, code, at: Date.now() });
     void this.updateSettings({ recentRooms });
     this.signal.send({ t: "room.subscribe", ids: recentRooms.map(r => r.id) });
   }
@@ -536,6 +537,12 @@ class Core {
     api.openExternal(`${this.playerUrl().replace(/\/player$/, "")}/admin#t=${ticket}`);
   }
 
+  private sendError: (text: string, details: string) => void = () => {};
+
+  reportCrash(error: Error, stack: string) {
+    this.sendError(error.message, `${error.stack ?? ""}\n${stack}`);
+  }
+
   private watchErrors() {
     const seen = new Set<string>();
     const send = (text: string, details: string) => {
@@ -543,6 +550,7 @@ class Core {
       seen.add(text);
       this.signal.send({ t: "report", kind: "error", text: `${api.version} : ${text}`.slice(0, 1000), details: details.slice(0, 8000) });
     };
+    this.sendError = send;
     window.addEventListener("error", e => send(e.message, String((e.error as Error | undefined)?.stack ?? `${e.filename}:${e.lineno}`)));
     window.addEventListener("unhandledrejection", e => send(String((e.reason as Error | undefined)?.message ?? e.reason), String((e.reason as Error | undefined)?.stack ?? "")));
   }
@@ -1177,13 +1185,19 @@ class Core {
     return this.mixer?.levels() ?? {};
   }
 
+  private captureOptions() {
+    const { compatCapture, gameCapture } = get().settings!.stream;
+    return { compat: compatCapture, game: gameCapture };
+  }
+
   async goLive(config: GoLiveConfig) {
     if (this.publisher) return;
     const streamId = `${get().userId.slice(0, 8)}-${Date.now().toString(36)}`;
     let opened: OpenedSource;
     try {
-      opened = await openSource(config.source, config.fps, resolutionHeight(config.resolution), get().settings!.stream.compatCapture);
+      opened = await openSource(config.source, config.fps, resolutionHeight(config.resolution), this.captureOptions());
       if (opened.compatFailed) toast("La capture compatible n'est pas disponible sur cet écran : capture normale.", "warning", 8000);
+      if (opened.gameFailed) toast("La capture de jeu n'a pas pris sur cette fenêtre : capture normale. Elle marche avec les jeux OpenGL 64 bits.", "warning", 10_000);
     } catch (e) {
       this.reportError(e);
       return false;
@@ -1370,7 +1384,7 @@ class Core {
     const { fps, maxHeight, priority } = get().publish!.target;
     let next: OpenedSource;
     try {
-      next = await openSource(source, fps, maxHeight, get().settings!.stream.compatCapture);
+      next = await openSource(source, fps, maxHeight, this.captureOptions());
     } catch (e) {
       return this.reportError(e);
     }

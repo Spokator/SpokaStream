@@ -1,5 +1,12 @@
 # Journal des versions
 
+## 1.6.5
+
+- **Fini l'écran bleu.** L'application pouvait se retrouver sur son fond d'écran, sans rien d'affiché, et il fallait la quitter pour la relancer. Ça arrivait avec au moins deux flux à l'écran, au moment où la scène n'avait pas encore de taille. C'est corrigé, et si une autre erreur d'affichage survient un jour, l'application se répare toute seule sans couper ton direct.
+- **Toutes tes fenêtres dans la liste.** Steam, Docker ou un jeu réduits dans la barre des tâches n'apparaissaient pas. Une fenêtre réduite revient à l'écran quand tu la choisis.
+- **Nouveau : la capture de jeu**, comme Discord et OBS. Dans Paramètres, Diffusion : l'image est prise dans le jeu, ta souris reste visible dans Project Zomboid et les autres jeux OpenGL, et le stream voit la souris aussi. Choisis la fenêtre du jeu, pas l'écran. Jeux OpenGL 64 bits seulement. Désactivée par défaut, et à laisser de côté sur les jeux avec anti-triche : elle entre dans le jeu.
+- **Tes salons ne bougent plus.** Le salon où tu vas garde sa place dans la barre de gauche, sur le PC comme sur le téléphone.
+
 ## 1.6.4
 
 - **Ton jeu apparaît dans les fenêtres à diffuser.** Une fenêtre sans miniature était retirée de la liste, or un jeu en plein écran n'en a souvent pas, et Windows en refuse parfois à n'importe quelle fenêtre. Elle reste maintenant, avec « Aperçu indisponible ».

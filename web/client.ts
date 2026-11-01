@@ -2,6 +2,7 @@
 // Diffuser reste réservé au logiciel : c'est lui seul qui peut capter le son d'une application.
 import { DEFAULT_VIEWER_QUALITY, isHls, LIMITS, titleFromUrl, videoUrl, youtubeId } from "@shared/protocol.ts";
 import type { ChatMessage, ErrorCode, IceServer, Profile, RemoteCommand, RemoteState, RoomState, RoomStatus, ServerMessage, Stroke, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
+import { rememberRoom } from "@shared/rooms.ts";
 import { CLIP_SESSION, ClipShare } from "../src/renderer/src/engine/clipShare.ts";
 import { RequestError, Signal } from "../src/renderer/src/engine/signal.ts";
 import { Subscription } from "../src/renderer/src/engine/subscription.ts";
@@ -360,7 +361,7 @@ export function saveProfile(patch: { name?: string; color?: string; avatar?: str
 }
 
 function remember(room: RoomState) {
-  const recents = [{ id: room.id, code: room.code, name: room.name }, ...get().recents.filter(r => r.id !== room.id)].slice(0, 12);
+  const recents = rememberRoom(get().recents, { id: room.id, code: room.code, name: room.name }, 24);
   store("spoka-rooms", JSON.stringify(recents));
   set({ recents });
   signal.send({ t: "room.subscribe", ids: recents.map(r => r.id) });

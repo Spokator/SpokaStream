@@ -65,6 +65,16 @@ WGC force le curseur logiciel, dessiné par le compositeur. Dans un jeu OpenGL o
 
 **La duplication peut faire clignoter le jeu.** Sur la machine où la souris disparaissait dans Project Zomboid, elle ramène la souris, mais l'écran du joueur et le stream clignotent fortement. Le rapport Microsoft signale aussi que la duplication ne marche plus bien avec l'OpenGL en plein écran depuis 24H2. Ce mode reste donc un dernier recours, jamais activé tout seul. Ce qui règle vraiment ce cas est hors de notre portée : un jeu en vraie fenêtre, ou le jeu présenté par une chaîne DXGI, avec le réglage NVIDIA « Préférer superposé sur une chaîne d'échange DXGI ». La capture normale marche alors, souris comprise.
 
+### Capture de jeu
+
+C'est ce que font Discord et OBS sur ces jeux : ne pas demander l'image à Windows, la prendre dans le jeu. `GameCapture.cs` injecte `SpokaHook.dll` (`CreateRemoteThread` + `LoadLibraryW`), uniquement si `gameCapture` est coché, uniquement sur une fenêtre choisie, et uniquement si le processus a chargé `opengl32.dll`. Windows ne voit aucune capture : le curseur reste matériel, donc visible du joueur, et `CursorPainter` le pose sur l'image des spectateurs.
+
+La DLL remplace `SwapBuffers` et `wglSwapBuffers` dans les tables d'imports de tous les modules, sans réécrire de code, et recommence toutes les 2 s puisque Java charge sa fenêtre tard. Chaque image passe par un anneau de 3 PBO : `glReadPixels` ne bloque pas le jeu, au prix de deux images de retard. Elle arrive dans une mémoire partagée `Local\SpokaGameFrames-<pid>` à deux emplacements, avec un évènement pour réveiller le lecteur. La cadence garde une marge d'un quart d'intervalle : sans elle, un jeu à 60 i/s capturé à 60 i/s perd une image sur deux.
+
+La DLL reste dans le jeu jusqu'à sa fermeture : la décharger pendant qu'il tourne serait le vrai danger. Windows retire le nom de la mémoire dès que le lecteur la ferme, même si la DLL garde sa vue : elle vérifie donc chaque seconde que le nom existe, lâche l'ancienne, et rouvre la suivante. Sans ça, une capture relancée n'aurait plus jamais d'image. Ça couvre aussi un moteur planté.
+
+Si rien n'arrive en 2,5 s (jeu protégé, 32 bits, Direct3D), on revient à la capture habituelle et l'interface le dit. Un anti-triche peut voir une injection comme une triche : d'où l'option à cocher, l'avertissement, et aucune détection automatique. La DLL se compile avec MSVC dans `build-native.ps1`, et `SPOKA_WINSDK` désigne une copie dépliée du SDK Windows sur un PC qui n'a pas de kit installé.
+
 ### Choix du codec
 
 Mesure réelle à la première diffusion, 2 s par codec :
@@ -280,10 +290,13 @@ Si une connexion vidéo tombe vraiment, le spectateur en redemande une après 6 
 | `CHROMIUM_CAPTURE=1 npm run test:e2e` | Le même parcours sans capture native. À préférer sur un PC chargé : chaque trame native passe par DevTools, et ce canal sature même sur la 1.3.0, alors que la page reste à 144 i/s. Une étape s'arrête seule au bout de 4 minutes |
 | `npm run test:e2e` | 42 étapes avec deux instances et un téléphone émulé : WebRTC, son, YouTube, gestes reçus par une vraie fenêtre, sortie WHIP de ffmpeg, formats de 320 à 1280 px, fenêtre de régie détachée |
 | `npm run test:obs` | Le vrai OBS, dans une copie isolée, jusqu'à l'image reçue par un spectateur |
+| `npm run test:capture-game` | La DLL dans une vraie fenêtre OpenGL : images à l'endroit, 60 i/s, arrêt et reprise sans redémarrer le jeu |
 | `node --experimental-strip-types tests/e2e/run.ts --packaged` | La même chose sur l'application empaquetée |
 | `npm run test:production` | Le vrai serveur, avec la vidéo forcée par le relais TURN : PC → VPS → PC |
 
 Mesuré par le relais sur le vrai serveur : 58 i/s, aller-retour 50 ms, aucune perte, aucun gel.
+
+Une erreur de rendu React vide toute la page et ne laisse que le fond de l'application. `CrashGuard` entoure donc l'interface : il remonte le rendu jusqu'à trois fois, sans toucher au moteur, donc le direct continue, puis propose un bouton. Chaque erreur part dans les rapports du panneau admin. Si le processus de rendu meurt, `render-process-gone` recharge la page.
 
 ## Déploiement
 

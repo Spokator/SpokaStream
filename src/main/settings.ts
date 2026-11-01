@@ -47,6 +47,7 @@ function defaults(): Settings {
       allowControl: true,
       autoRecord: false,
       compatCapture: false,
+      gameCapture: false,
       screens: DEFAULT_SCREENS,
     },
     hotkeys: DEFAULT_HOTKEYS,

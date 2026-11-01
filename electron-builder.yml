@@ -13,6 +13,8 @@ files:
 extraResources:
   - from: native/publish/SpokaAudio.exe
     to: native/SpokaAudio.exe
+  - from: native/publish/SpokaHook.dll
+    to: native/SpokaHook.dll
   - from: build/icon.png
     to: icon.png
 

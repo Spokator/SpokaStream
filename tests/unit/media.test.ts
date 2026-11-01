@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { missingWindows, windowSourceId } from "../../src/main/sourceList.ts";
 import { assembleClip, fragmentSpan, fragmentTimes, Mp4Splitter } from "../../src/renderer/src/engine/mp4.ts";
 import { streamTrouble } from "../../src/renderer/src/ui/format.ts";
+import { rememberRoom } from "../../src/shared/rooms.ts";
 import { revealCandidates } from "../../src/renderer/src/engine/candidates.ts";
 import { test } from "node:test";
 import { DriftBuffer } from "../../src/renderer/src/engine/audio/driftBuffer.ts";
@@ -280,4 +281,11 @@ test("un jeu que Chromium ne liste pas revient dans les sources, sans doublon ni
   const windows = [{ hwnd: 111, title: "Project Zomboid" }, { hwnd: 222, title: "Discord" }, { hwnd: 333, title: "SpokaStream" }];
   assert.deepEqual(missingWindows(["screen:0:0", "window:222:0"], ["window:333:1"], windows).map(w => w.title), ["Project Zomboid"], "notre fenêtre porte un autre suffixe que les autres");
   assert.equal(windowSourceId(111), "window:111:0");
+});
+
+test("ouvrir un salon ne le déplace pas dans la liste", () => {
+  const rooms = [{ id: "a", name: "A" }, { id: "b", name: "B" }, { id: "c", name: "C" }];
+  assert.deepEqual(rememberRoom(rooms, { id: "c", name: "C renommé" }).map(r => r.name), ["A", "B", "C renommé"]);
+  assert.deepEqual(rememberRoom(rooms, { id: "d", name: "D" }).map(r => r.id), ["a", "b", "c", "d"], "un nouveau salon arrive à la fin");
+  assert.deepEqual(rememberRoom(rooms, { id: "d", name: "D" }, 3).map(r => r.id), ["b", "c", "d"], "la limite retire le plus ancien de la liste");
 });

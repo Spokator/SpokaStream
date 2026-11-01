@@ -29,6 +29,8 @@ export interface OpenedSource {
   /** La source a disparu : fenêtre fermée, écran débranché. */
   /** La capture compatible a été demandée, mais Windows la refuse sur cet écran : c'est WGC qui tourne. */
   compatFailed?: boolean;
+  /** La capture de jeu a été demandée sur une fenêtre, mais elle n'a pas pris : c'est WGC qui tourne. */
+  gameFailed?: boolean;
   onEnded(listener: () => void): void;
   /** Taille réelle des images, quand une fenêtre est redimensionnée par exemple. */
   onResize(listener: (width: number, height: number) => void): void;
@@ -38,9 +40,14 @@ export interface OpenedSource {
 
 const NATIVE_START_TIMEOUT_MS = 3000;
 
-async function openNative(source: CaptureSource, fps: number, maxHeight: number, compat: boolean): Promise<OpenedSource | null> {
+export interface CaptureOptions {
+  compat: boolean;
+  game: boolean;
+}
+
+async function openNative(source: CaptureSource, fps: number, maxHeight: number, options: CaptureOptions): Promise<OpenedSource | null> {
   if (!("MediaStreamTrackGenerator" in window) || window.spoka.noNative) return null;
-  const started = await window.spoka.startNativeVideo({ sourceId: source.id, displayId: source.displayId, fps, maxHeight, compat });
+  const started = await window.spoka.startNativeVideo({ sourceId: source.id, displayId: source.displayId, fps, maxHeight, ...options });
   if (!started) return null;
 
   const generator = new MediaStreamTrackGenerator({ kind: "video" });
@@ -92,6 +99,7 @@ async function openNative(source: CaptureSource, fps: number, maxHeight: number,
     element: null,
     native: true,
     compatFailed: !!started.compatFailed,
+    gameFailed: !!started.gameFailed,
     get width() {
       return width;
     },
@@ -105,9 +113,9 @@ async function openNative(source: CaptureSource, fps: number, maxHeight: number,
   };
 }
 
-export async function openSource(source: VideoSource, fps: number, maxHeight: number, compat = false): Promise<OpenedSource> {
+export async function openSource(source: VideoSource, fps: number, maxHeight: number, options: CaptureOptions = { compat: false, game: false }): Promise<OpenedSource> {
   if (source.kind === "screen" || source.kind === "window") {
-    const native = await openNative(source.source, fps, maxHeight, compat).catch(e => {
+    const native = await openNative(source.source, fps, maxHeight, options).catch(e => {
       console.warn("capture native :", e);
       return null;
     });

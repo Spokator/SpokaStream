@@ -84,6 +84,12 @@ export function createMainWindow(startHidden: boolean, onCloseRequest: (e: Elect
     if (url !== win.webContents.getURL()) e.preventDefault();
   });
 
+  // Le processus de la page peut tomber, sur un pilote fragile par exemple : sans ça, il ne reste qu'une fenêtre vide.
+  win.webContents.on("render-process-gone", (_event, details) => {
+    console.error(`page tombée : ${details.reason}`);
+    if (details.reason !== "clean-exit" && !win.isDestroyed()) load(win);
+  });
+
   load(win);
   return win;
 }

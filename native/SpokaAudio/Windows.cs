@@ -35,7 +35,8 @@ public static class Windows
             var style = GetWindowLongPtrW(window, GwlExStyle).ToInt64();
             if ((style & (WsExToolWindow | WsExNoActivate)) != 0) return true;
             if (DwmGetWindowAttribute(window, DwmCloaked, out var cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
-            if (!GetWindowRect(window, out var rect) || rect.Right - rect.Left < MinimumWidth || rect.Bottom - rect.Top < MinimumHeight) return true;
+            // Une fenêtre réduite ne mesure que 160 px de large : c'est pourtant l'état normal d'un jeu après un Alt+Tab.
+            if (!IsIconic(window) && (!GetWindowRect(window, out var rect) || rect.Right - rect.Left < MinimumWidth || rect.Bottom - rect.Top < MinimumHeight)) return true;
             var length = GetWindowTextW(window, title, title.Length);
             if (length == 0) return true;
             var kindLength = GetClassNameW(window, kind, kind.Length);
@@ -54,6 +55,23 @@ public static class Windows
     private const int MinimumWidth = 320;
     private const int MinimumHeight = 200;
     private static readonly HashSet<string> ShellClasses = ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
+
+    /// <summary>Une fenêtre réduite ne produit aucune image : la choisir pour un direct, c'est vouloir la rouvrir.</summary>
+    public static void Restore(IntPtr window)
+    {
+        if (window == IntPtr.Zero || !IsIconic(window)) return;
+        ShowWindow(window, ShowRestore);
+        Thread.Sleep(RestoreMs);
+    }
+
+    private const int ShowRestore = 9;
+    private const int RestoreMs = 400;
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr window, int command);
 
     private delegate bool EnumProc(IntPtr window, IntPtr data);
 

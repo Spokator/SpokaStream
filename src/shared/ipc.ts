@@ -23,6 +23,8 @@ export interface StreamDefaults {
   allowControl: boolean;
   /** L'enregistrement démarre avec le stream. */
   autoRecord: boolean;
+  /** La capture entre dans le jeu, comme Discord et OBS. Sur demande seulement : un anti-triche peut mal le prendre. */
+  gameCapture: boolean;
   /** Capture sans WGC : la souris reste visible dans les jeux OpenGL et Vulkan, mais une fenêtre partagée montre ce qui passe devant elle. */
   compatCapture: boolean;
   screens: WaitScreen[];
@@ -318,6 +320,7 @@ export interface NativeVideoRequest {
   fps: number;
   maxHeight: number;
   compat: boolean;
+  game: boolean;
 }
 
 export interface NativeVideo {
@@ -325,6 +328,7 @@ export interface NativeVideo {
   width: number;
   height: number;
   compatFailed?: boolean;
+  gameFailed?: boolean;
 }
 
 export interface SpokaApi {

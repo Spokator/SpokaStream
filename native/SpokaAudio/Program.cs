@@ -119,19 +119,24 @@ internal static class Program
                 _video?.Dispose();
                 _video = null;
                 var hwnd = request["hwnd"] is { } window ? new IntPtr((long)window) : IntPtr.Zero;
+                Windows.Restore(hwnd);
                 var monitor = hwnd == IntPtr.Zero ? Windows.MonitorAt((int)request["x"]!, (int)request["y"]!) : IntPtr.Zero;
                 string? url = null;
                 var fps = (int)request["fps"]!;
                 var maxHeight = (int)request["maxHeight"]!;
                 void Ended() => SendEvent(new JsonObject { ["evt"] = "video.ended", ["url"] = url });
                 var compat = (bool?)request["compat"] == true;
-                IVideoCapture? capture = compat ? DesktopDuplication.TryStart(hwnd, monitor, fps, maxHeight, Ended) : null;
-                var duplicated = capture is not null;
+                // La capture de jeu ne vise qu'une fenêtre : sur un écran entier, on ne sait pas dans quoi entrer.
+                var game = (bool?)request["game"] == true && hwnd != IntPtr.Zero;
+                IVideoCapture? capture = game ? GameCapture.TryStart(hwnd, fps, maxHeight, Ended) : null;
+                var inGame = capture is not null;
+                capture ??= compat ? DesktopDuplication.TryStart(hwnd, monitor, fps, maxHeight, Ended) : null;
+                var duplicated = capture is not null && !inGame;
                 capture ??= ScreenCapture.TryStart(hwnd, monitor, fps, maxHeight, Ended);
                 if (capture is null) return null;
                 _video = capture;
                 url = capture.Url;
-                return new JsonObject { ["url"] = url, ["width"] = capture.Width, ["height"] = capture.Height, ["compatFailed"] = compat && !duplicated };
+                return new JsonObject { ["url"] = url, ["width"] = capture.Width, ["height"] = capture.Height, ["compatFailed"] = compat && !game && !duplicated, ["gameFailed"] = game && !inGame };
             }
             case "video.configure":
                 _video?.Configure((int)request["fps"]!, (int)request["maxHeight"]!);

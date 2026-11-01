@@ -846,7 +846,9 @@ export function Stage() {
   const raise = (id: string) => setStack(list => [...list.filter(x => x !== id), id]);
   const leads = wall.mode === "focus" || wall.mode === "side" || wall.mode === "pip";
   // Une image ne doit jamais disparaître derrière une plus grande : les petites passent devant, et la dernière touchée au-dessus de tout.
-  const byArea = [...ids].sort((p, q) => rects[q]!.w * rects[q]!.h - rects[p]!.w * rects[p]!.h);
+  const area = (id: string) => (rects[id] ? rects[id].w * rects[id].h : 0);
+  // Une scène réduite à zéro, fenêtre réduite par exemple, n'a aucune position : deux streams suffisaient alors à tout faire tomber.
+  const byArea = [...ids].sort((p, q) => area(q) - area(p));
   const layer = (id: string) => 1 + byArea.indexOf(id) + (stack.indexOf(id) + 1) * ids.length;
 
   const onDragStart = (e: React.PointerEvent, id: string, mode: Drag["mode"]) => {
