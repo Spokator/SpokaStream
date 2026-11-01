@@ -324,7 +324,7 @@ export function GoLiveModal() {
             <div className="source-grid">
               {list.map(source => (
                 <button key={source.id} type="button" className={`source-card ${isSelected(source.id) ? "is-on" : ""}`} onClick={() => pick(source.kind === "screen" ? { kind: "screen", source } : { kind: "window", source })}>
-                  <img className="source-thumb" src={source.thumbnail} alt="" />
+                  {source.thumbnail ? <img className="source-thumb" src={source.thumbnail} alt="" /> : <span className="source-thumb is-empty">Aperçu indisponible</span>}
                   <span className="source-name">
                     {source.icon && <img src={source.icon} alt="" />}
                     <span>{source.name}</span>

@@ -91,6 +91,12 @@ internal static class Program
                 var (name, path, title) = Sessions.Describe(root);
                 return new JsonObject { ["pid"] = root, ["name"] = name, ["path"] = path, ["title"] = title };
             }
+            case "windows.list":
+            {
+                var list = new JsonArray();
+                foreach (var (hwnd, title) in Windows.Visible()) list.Add(new JsonObject { ["hwnd"] = hwnd, ["title"] = title });
+                return list;
+            }
             case "window.rect":
             {
                 var rect = Windows.RectOf((long)request["hwnd"]!);

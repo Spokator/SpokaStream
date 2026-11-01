@@ -51,6 +51,12 @@ Détails qui comptent :
 
 Pour une capture Chromium, **ne jamais mettre `maxWidth` sur une fenêtre** : l'image est agrandie jusqu'à cette limite. Une fenêtre de 960 px partait en 8K et écrasait la machine.
 
+### Liste des sources
+
+`desktopCapturer` rend souvent une miniature vide, et jamais d'image pour un jeu OpenGL en plein écran exclusif. Une fenêtre sans miniature n'est donc pas une fenêtre à écarter : le moteur énumère lui-même les fenêtres visibles (`windows.list`), et `missingWindows` ajoute celles qui manquent, sans aperçu. Les identifiants de Chromium n'ont pas tous le même suffixe (`window:123:0`, `window:123:1`) : seul le numéro compte pour les comparer.
+
+Quand la cadence tombe sans surcharge ni perte réseau, c'est que la source n'envoie plus d'images. `FrameServer` répète alors la dernière toutes les 200 ms : **5 i/s et 0 Mb/s** veulent dire que rien de neuf n'arrive, pas que la connexion lâche.
+
 ### Capture compatible
 
 WGC force le curseur logiciel, dessiné par le compositeur. Dans un jeu OpenGL ou Vulkan qui présente sans passer par lui, plus personne ne le dessine : **la vraie souris disparaît de l'écran du joueur**, en direct seulement. C'est [connu de Microsoft](https://github.com/microsoft/Windows.UI.Composition-Win32-Samples/issues/128), toujours ouvert au 2026-10-31, et `IsCursorCaptureEnabled` n'y change rien. Les traces du pointeur de Windows font tomber les mêmes jeux dans le même piège, puisqu'elles forcent le même mode.

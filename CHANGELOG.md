@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.6.4
+
+- **Ton jeu apparaît dans les fenêtres à diffuser.** Une fenêtre sans miniature était retirée de la liste, or un jeu en plein écran n'en a souvent pas, et Windows en refuse parfois à n'importe quelle fenêtre. Elle reste maintenant, avec « Aperçu indisponible ».
+- **Un diagnostic plus juste.** Quand rien ne bouge à l'image, ou qu'un jeu n'envoie plus d'images à la capture, SpokaStream ne dit plus « Ta connexion décroche » : ta connexion n'y est pour rien.
+
 ## 1.6.3
 
 - **Un clip n'annonce plus une durée fausse.** Quand le PC était chargé, un clip de 30 secondes pouvait afficher 50 secondes, avec l'image ou le son décalés d'autant. Un fragment sans son portait un temps de zéro, pris à tort pour le début du clip.

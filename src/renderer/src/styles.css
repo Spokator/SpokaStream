@@ -2430,6 +2430,15 @@ a {
   border-radius: 7px;
 }
 
+.source-thumb.is-empty {
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
 .source-name {
   display: flex;
   align-items: center;

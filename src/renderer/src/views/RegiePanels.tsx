@@ -7,7 +7,7 @@ import { core } from "../engine/core.ts";
 import type { AudioChoice } from "../engine/core.ts";
 import { get, memberOf, set, toast, useApp } from "../state/store.ts";
 import type { ActivityItem, PublishView } from "../state/store.ts";
-import { clock, limitText, mbps, pathText, plural } from "../ui/format.ts";
+import { clock, limitText, streamTrouble, mbps, pathText, plural } from "../ui/format.ts";
 import { Avatar, Button, Field, IconButton, Meter, Popover, Segmented, Select, Slider, Toggle, Uptime } from "../ui/kit.tsx";
 import { FileTransport } from "./Stage.tsx";
 import { Chat } from "./Chat.tsx";
@@ -30,13 +30,13 @@ export function healthOf(publish: PublishView): Health {
   const { stats, target, viewers } = publish;
   if (!stats) return { tone: "idle", text: "Personne ne regarde", advice: "Rien n'est encodé tant que personne ne regarde : ton PC ne fait aucun effort." };
   const retransmit = Math.max(0, ...viewers.map(v => v.stats?.retransmitPct ?? 0));
-  const budget = 1000 / target.fps;
-  const overloaded = stats.limit === "cpu" || (stats.encMs ?? 0) > budget;
   const fps30 = { label: "Passer à 30 i/s", run: () => void core.updateEncoding({ fps: 30 }) };
   const lower = lowerBitrate(target.kbps);
   const network = lower ? { label: `Passer à ${mbps(lower)} Mb/s`, run: () => void core.updateEncoding({ kbps: lower }) } : undefined;
-  if (stats.fps < target.fps * 0.7 || retransmit > 5 || (stats.encMs ?? 0) > budget) {
-    if (overloaded) return { tone: "bad", text: "Ton PC n'arrive pas à suivre", advice: "L'encodeur manque de temps pour chaque image. Baisse la cadence ou la définition.", fix: target.fps > 30 ? fps30 : undefined };
+  const trouble = streamTrouble(stats, target.fps, retransmit);
+  if (trouble === "source") return { tone: "warn", text: "L'image ne bouge pas", advice: "Rien ne change à l'écran, ou le jeu n'envoie plus d'images à la capture. Ta connexion n'y est pour rien." };
+  if (trouble) {
+    if (trouble === "overloaded") return { tone: "bad", text: "Ton PC n'arrive pas à suivre", advice: "L'encodeur manque de temps pour chaque image. Baisse la cadence ou la définition.", fix: target.fps > 30 ? fps30 : undefined };
     return { tone: "bad", text: "Ta connexion décroche", advice: "Des images se perdent en route. Un débit plus bas donnera une image stable à tes spectateurs.", fix: network };
   }
   if (stats.limit !== "none" || retransmit > 2) return { tone: "warn", text: limitText(stats.limit) || "Quelques pertes réseau", advice: "Rien de grave pour l'instant. Si l'image saccade, baisse le débit.", fix: network };

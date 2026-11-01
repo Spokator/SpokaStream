@@ -19,6 +19,11 @@ export interface NativeApp {
   peak: number;
 }
 
+export interface NativeWindow {
+  hwnd: number;
+  title: string;
+}
+
 export interface NativeWindowApp {
   pid: number;
   name: string;
@@ -170,6 +175,10 @@ export class AudioEngine extends EventEmitter<{ status: [AudioEngineStatus]; key
 
   windowApp(hwnd: string) {
     return this.request<NativeWindowApp | null>("window.app", { hwnd: Number(hwnd) });
+  }
+
+  windows() {
+    return this.request<NativeWindow[]>("windows.list", {});
   }
 
   windowRect(hwnd: string) {

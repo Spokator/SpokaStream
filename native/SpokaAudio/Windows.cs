@@ -20,6 +20,64 @@ public static class Windows
 
     public static IntPtr MonitorAt(int x, int y) => MonitorFromPoint(new Point { X = x, Y = y }, 2);
 
+    /// <summary>
+    /// Les fenêtres qu'une personne reconnaîtrait. Chromium écarte celles qui répondent lentement et celles dont il
+    /// n'obtient pas d'image : c'est le cas d'un jeu OpenGL en plein écran exclusif, justement ce qu'on veut diffuser.
+    /// </summary>
+    public static List<(long Hwnd, string Title)> Visible()
+    {
+        var found = new List<(long, string)>();
+        var title = new char[256];
+        var kind = new char[64];
+        EnumWindows((window, _) =>
+        {
+            if (!IsWindowVisible(window) || GetWindow(window, GwOwner) != IntPtr.Zero) return true;
+            var style = GetWindowLongPtrW(window, GwlExStyle).ToInt64();
+            if ((style & (WsExToolWindow | WsExNoActivate)) != 0) return true;
+            if (DwmGetWindowAttribute(window, DwmCloaked, out var cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
+            if (!GetWindowRect(window, out var rect) || rect.Right - rect.Left < MinimumWidth || rect.Bottom - rect.Top < MinimumHeight) return true;
+            var length = GetWindowTextW(window, title, title.Length);
+            if (length == 0) return true;
+            var kindLength = GetClassNameW(window, kind, kind.Length);
+            if (ShellClasses.Contains(new string(kind, 0, kindLength))) return true;
+            found.Add((window.ToInt64(), new string(title, 0, length)));
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    private const uint GwOwner = 4;
+    private const int GwlExStyle = -20;
+    private const long WsExToolWindow = 0x80;
+    private const long WsExNoActivate = 0x08000000;
+    private const int DwmCloaked = 14;
+    private const int MinimumWidth = 320;
+    private const int MinimumHeight = 200;
+    private static readonly HashSet<string> ShellClasses = ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
+
+    private delegate bool EnumProc(IntPtr window, IntPtr data);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumProc callback, IntPtr data);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr window, uint command);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindowLongPtrW(IntPtr window, int index);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextW(IntPtr window, char[] text, int count);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassNameW(IntPtr window, char[] text, int count);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out int value, int size);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect
     {

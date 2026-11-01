@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, net, Notification, screen, session, shell, webContents } from "electron";
+import { missingWindows, windowSourceId } from "./sourceList.ts";
 import { execFile } from "node:child_process";
 import { appendFileSync, createWriteStream, mkdirSync, statSync, writeFileSync } from "node:fs";
 import type { WriteStream } from "node:fs";
@@ -144,6 +145,14 @@ async function listSources(): Promise<CaptureSource[]> {
       displayId: source.display_id,
       app: windowApp ? { pid: windowApp.pid, name: windowApp.name } : null,
     });
+  }
+  if (engine.status !== "ready") return result;
+  const windows = await engine.windows().catch(() => []);
+  for (const window of missingWindows(result.map(source => source.id), [...own], windows)) {
+    const windowApp = await engine.windowApp(String(window.hwnd)).catch(() => null);
+    if (windowApp?.pid === process.pid) continue;
+    // Pas de miniature pour celles-là, et elles passent en tête : c'est presque toujours le jeu qu'on cherche.
+    result.unshift({ id: windowSourceId(window.hwnd), name: window.title, kind: "window", thumbnail: "", icon: await fileIcon(windowApp?.path ?? null), displayId: "", app: windowApp ? { pid: windowApp.pid, name: windowApp.name } : null });
   }
   return result;
 }

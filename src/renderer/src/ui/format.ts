@@ -36,6 +36,18 @@ const LIMIT_TEXT: Record<string, string> = {
 };
 export const limitText = (reason: string) => LIMIT_TEXT[reason] ?? "";
 
+/**
+ * Pourquoi la cadence tombe. Sans surcharge ni perte réseau, ce n'est pas la connexion : la source n'envoie plus d'images,
+ * parce que rien ne bouge ou parce que le jeu ne passe plus par la capture.
+ */
+export function streamTrouble(stats: { fps: number; limit: string; encMs: number | null }, targetFps: number, retransmitPct: number) {
+  const budget = 1000 / targetFps;
+  const overloaded = stats.limit === "cpu" || (stats.encMs ?? 0) > budget;
+  if (overloaded && (stats.fps < targetFps * 0.7 || (stats.encMs ?? 0) > budget)) return "overloaded";
+  if (retransmitPct > 5) return "network";
+  return stats.fps < targetFps * 0.7 ? (stats.limit === "bandwidth" ? "network" : "source") : null;
+}
+
 export const pathText = (path: { relay: boolean; protocol: string; rttMs: number | null } | null) => {
   if (!path) return "";
   const route = path.relay ? `Relais ${path.protocol.toUpperCase()}` : "Direct";
