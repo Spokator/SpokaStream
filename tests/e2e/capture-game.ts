@@ -121,9 +121,14 @@ try {
   mkdirSync(path.join(folder, "EasyAntiCheat"), { recursive: true });
   copyFileSync(game, path.join(folder, "jeu.exe"));
   window = spawn(path.join(folder, "jeu.exe"), { stdio: "ignore" });
-  await wait(1200);
-  const windows = (await request("windows.list", {})).result as { hwnd: number; title: string }[];
-  const shielded = windows.find(w => w.title === "Jeu OpenGL d'essai")?.hwnd;
+  // Windows inspecte un exécutable tout juste copié : sa fenêtre peut tarder.
+  let shielded: number | undefined;
+  for (let tries = 0; !shielded && tries < 40; tries++) {
+    await wait(250);
+    const windows = (await request("windows.list", {})).result as { hwnd: number; title: string }[];
+    shielded = windows.find(w => w.title === "Jeu OpenGL d'essai")?.hwnd;
+  }
+  assert.ok(shielded, "le jeu protégé doit apparaître");
   const refused = (await request("video.start", { hwnd: shielded, fps: 30, maxHeight: 0, game: true })).result as Started;
   assert.equal(refused.gameCapture, "protected", "un jeu protégé doit être refusé");
   const modules = execFileSync("tasklist", ["/m", "SpokaHook.dll", "/fi", `PID eq ${window.pid}`], { encoding: "latin1" });
