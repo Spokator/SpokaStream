@@ -5,13 +5,15 @@ import type { UpdateStatus } from "../shared/ipc.ts";
 
 const { autoUpdater } = electronUpdater;
 const CHECK_EVERY_MS = 6 * 3600 * 1000;
+/** Une application du Store est mise à jour par le Store. */
+const selfUpdating = app.isPackaged && !process.windowsStore;
 
 /** Mises à jour depuis les releases GitHub. Téléchargées en arrière-plan, appliquées à la fermeture ou sur demande. */
 export class Updater extends EventEmitter<{ status: [UpdateStatus] }> {
-  status: UpdateStatus = { state: app.isPackaged ? "idle" : "unsupported" };
+  status: UpdateStatus = { state: selfUpdating ? "idle" : "unsupported" };
 
   start() {
-    if (!app.isPackaged) return;
+    if (!selfUpdating) return;
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.on("checking-for-update", () => this.set({ state: "checking" }));
@@ -27,7 +29,7 @@ export class Updater extends EventEmitter<{ status: [UpdateStatus] }> {
   }
 
   async check() {
-    if (!app.isPackaged) return;
+    if (!selfUpdating) return;
     await autoUpdater.checkForUpdates().catch(e => this.set({ state: "error", message: String(e?.message ?? e) }));
   }
 

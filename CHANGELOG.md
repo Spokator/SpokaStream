@@ -2,7 +2,7 @@
 
 ## 1.6.8
 
-- **La bonne icône dans la barre des tâches.** Windows pouvait afficher l'atome d'Electron à la place de celle de SpokaStream. L'application lui indique maintenant quelle icône montrer.
+- **La bonne icône dans la barre des tâches.** Sur le PC de développement, un raccourci laissé par les tests faisait passer SpokaStream pour Electron. Les tests ont maintenant leur propre identifiant. Rien à faire sur les autres PC.
 
 ## 1.6.7
 

@@ -8,8 +8,8 @@ const preload = path.join(import.meta.dirname, "../preload/index.cjs");
 const rendererUrl = process.env.ELECTRON_RENDERER_URL;
 
 /**
- * Windows garde une icône par identifiant : un essai lancé par electron.exe sous le vrai identifiant
- * laisse l'atome d'Electron dans la barre des tâches de la vraie application.
+ * À sa première notification, electron.exe dépose un raccourci Electron.lnk dans le menu Démarrer, avec notre identifiant.
+ * Sous le vrai identifiant, Windows prendrait alors la vraie application pour Electron, nom et icône compris.
  */
 export const APP_ID = app.isPackaged && !process.env.SPOKASTREAM_USER_DATA ? "com.spokator.spokastream" : "com.spokator.spokastream.dev";
 
@@ -46,8 +46,6 @@ export function createMainWindow(startHidden: boolean, onCloseRequest: (e: Elect
     webPreferences,
   });
   win.removeMenu();
-  // Dit à la barre des tâches quelle icône montrer, au lieu de la laisser reprendre celle qu'elle a en mémoire.
-  if (app.isPackaged) win.setAppDetails({ appId: APP_ID, appIconPath: process.execPath, appIconIndex: 0, relaunchCommand: `"${process.execPath}"`, relaunchDisplayName: "SpokaStream" });
   win.on("close", onCloseRequest);
   win.once("ready-to-show", () => {
     if (!startHidden) win.show();

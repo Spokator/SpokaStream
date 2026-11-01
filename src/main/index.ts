@@ -31,14 +31,15 @@ app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 const PROTOCOL = "spokastream";
 const testDataDir = process.env.SPOKASTREAM_USER_DATA;
 if (testDataDir) app.setPath("userData", testDataDir);
-app.setAppUserModelId(APP_ID);
+// Dans le Store, l'identité vient du paquet.
+if (!process.windowsStore) app.setAppUserModelId(APP_ID);
 
 if (!testDataDir && !app.requestSingleInstanceLock()) {
   app.exit(0);
 }
 
 // En développement et en test, on ne touche pas au lien spokastream:// de la version installée.
-if (app.isPackaged && !testDataDir) app.setAsDefaultProtocolClient(PROTOCOL);
+if (app.isPackaged && !testDataDir && !process.windowsStore) app.setAsDefaultProtocolClient(PROTOCOL);
 
 const logFile = () => path.join(app.getPath("userData"), "spokastream.log");
 function logLine(line: string) {
