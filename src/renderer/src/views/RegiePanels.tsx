@@ -266,7 +266,10 @@ function SourcesPanel() {
     <>
       <div className="studio-source">
         <Monitor size={16} />
-        <span>{publish.sourceName}</span>
+        <span>
+          {publish.sourceName}
+          {publish.gameCapture && <small>Capture de jeu</small>}
+        </span>
         <Button onClick={() => set({ goLiveOpen: true })}>Changer</Button>
       </div>
       <FileTransport />

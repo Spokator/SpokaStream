@@ -534,11 +534,8 @@ function StreamSection({ s }: { s: Settings }) {
       <Field label="Codec par défaut" hint="Automatique choisit le meilleur que ton PC tient">
         <Select<CodecChoice> label="Codec" value={s.stream.codec} options={CODECS} onChange={codec => setStream({ codec })} />
       </Field>
-      <Field label="Capture de jeu" hint="Comme Discord et OBS : l'image est prise dans le jeu, et ta souris reste visible dans les jeux OpenGL comme Project Zomboid. Choisis la fenêtre du jeu, pas l'écran. Jeux OpenGL 64 bits seulement. N'active pas ça pour un jeu protégé par un anti-triche : entrer dans un jeu peut lui déplaire. Prend effet au prochain direct">
+      <Field label="Capture de jeu" hint="L'image est prise directement dans le jeu, comme Discord et OBS : ta souris reste visible dans les jeux OpenGL comme Project Zomboid. Choisis la fenêtre du jeu, pas l'écran. SpokaStream n'entre que dans les jeux OpenGL 64 bits, et jamais quand il détecte un anti-triche. Les autres jeux, comme LoL, gardent la capture normale, qui ne touche pas au jeu. Prend effet au prochain direct">
         <Toggle label="Capture de jeu" checked={s.stream.gameCapture} onChange={gameCapture => setStream({ gameCapture })} />
-      </Field>
-      <Field label="Capture compatible avec les jeux" hint="À n'essayer que si ta souris disparaît dans un jeu pendant un direct. Attention : dans certains jeux en plein écran, l'image peut clignoter fortement, sur ton écran comme dans le stream. Coupe-le aussitôt si ça arrive. Ce qui passe devant une fenêtre partagée sera visible. Prend effet au prochain direct">
-        <Toggle label="Capture compatible avec les jeux" checked={s.stream.compatCapture} onChange={compatCapture => setStream({ compatCapture })} />
       </Field>
       <Field label="Priorité par défaut">
         <Segmented<VideoPriority>

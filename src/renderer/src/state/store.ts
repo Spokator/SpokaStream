@@ -41,6 +41,7 @@ export interface PublishView {
   sourceName: string;
   kind: StreamInfo["kind"];
   nativeCapture: boolean;
+  gameCapture: boolean;
   stats: SendStats | null;
   viewers: ViewerView[];
   mix: MixSource[];

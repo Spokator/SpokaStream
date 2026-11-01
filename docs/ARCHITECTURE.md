@@ -57,13 +57,11 @@ Pour une capture Chromium, **ne jamais mettre `maxWidth` sur une fenêtre** : l'
 
 Quand la cadence tombe sans surcharge ni perte réseau, c'est que la source n'envoie plus d'images. `FrameServer` répète alors la dernière toutes les 200 ms : **5 i/s et 0 Mb/s** veulent dire que rien de neuf n'arrive, pas que la connexion lâche.
 
-### Capture compatible
+### La souris dans les jeux OpenGL
 
 WGC force le curseur logiciel, dessiné par le compositeur. Dans un jeu OpenGL ou Vulkan qui présente sans passer par lui, plus personne ne le dessine : **la vraie souris disparaît de l'écran du joueur**, en direct seulement. C'est [connu de Microsoft](https://github.com/microsoft/Windows.UI.Composition-Win32-Samples/issues/128), toujours ouvert au 2026-10-31, et `IsCursorCaptureEnabled` n'y change rien. Les traces du pointeur de Windows font tomber les mêmes jeux dans le même piège, puisqu'elles forcent le même mode.
 
-`DesktopDuplication.cs` passe par la duplication du bureau, activée par `compatCapture`. Le curseur reste matériel, donc absent de l'image : le moteur le pose lui-même, en relisant le petit carré dessous sans passer par un shader. Une fenêtre se découpe dans l'image de l'écran, donc ce qui passe devant elle part avec : c'est pour ça que ce n'est pas le mode par défaut, et qu'on ne le choisit pas seul. Un écran tourné reste sur WGC. Le bug se manifeste sur certaines machines seulement, et il n'existe pas de détection fiable : cacher le curseur est normal pour beaucoup de jeux.
-
-**La duplication peut faire clignoter le jeu.** Sur la machine où la souris disparaissait dans Project Zomboid, elle ramène la souris, mais l'écran du joueur et le stream clignotent fortement. Le rapport Microsoft signale aussi que la duplication ne marche plus bien avec l'OpenGL en plein écran depuis 24H2. Ce mode reste donc un dernier recours, jamais activé tout seul. Ce qui règle vraiment ce cas est hors de notre portée : un jeu en vraie fenêtre, ou le jeu présenté par une chaîne DXGI, avec le réglage NVIDIA « Préférer superposé sur une chaîne d'échange DXGI ». La capture normale marche alors, souris comprise.
+**Ne pas remettre la duplication du bureau.** La « capture compatible » (`DesktopDuplication.cs`, de la 1.6.1 à la 1.6.6) ramenait la souris, mais l'écran du joueur et le stream clignotaient fortement sur la machine même où elle devait aider, ce qui est un risque pour les personnes photosensibles. Le rapport Microsoft signale aussi qu'elle marche mal avec l'OpenGL en plein écran depuis 24H2. La capture de jeu répond au même besoin sans ce défaut, testée sur le vrai Project Zomboid le 2026-11-01. Un jeu Vulkan touché par le bug n'a pas de réponse dans l'application : il lui reste une vraie fenêtre, ou le réglage NVIDIA « Préférer superposé sur une chaîne d'échange DXGI ».
 
 ### Capture de jeu
 
@@ -73,7 +71,13 @@ La DLL remplace `SwapBuffers` et `wglSwapBuffers` dans les tables d'imports de t
 
 La DLL reste dans le jeu jusqu'à sa fermeture : la décharger pendant qu'il tourne serait le vrai danger. Windows retire le nom de la mémoire dès que le lecteur la ferme, même si la DLL garde sa vue : elle vérifie donc chaque seconde que le nom existe, lâche l'ancienne, et rouvre la suivante. Sans ça, une capture relancée n'aurait plus jamais d'image. Ça couvre aussi un moteur planté.
 
-Si rien n'arrive en 2,5 s (jeu protégé, 32 bits, Direct3D), on revient à la capture habituelle et l'interface le dit. Un anti-triche peut voir une injection comme une triche : d'où l'option à cocher, l'avertissement, et aucune détection automatique. La DLL se compile avec MSVC dans `build-native.ps1`, et `SPOKA_WINSDK` désigne une copie dépliée du SDK Windows sur un PC qui n'a pas de kit installé.
+Si rien n'arrive en 2,5 s, on revient à la capture habituelle et l'interface le dit. Le moteur rend à l'interface `gameCapture` : `active`, `failed`, `protected` ou `unsupported`, ce dernier en silence, puisque la capture normale est alors la bonne.
+
+**Discord et OBS entrent dans les jeux avec une DLL signée, que les éditeurs d'anti-triche connaissent. La nôtre n'est pas signée.** Une DLL n'hérite pas de la confiance d'une autre : les responsables d'OBS renvoient chacun à sa propre signature et à une demande auprès des éditeurs. Même une DLL signée peut être coupée : en juillet 2026, Vanguard a bloqué le Game Capture d'OBS sur LoL et Valorant jusqu'à une mise à jour. On n'entre donc que là où c'est indispensable. Le bug de souris vise les jeux OpenGL et Vulkan, pas Direct3D : LoL n'a aucune raison de recevoir la DLL, et WGC ne le touche pas. L'option reste à cocher, mais la décision revient au moteur, dans cet ordre : fenêtre de navigateur (Chromium et Firefox chargent OpenGL sans être des jeux), `AntiCheat.Protects`, 32 bits (`LoadLibraryW` 64 bits y ferait planter le jeu), `opengl32.dll` chargée. Les trois premiers contrôles n'ouvrent pas le jeu en lecture : un jeu protégé n'est jamais lu.
+
+`AntiCheat.cs` cherche les jeux Riot, les services d'anti-triche en marche et leurs traces **dans le dossier du jeu seulement**, jamais dans les dossiers partagés de Windows : sur ce PC, un vieux `AppData\Local\BattlEye` bloquait tout. Cette liste ne connaît pas tous les anti-triches, et VAC ne laisse aucune trace locale. Project Zomboid n'annonce pas d'anti-triche sur sa page Steam, même si ses serveurs gardent un réglage `SteamVAC`. Une signature de l'application serait la vraie prochaine étape : elle retirerait aussi l'alerte de Windows à l'installation.
+
+La DLL se compile avec MSVC dans `build-native.ps1`, et `SPOKA_WINSDK` désigne une copie dépliée du SDK Windows sur un PC qui n'a pas de kit installé.
 
 ### Coût pour le jeu
 
@@ -298,7 +302,7 @@ Si une connexion vidéo tombe vraiment, le spectateur en redemande une après 6 
 | `CHROMIUM_CAPTURE=1 npm run test:e2e` | Le même parcours sans capture native. À préférer sur un PC chargé : chaque trame native passe par DevTools, et ce canal sature même sur la 1.3.0, alors que la page reste à 144 i/s. Une étape s'arrête seule au bout de 4 minutes |
 | `npm run test:e2e` | 42 étapes avec deux instances et un téléphone émulé : WebRTC, son, YouTube, gestes reçus par une vraie fenêtre, sortie WHIP de ffmpeg, formats de 320 à 1280 px, fenêtre de régie détachée |
 | `npm run test:obs` | Le vrai OBS, dans une copie isolée, jusqu'à l'image reçue par un spectateur |
-| `npm run test:capture-game` | La DLL dans une vraie fenêtre OpenGL : images à l'endroit, 60 i/s, arrêt et reprise sans redémarrer le jeu |
+| `npm run test:capture-game` | La DLL dans une vraie fenêtre OpenGL : images à l'endroit, 60 i/s, arrêt et reprise sans redémarrer le jeu, et aucune DLL dans un jeu avec un anti-triche à côté de lui |
 | `node --experimental-strip-types tests/e2e/run.ts --packaged` | La même chose sur l'application empaquetée |
 | `npm run test:production` | Le vrai serveur, avec la vidéo forcée par le relais TURN : PC → VPS → PC |
 

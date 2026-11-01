@@ -2,7 +2,7 @@
 //   npm run test:capture-game
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -50,20 +50,20 @@ interface Started {
   url: string;
   width: number;
   height: number;
-  gameFailed: boolean;
+  gameCapture: string;
 }
 
-const window = spawn(game, { stdio: "ignore" });
+let window = spawn(game, { stdio: "ignore" });
 let failed = false;
 try {
   await wait(1200);
   const list = (await request("windows.list", {})).result as { hwnd: number; title: string }[];
   const hwnd = list.find(w => w.title === "Jeu OpenGL d'essai")?.hwnd;
   assert.ok(hwnd, "la fenêtre du jeu doit être listée");
-  const { result, error } = await request("video.start", { hwnd, fps: 60, maxHeight: 0, compat: false, game: true });
+  const { result, error } = await request("video.start", { hwnd, fps: 60, maxHeight: 0, game: true });
   assert.equal(error, undefined, error);
   const started = result as Started;
-  assert.equal(started.gameFailed, false, "la capture de jeu doit prendre");
+  assert.equal(started.gameCapture, "active", "la capture de jeu doit prendre");
 
   const socket = new WebSocket(started.url);
   socket.binaryType = "arraybuffer";
@@ -102,8 +102,8 @@ try {
   await wait(600);
   assert.equal(window.exitCode, null, "le jeu ne doit pas avoir planté");
 
-  const again = (await request("video.start", { hwnd, fps: 30, maxHeight: 360, compat: false, game: true })).result as Started;
-  assert.equal(again.gameFailed, false, "une seconde capture doit reprendre");
+  const again = (await request("video.start", { hwnd, fps: 30, maxHeight: 360, game: true })).result as Started;
+  assert.equal(again.gameCapture, "active", "une seconde capture doit reprendre");
   const second = new WebSocket(again.url);
   second.binaryType = "arraybuffer";
   let size = 0;
@@ -113,6 +113,23 @@ try {
   assert.equal(size, 360, "la définition demandée s'applique");
   await request("video.stop", { url: again.url });
   console.log("✔ on peut arrêter et relancer sans redémarrer le jeu");
+
+  // Le même jeu, avec un anti-triche à côté de lui : la DLL ne doit pas y entrer, et la capture normale prend le relais.
+  window.kill();
+  await wait(500);
+  const folder = path.join(temp, "protege");
+  mkdirSync(path.join(folder, "EasyAntiCheat"), { recursive: true });
+  copyFileSync(game, path.join(folder, "jeu.exe"));
+  window = spawn(path.join(folder, "jeu.exe"), { stdio: "ignore" });
+  await wait(1200);
+  const windows = (await request("windows.list", {})).result as { hwnd: number; title: string }[];
+  const shielded = windows.find(w => w.title === "Jeu OpenGL d'essai")?.hwnd;
+  const refused = (await request("video.start", { hwnd: shielded, fps: 30, maxHeight: 0, game: true })).result as Started;
+  assert.equal(refused.gameCapture, "protected", "un jeu protégé doit être refusé");
+  const modules = execFileSync("tasklist", ["/m", "SpokaHook.dll", "/fi", `PID eq ${window.pid}`], { encoding: "latin1" });
+  assert.ok(!modules.includes("jeu.exe"), "la DLL ne doit pas entrer dans un jeu protégé");
+  await request("video.stop", { url: refused.url });
+  console.log("✔ un jeu avec anti-triche garde la capture normale, sans la DLL");
   console.log("RÉUSSI");
 } catch (e) {
   failed = true;

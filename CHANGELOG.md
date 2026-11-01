@@ -1,5 +1,12 @@
 # Journal des versions
 
+## 1.6.7
+
+- **La capture de jeu se règle au lancement du stream.** Quand tu choisis une fenêtre, l'option apparaît à côté de la qualité. Pendant le direct, le panneau Source et caméra indique si elle est active.
+- **Plus besoin de la couper selon le jeu.** Tu peux la laisser activée : SpokaStream décide lui-même. Il n'entre que dans les jeux OpenGL 64 bits, comme Project Zomboid. S'il voit un anti-triche, il n'entre pas et te le dit. Les autres jeux, comme LoL, gardent la capture normale, qui ne touche pas au jeu.
+- **Un jeu OpenGL 32 bits ne risque plus de planter** : la capture de jeu pouvait essayer d'y entrer. Elle ne le fait plus.
+- **La capture compatible disparaît.** Elle faisait doublon avec la capture de jeu et pouvait faire clignoter fortement l'écran.
+
 ## 1.6.6
 
 - **Moins de perte de FPS pendant un direct.** Quand tu joues, SpokaStream continuait de redessiner sa fenêtre à chaque image, même cachée derrière le jeu : le point rouge « en direct » et les vumètres l'y obligeaient. Sans le focus, ils se calment, et ton retour passe à 15 images/s. Le stream envoyé à tes spectateurs ne change pas. L'application utilise 20 à 30 % de temps de carte graphique en moins pendant que tu joues.

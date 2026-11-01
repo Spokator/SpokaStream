@@ -13,7 +13,7 @@ namespace SpokaAudio;
 /// La capture de jeu, côté moteur : charge SpokaHook.dll dans un jeu OpenGL et reprend les images qu'elle dépose en mémoire partagée.
 /// Discord et OBS font ainsi : WGC ne convient pas au plein écran exclusif, et y fait disparaître la souris du joueur.
 /// Le jeu ne dessine pas le curseur dans son image : c'est ici qu'il est posé pour les spectateurs.
-/// Charger du code dans un jeu peut déplaire à un anti-triche : cette capture n'existe que sur demande explicite.
+/// Charger du code dans un jeu peut déplaire à un anti-triche : cette capture n'existe que sur demande explicite, et AntiCheat a le dernier mot.
 /// </summary>
 public sealed unsafe class GameCapture : IVideoCapture
 {
@@ -34,6 +34,7 @@ public sealed unsafe class GameCapture : IVideoCapture
     private const int FirstFrameMs = 2500;
     private const int WaitMs = 200;
     private const uint ProcessInject = 0x043A;
+    private const uint ProcessQueryLimited = 0x1000;
     private const uint CommitReserve = 0x3000;
     private const uint PageReadWrite = 4;
     private const uint Release = 0x8000;
@@ -66,20 +67,69 @@ public sealed unsafe class GameCapture : IVideoCapture
     public int Width { get; private set; }
     public int Height { get; private set; }
 
-    /// <summary>Rend null si ce n'est pas un jeu OpenGL 64 bits, ou si aucune image n'arrive : l'appelant revient à WGC.</summary>
-    public static GameCapture? TryStart(IntPtr window, int fps, int maxHeight, Action onClosed)
+    /// <summary>
+    /// Rend null si on ne doit pas entrer dans ce processus, ou si aucune image n'arrive : l'appelant revient à WGC.
+    /// status dit pourquoi : active, failed (entré, mais rien ne sort), protected (anti-triche), unsupported (pas un jeu OpenGL 64 bits).
+    /// </summary>
+    public static GameCapture? TryStart(IntPtr window, int fps, int maxHeight, Action onClosed, out string status)
     {
+        status = "unsupported";
         if (window == IntPtr.Zero) return null;
         GetWindowThreadProcessId(window, out var pid);
         var hook = Path.Combine(AppContext.BaseDirectory, "SpokaHook.dll");
-        if (pid == 0 || !File.Exists(hook) || !UsesOpenGl(pid)) return null;
+        if (pid == 0 || !File.Exists(hook) || IsBrowserWindow(window)) return null;
+
+        // Dans cet ordre : ni le chemin ni le 32 bits ne demandent d'ouvrir le jeu, et un jeu protégé n'est jamais lu.
+        var path = Inspect(pid, out var is32Bits);
+        if (path is null || AntiCheat.Protects(path))
+        {
+            status = "protected";
+            return null;
+        }
+        if (is32Bits || !UsesOpenGl(pid)) return null;
+
         var capture = new GameCapture(window, pid, fps, maxHeight, onClosed);
-        if (Inject(pid, hook) && capture.WaitForFirstFrame()) return capture;
+        if (Inject(pid, hook) && capture.WaitForFirstFrame())
+        {
+            status = "active";
+            return capture;
+        }
         capture.Dispose();
+        status = "failed";
         return null;
     }
 
-    /// <summary>On n'entre que dans un processus qui a chargé OpenGL. Échoue tout seul sur un jeu 32 bits ou protégé.</summary>
+    /// <summary>Chromium et Firefox chargent OpenGL pour leurs pages, sans être des jeux : la DLL resterait en eux pour rien.</summary>
+    private static bool IsBrowserWindow(IntPtr window)
+    {
+        var name = new StringBuilder(64);
+        GetClassNameW(window, name, name.Capacity);
+        var kind = name.ToString();
+        return kind.StartsWith("Chrome_WidgetWin", StringComparison.Ordinal) || kind == "MozillaWindowClass";
+    }
+
+    /// <summary>Rend le chemin du processus, ou null si Windows refuse même ça : c'est alors un processus protégé.</summary>
+    private static string? Inspect(uint pid, out bool is32Bits)
+    {
+        is32Bits = false;
+        var process = OpenProcess(ProcessQueryLimited, false, pid);
+        if (process == IntPtr.Zero) return null;
+        try
+        {
+            // Lancer LoadLibraryW 64 bits dans un processus 32 bits le ferait planter : il faut le savoir avant.
+            if (!IsWow64Process2(process, out var machine, out _)) return null;
+            is32Bits = machine != 0;
+            var path = new StringBuilder(1024);
+            var length = (uint)path.Capacity;
+            return QueryFullProcessImageNameW(process, 0, path, ref length) ? path.ToString() : null;
+        }
+        finally
+        {
+            CloseHandle(process);
+        }
+    }
+
+    /// <summary>On n'entre que dans un processus qui a chargé OpenGL.</summary>
     private static bool UsesOpenGl(uint pid)
     {
         try
@@ -279,6 +329,15 @@ public sealed unsafe class GameCapture : IVideoCapture
 
     [DllImport("user32.dll")]
     private static extern bool IsWindow(IntPtr window);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassNameW(IntPtr window, StringBuilder name, int capacity);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool IsWow64Process2(IntPtr process, out ushort processMachine, out ushort nativeMachine);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder name, ref uint size);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);

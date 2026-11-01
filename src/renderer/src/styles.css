@@ -179,6 +179,12 @@ a {
   animation: pulse 1.6s ease-in-out infinite;
 }
 
+.studio-source small {
+  display: block;
+  color: var(--ok);
+  font-size: 11px;
+}
+
 .is-blurred .titlebar-live i {
   animation: none;
 }

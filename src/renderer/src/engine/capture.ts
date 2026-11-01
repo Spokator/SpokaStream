@@ -1,4 +1,4 @@
-import type { CaptureSource, WaitScreen } from "@shared/ipc.ts";
+import type { CaptureSource, GameCaptureState, WaitScreen } from "@shared/ipc.ts";
 import NativeVideoWorker from "./nativeVideo.worker.ts?worker&inline";
 import type { ObsIngest } from "./obs.ts";
 
@@ -27,10 +27,8 @@ export interface OpenedSource {
   width: number;
   height: number;
   /** La source a disparu : fenêtre fermée, écran débranché. */
-  /** La capture compatible a été demandée, mais Windows la refuse sur cet écran : c'est WGC qui tourne. */
-  compatFailed?: boolean;
-  /** La capture de jeu a été demandée sur une fenêtre, mais elle n'a pas pris : c'est WGC qui tourne. */
-  gameFailed?: boolean;
+  /** Tout sauf active : c'est la capture normale qui tourne. */
+  gameCapture?: GameCaptureState;
   onEnded(listener: () => void): void;
   /** Taille réelle des images, quand une fenêtre est redimensionnée par exemple. */
   onResize(listener: (width: number, height: number) => void): void;
@@ -41,7 +39,6 @@ export interface OpenedSource {
 const NATIVE_START_TIMEOUT_MS = 3000;
 
 export interface CaptureOptions {
-  compat: boolean;
   game: boolean;
 }
 
@@ -98,8 +95,7 @@ async function openNative(source: CaptureSource, fps: number, maxHeight: number,
     audio: null,
     element: null,
     native: true,
-    compatFailed: !!started.compatFailed,
-    gameFailed: !!started.gameFailed,
+    gameCapture: started.gameCapture,
     get width() {
       return width;
     },
@@ -113,7 +109,7 @@ async function openNative(source: CaptureSource, fps: number, maxHeight: number,
   };
 }
 
-export async function openSource(source: VideoSource, fps: number, maxHeight: number, options: CaptureOptions = { compat: false, game: false }): Promise<OpenedSource> {
+export async function openSource(source: VideoSource, fps: number, maxHeight: number, options: CaptureOptions = { game: false }): Promise<OpenedSource> {
   if (source.kind === "screen" || source.kind === "window") {
     const native = await openNative(source.source, fps, maxHeight, options).catch(e => {
       console.warn("capture native :", e);

@@ -8,7 +8,7 @@ import { core } from "../engine/core.ts";
 import type { AudioChoice } from "../engine/core.ts";
 import { get, set, useApp } from "../state/store.ts";
 import { mbps } from "../ui/format.ts";
-import { Button, Field, Modal, Popover, Segmented, Select } from "../ui/kit.tsx";
+import { Button, Field, Modal, Popover, Segmented, Select, Toggle } from "../ui/kit.tsx";
 import { ObsPanel } from "./ObsPanel.tsx";
 
 export const RESOLUTIONS: { value: Resolution; label: string }[] = [
@@ -199,6 +199,7 @@ export function GoLiveModal() {
   const [sources, setSources] = useState<CaptureSource[]>([]);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [selected, setSelected] = useState<VideoSource | null>(null);
+  const gameCapture = useApp(s => s.settings!.stream.gameCapture);
   const [audio, setAudio] = useState<AudioChoice[]>([]);
   const [audioTouched, setAudioTouched] = useState(false);
   const [title, setTitle] = useState("");
@@ -417,6 +418,12 @@ export function GoLiveModal() {
               ))}
             </div>
           </div>
+
+          {selected?.kind === "window" && (
+            <Field label="Capture de jeu" hint="Garde ta souris visible dans les jeux OpenGL comme Project Zomboid. Les autres jeux gardent la capture normale.">
+              <Toggle label="Capture de jeu" checked={gameCapture} onChange={value => void core.updateSettings({ stream: { ...get().settings!.stream, gameCapture: value } })} />
+            </Field>
+          )}
 
           <button type="button" className="link" onClick={() => setAdvanced(!advanced)}>
             {advanced ? "Masquer les réglages" : "Personnaliser"}

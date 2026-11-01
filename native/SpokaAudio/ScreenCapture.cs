@@ -12,6 +12,15 @@ using WinRT;
 
 namespace SpokaAudio;
 
+/// <summary>Ce que l'application attend d'une capture, quelle que soit la méthode.</summary>
+public interface IVideoCapture : IDisposable
+{
+    string Url { get; }
+    int Width { get; }
+    int Height { get; }
+    void Configure(int fps, int maxHeight);
+}
+
 /// <summary>
 /// Capture d'écran ou de fenêtre par Windows.Graphics.Capture, convertie en NV12 sur la carte graphique.
 /// WGC limite par défaut à un intervalle de 16,7 ms : sur un écran 144 Hz, la première image après ce délai

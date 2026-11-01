@@ -1193,8 +1193,13 @@ class Core {
   }
 
   private captureOptions() {
-    const { compatCapture, gameCapture } = get().settings!.stream;
-    return { compat: compatCapture, game: gameCapture };
+    return { game: get().settings!.stream.gameCapture };
+  }
+
+  private reportCapture(opened: OpenedSource) {
+    if (opened.gameCapture === "active") toast("Capture de jeu active : ta souris reste visible.");
+    if (opened.gameCapture === "protected") toast("Anti-triche détecté : capture normale, SpokaStream n'entre pas dans ce jeu.", "info", 8000);
+    if (opened.gameCapture === "failed") toast("La capture de jeu n'a pas pris sur ce jeu : capture normale.", "warning", 10_000);
   }
 
   async goLive(config: GoLiveConfig) {
@@ -1203,8 +1208,7 @@ class Core {
     let opened: OpenedSource;
     try {
       opened = await openSource(config.source, config.fps, resolutionHeight(config.resolution), this.captureOptions());
-      if (opened.compatFailed) toast("La capture compatible n'est pas disponible sur cet écran : capture normale.", "warning", 8000);
-      if (opened.gameFailed) toast("La capture de jeu n'a pas pris sur cette fenêtre : capture normale. Elle marche avec les jeux OpenGL 64 bits.", "warning", 10_000);
+      this.reportCapture(opened);
     } catch (e) {
       this.reportError(e);
       return false;
@@ -1248,6 +1252,7 @@ class Core {
         kind: opened.kind,
         file: null,
         nativeCapture: opened.native,
+        gameCapture: opened.gameCapture === "active",
         stats: null,
         viewers: [],
         mix: [],
@@ -1407,6 +1412,7 @@ class Core {
     let next: OpenedSource;
     try {
       next = await openSource(source, fps, maxHeight, this.captureOptions());
+      this.reportCapture(next);
     } catch (e) {
       return this.reportError(e);
     }
@@ -1426,7 +1432,7 @@ class Core {
     previous.stop();
     const preview = this.openPreview(next.track);
     if (this.previewElement) this.previewElement.srcObject = preview;
-    patchPublish({ preview, sourceName: next.name, kind: next.kind, nativeCapture: next.native });
+    patchPublish({ preview, sourceName: next.name, kind: next.kind, nativeCapture: next.native, gameCapture: next.gameCapture === "active" });
     this.updateAnnounce({ kind: next.kind, sourceName: next.name, width: next.width, height: next.height });
     if (audio) {
       this.mixer?.clear();
@@ -2217,7 +2223,7 @@ class Core {
     for (const r of best) lines.push(`Encodeur ${r.label} : ${r.encMs ?? "?"} ms/img, ${r.fps} fps, ${r.width}x${r.height}, ${r.hardware ? "matériel" : "logiciel"} (${r.implementation || "?"}) ${r.ok ? "✔" : "✖"}`);
     if (state.publish) {
       const s = state.publish.stats;
-      lines.push(`Capture : ${state.publish.nativeCapture ? "native" : "Chromium"}`);
+      lines.push(`Capture : ${state.publish.gameCapture ? "de jeu" : state.publish.nativeCapture ? "native" : "Chromium"}`);
       lines.push(`Clips : ${this.clipBuffer ? `${Math.round(this.clipBuffer.bufferedSeconds)} s en mémoire` : "non"}`);
       lines.push(`Diffusion : ${state.publish.sourceName}, ${s ? `${s.width}x${s.height} ${s.fps} fps ${(s.kbps / 1000).toFixed(1)} Mb/s ${s.codec} ${s.encoder} limite=${s.limit}` : "pas de spectateur"}`);
       for (const v of state.publish.viewers) {

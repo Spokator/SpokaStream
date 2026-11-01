@@ -238,7 +238,7 @@ function wireIpc() {
     const display = screen.getAllDisplays().find(d => String(d.id) === request.displayId) ?? screen.getPrimaryDisplay();
     const center = screen.dipToScreenPoint({ x: display.bounds.x + display.bounds.width / 2, y: display.bounds.y + display.bounds.height / 2 });
     const target = isWindow ? { hwnd: Number(request.sourceId.split(":")[1]) } : { x: Math.round(center.x), y: Math.round(center.y) };
-    return engine.startVideo(target, request.fps, request.maxHeight, request.compat, request.game).catch(e => {
+    return engine.startVideo(target, request.fps, request.maxHeight, request.game).catch(e => {
       console.warn(`capture native indisponible : ${e.message}`);
       return null;
     });

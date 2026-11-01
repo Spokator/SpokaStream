@@ -125,18 +125,15 @@ internal static class Program
                 var fps = (int)request["fps"]!;
                 var maxHeight = (int)request["maxHeight"]!;
                 void Ended() => SendEvent(new JsonObject { ["evt"] = "video.ended", ["url"] = url });
-                var compat = (bool?)request["compat"] == true;
                 // La capture de jeu ne vise qu'une fenêtre : sur un écran entier, on ne sait pas dans quoi entrer.
                 var game = (bool?)request["game"] == true && hwnd != IntPtr.Zero;
-                IVideoCapture? capture = game ? GameCapture.TryStart(hwnd, fps, maxHeight, Ended) : null;
-                var inGame = capture is not null;
-                capture ??= compat ? DesktopDuplication.TryStart(hwnd, monitor, fps, maxHeight, Ended) : null;
-                var duplicated = capture is not null && !inGame;
+                var gameCapture = "off";
+                IVideoCapture? capture = game ? GameCapture.TryStart(hwnd, fps, maxHeight, Ended, out gameCapture) : null;
                 capture ??= ScreenCapture.TryStart(hwnd, monitor, fps, maxHeight, Ended);
                 if (capture is null) return null;
                 _video = capture;
                 url = capture.Url;
-                return new JsonObject { ["url"] = url, ["width"] = capture.Width, ["height"] = capture.Height, ["compatFailed"] = compat && !game && !duplicated, ["gameFailed"] = game && !inGame };
+                return new JsonObject { ["url"] = url, ["width"] = capture.Width, ["height"] = capture.Height, ["gameCapture"] = gameCapture };
             }
             case "video.configure":
                 _video?.Configure((int)request["fps"]!, (int)request["maxHeight"]!);

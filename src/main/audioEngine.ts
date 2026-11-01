@@ -190,8 +190,8 @@ export class AudioEngine extends EventEmitter<{ status: [AudioEngineStatus]; key
     return this.request("keys.watch", { keys });
   }
 
-  startVideo(target: { hwnd: number } | { x: number; y: number }, fps: number, maxHeight: number, compat: boolean, game: boolean) {
-    return this.request<NativeVideo | null>("video.start", { ...target, fps, maxHeight, compat, game });
+  startVideo(target: { hwnd: number } | { x: number; y: number }, fps: number, maxHeight: number, game: boolean) {
+    return this.request<NativeVideo | null>("video.start", { ...target, fps, maxHeight, game });
   }
 
   configureVideo(fps: number, maxHeight: number) {
