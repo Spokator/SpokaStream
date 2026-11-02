@@ -8,6 +8,8 @@ import { tuneOpusSdp, tuneVideoSdp } from "./sdp.ts";
 import { SendMeter } from "./stats.ts";
 import type { SendStats } from "./stats.ts";
 
+/** En dessous, l'image ne vaut plus rien : mieux vaut que la limite tombe sur le nombre de spectateurs. */
+const MIN_SHARE_KBPS = 300;
 const TCP_RELAY_CAP_KBPS = 4000;
 const CAMERA_KBPS = 700;
 
@@ -15,6 +17,8 @@ export interface EncodingTarget {
   kbps: number;
   /** Plafond imposé par le salon. 0 = aucun. */
   roomMaxKbps: number;
+  /** Plafond du compte, pour tous les spectateurs réunis. 0 = aucun. */
+  accountMaxKbps: number;
   fps: number;
   maxHeight: number;
   priority: VideoPriority;
@@ -122,6 +126,7 @@ export class Publisher {
       viewer.state = pc.connectionState;
     };
     pc.getTransceivers().find(t => t.sender === video)?.setCodecPreferences(codecPreferences(this.bench, this.target.codec));
+    void this.shareAccountLimit();
     await this.applyEncoding(viewer);
     if (!viewer.quality.video) await video.replaceTrack(null);
     else if (this.cameraTrack) await viewer.camera.replaceTrack(this.cameraTrack);
@@ -135,6 +140,7 @@ export class Publisher {
     if (!viewer) return;
     viewer.pc.close();
     this.viewers.delete(id);
+    void this.shareAccountLimit();
     this.onViewerGone(id);
   }
 
@@ -162,6 +168,7 @@ export class Publisher {
   private effectiveKbps(viewer: Viewer) {
     const limits = [this.target.kbps];
     if (this.target.roomMaxKbps > 0) limits.push(this.target.roomMaxKbps);
+    if (this.target.accountMaxKbps > 0) limits.push(Math.max(MIN_SHARE_KBPS, Math.floor(this.target.accountMaxKbps / Math.max(1, this.viewers.size))));
     if (viewer.quality.maxKbps > 0) limits.push(viewer.quality.maxKbps);
     // Un relais TCP retransmet tout ce qui se perd : au-delà, l'image saccade au lieu de s'améliorer.
     if (viewer.tcpRelay) limits.push(TCP_RELAY_CAP_KBPS);
@@ -207,6 +214,12 @@ export class Publisher {
       await viewer.camera.replaceTrack(viewer.quality.video ? track : null);
       await this.applyEncoding(viewer);
     }
+  }
+
+  /** Le plafond du compte se partage : chaque arrivée ou départ change la part de tous. */
+  private async shareAccountLimit() {
+    if (!this.target.accountMaxKbps) return;
+    for (const viewer of this.viewers.values()) await this.applyEncoding(viewer);
   }
 
   /** Changement à chaud : le spectateur ne voit qu'une image qui change, jamais de coupure. */

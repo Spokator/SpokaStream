@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { AudioEngineStatus, Settings, UpdateStatus } from "@shared/ipc.ts";
-import type { CameraLayout, ChatMessage, ControlScope, IceServer, Member, RoomState, RoomStatus, StreamInfo, ViewerQuality } from "@shared/protocol.ts";
+import type { AccountLimits, CameraLayout, ChatMessage, ControlScope, IceServer, Member, RoomState, RoomStatus, StreamInfo, ViewerQuality } from "@shared/protocol.ts";
 import type { MixSource } from "../engine/audio/mixer.ts";
 import type { BenchResult } from "../engine/encoders.ts";
 import type { ObsState } from "../engine/obs.ts";
@@ -111,6 +111,7 @@ interface AppState {
   /** Ce compte a accès au panneau d'administration. */
   admin: boolean;
   iceServers: IceServer[];
+  accountLimits: AccountLimits | null;
   serverName: string;
   view: View;
   panelTab: PanelTab;
@@ -167,6 +168,7 @@ export const useApp = create<AppState>(() => ({
   linkedAt: 0,
   admin: false,
   iceServers: [],
+  accountLimits: null,
   serverName: "",
   view: "home",
   panelTab: "chat",

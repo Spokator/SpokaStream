@@ -1,5 +1,12 @@
 # Journal des versions
 
+## 1.6.11
+
+- **Le panneau d'administration peut limiter un compte** : débit total envoyé, définition, cadence et nombre de spectateurs, ainsi que le droit de diffuser, de créer des salons, de passer par le relais et de lancer une Watch Party. La limite peut durer quelques heures ou rester sans fin. Elle s'applique en direct, sans couper le stream.
+- **Des limites pour tout le serveur**, dans Réglages. Elles valent pour tous les comptes sans limites propres, sauf les administrateurs.
+- **La fenêtre du direct affiche les limites de ton compte**, et un message te prévient quand un administrateur les change.
+- **Un stream arrêté depuis le panneau s'arrête vraiment.** L'application continuait à capturer et pouvait le relancer toute seule en se reconnectant.
+
 ## 1.6.10
 
 - **Supprime ton compte toi-même**, dans Paramètres, Compte, ou sur le site dans ton profil. Ton profil, tes appareils, tes messages et les salons que tu as créés sont effacés du serveur.

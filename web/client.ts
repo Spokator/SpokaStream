@@ -395,6 +395,9 @@ function onServer(m: ServerMessage) {
       return set({ userId: m.userId, accountId: m.accountId ?? m.userId, admin: !!m.admin });
     case "account.sync":
       return applyAccountProfile(m.profile);
+    case "account.limits":
+      iceServers = m.iceServers;
+      return;
     case "account.rooms":
       return onAccountRooms(m.rooms);
     case "remote.state":

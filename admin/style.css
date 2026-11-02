@@ -591,7 +591,13 @@ summary {
   font-size: 13px;
 }
 
-.form-field input {
+.limits {
+  display: grid;
+  gap: 10px;
+}
+
+.form-field input,
+.form-field select {
   width: 100%;
   margin: 0;
   padding: 10px 11px;
@@ -1433,6 +1439,7 @@ button.link {
   /* Rien à viser au doigt sous 44 px, et 16 px dans les champs : en dessous, iPhone zoome à chaque saisie. */
   input:not([type="checkbox"]),
   select,
+  .form-field select,
   .card header select,
   textarea {
     min-height: 44px;

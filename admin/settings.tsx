@@ -1,10 +1,13 @@
 /** @jsxImportSource preact */
 import { CalendarClock, DatabaseBackup, DoorClosed, Download, Megaphone, RefreshCw, RotateCcw, SlidersHorizontal, Trash2, Wrench } from "lucide-preact";
 import { useState } from "preact/hooks";
+import type { AccountLimits } from "@shared/protocol.ts";
 import { act, ArmedButton, bytes, can, date, Note, useAction, usePolled } from "./lib.tsx";
+import { LimitsForm } from "./limits.tsx";
 import type { Overview } from "./monitor.tsx";
 
 interface ConfigData {
+  defaultLimits: AccountLimits | null;
   closed: boolean;
   roomCreation: "everyone" | "admins";
   webViewers: boolean;
@@ -93,6 +96,13 @@ export function SettingsPage() {
           <Saved label="Version minimale de l'application" value={data.minVersion} placeholder="Aucune, par exemple 1.5.0" onSave={minVersion => save({ minVersion })} />
         </div>
         <Saved label="Message affiché à chaque connexion" value={data.motd} placeholder="Aucun" onSave={motd => save({ motd })} />
+      </section>
+      <section class="card">
+        <h2>
+          <SlidersHorizontal size={16} /> Limites de tous les comptes
+        </h2>
+        <p class="muted">Elles s'appliquent tout de suite à tous les comptes, sauf aux administrateurs et aux comptes qui ont leurs propres limites sur leur fiche.</p>
+        <LimitsForm key={JSON.stringify(data.defaultLimits)} value={data.defaultLimits} label="tous les comptes" clearLabel="Retirer ces limites" onApply={defaultLimits => save({ defaultLimits })} onClear={() => save({ defaultLimits: null })} />
       </section>
       <section class="card">
         <h2>

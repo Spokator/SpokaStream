@@ -1,5 +1,6 @@
 // Les réglages du serveur qu'on change depuis le panneau, sans toucher au .env ni redémarrer.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import type { AccountLimits } from "../src/shared/protocol.ts";
 import path from "node:path";
 
 export interface BlockedIp {
@@ -24,6 +25,8 @@ export interface ServerConfig {
   watchParty: boolean;
   maxMembers: number;
   maxRooms: number;
+  /** Pour tous les comptes sans limites propres, sauf les administrateurs. */
+  defaultLimits: AccountLimits | null;
   /** Affiché à chaque connexion. */
   motd: string;
   /** Une application plus ancienne doit se mettre à jour avant d'entrer. Vide : aucune limite. */
@@ -40,7 +43,7 @@ export interface ServerConfig {
   publicHost: string;
 }
 
-export const DEFAULT_CONFIG: ServerConfig = { closed: false, roomCreation: "everyone", webViewers: true, watchParty: true, maxMembers: 32, maxRooms: 50, motd: "", minVersion: "", slowSeconds: 0, words: [], blockedIps: [], discord: "", rules: {}, plan: null, publicHost: "" };
+export const DEFAULT_CONFIG: ServerConfig = { defaultLimits: null, closed: false, roomCreation: "everyone", webViewers: true, watchParty: true, maxMembers: 32, maxRooms: 50, motd: "", minVersion: "", slowSeconds: 0, words: [], blockedIps: [], discord: "", rules: {}, plan: null, publicHost: "" };
 
 export class ConfigStore {
   value: ServerConfig = { ...DEFAULT_CONFIG };

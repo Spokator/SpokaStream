@@ -1,7 +1,9 @@
 /** @jsxImportSource preact */
 import { Ban, Download, Lock, MessageSquareOff, ShieldBan, Square, Trash2, Unlock, UserMinus, Volume2, VolumeX } from "lucide-preact";
 import { useMemo, useState } from "preact/hooks";
+import type { AccountLimits } from "@shared/protocol.ts";
 import { act, ArmedButton, can, count, date, DURATIONS, Note, number, time, useAction, usePolled } from "./lib.tsx";
+import { LimitsForm, limitsSummary } from "./limits.tsx";
 
 interface RoomRow {
   id: string;
@@ -39,6 +41,10 @@ interface UserRow {
   bannedUntil?: number;
   mutedUntil?: number;
   admin: boolean;
+  /** Ce qui s'applique vraiment, limites du serveur comprises. */
+  limits: AccountLimits | null;
+  ownLimits: AccountLimits | null;
+  uploadKbps: number;
   online: boolean;
   rooms: number;
   stats?: { streams: number; streamMinutes: number; watchMinutes: number; messages: number };
@@ -252,7 +258,7 @@ export function RoomsPage() {
   );
 }
 
-const SANCTIONS: Record<string, string> = { ban: "Banni", unban: "Débanni", mute: "Rendu muet", unmute: "Parole rendue", warn: "Averti", kick: "Retiré" };
+const SANCTIONS: Record<string, string> = { limit: "Limité", unlimit: "Limites levées", ban: "Banni", unban: "Débanni", mute: "Rendu muet", unmute: "Parole rendue", warn: "Averti", kick: "Retiré" };
 
 function Duration({ value, onChange, label }: { value: number; onChange: (hours: number) => void; label: string }) {
   return (
@@ -276,6 +282,7 @@ function UserTools({ user, refresh }: { user: UserRow; refresh: () => void }) {
   const [banHours, setBanHours] = useState(24);
   const [muteHours, setMuteHours] = useState(1);
   const [withRooms, setWithRooms] = useState(false);
+  const [limitHours, setLimitHours] = useState(0);
   const [feedback, setFeedback] = useState("");
   const muted = !!user.mutedUntil && user.mutedUntil > Date.now();
   const run = (action: string, fields: Record<string, unknown>, done: string) =>
@@ -304,6 +311,21 @@ function UserTools({ user, refresh }: { user: UserRow; refresh: () => void }) {
         <dd>{user.stats?.watchMinutes ?? 0} min</dd>
         <dt>Messages</dt>
         <dd>{user.stats?.messages ?? 0}</dd>
+        {user.uploadKbps > 0 && (
+          <>
+            <dt>Envoie en ce moment</dt>
+            <dd>{(user.uploadKbps / 1000).toFixed(1)} Mb/s</dd>
+          </>
+        )}
+        {user.limits && (
+          <>
+            <dt>{user.ownLimits ? "Limité" : "Limites du serveur"}</dt>
+            <dd>
+              {limitsSummary(user.limits)}
+              {user.ownLimits?.until ? `, jusqu'au ${date(user.ownLimits.until)}` : ""}
+            </dd>
+          </>
+        )}
         <dt>Identifiant</dt>
         <dd>
           <code>{user.id}</code>
@@ -375,6 +397,15 @@ function UserTools({ user, refresh }: { user: UserRow; refresh: () => void }) {
             )}
           </div>
         </>
+      )}
+      {can("admin") && !user.admin && (
+        <details>
+          <summary>Limites de ce compte</summary>
+          <p class="muted">Le débit est le total envoyé à tous ses spectateurs. L'application l'applique, et le serveur coupe le stream s'il reste au-dessus 30 secondes. Le reste est tenu par le serveur. Le relais déjà ouvert continue jusqu'à la fin de la connexion en cours.</p>
+          <LimitsForm key={JSON.stringify(user.ownLimits)} value={user.ownLimits} label={user.name} clearLabel="Lever les limites" onApply={limits => run("setLimits", { limits, hours: limitHours, reason }, "Limites appliquées.")} onClear={() => run("setLimits", { limits: null }, "Limites levées.")}>
+            <Duration value={limitHours} onChange={setLimitHours} label={`Durée des limites de ${user.name}`} />
+          </LimitsForm>
+        </details>
       )}
       {user.devices.map(device => (
         <div key={device.id} class="tool-row">
@@ -453,14 +484,14 @@ type Sort = "recent" | "stream" | "watch" | "messages";
 export function UsersPage() {
   const { data, error, refresh } = usePolled<UserRow[]>("users");
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | "online" | "banned" | "muted">("all");
+  const [filter, setFilter] = useState<"all" | "online" | "banned" | "muted" | "limited">("all");
   const [sort, setSort] = useState<Sort>("recent");
   const [open, setOpen] = useState("");
   const shown = useMemo(() => {
     const needle = search.toLowerCase();
     const value = (user: UserRow) => (sort === "stream" ? (user.stats?.streamMinutes ?? 0) : sort === "watch" ? (user.stats?.watchMinutes ?? 0) : sort === "messages" ? (user.stats?.messages ?? 0) : 0);
     return (data ?? [])
-      .filter(u => (u.name.toLowerCase().includes(needle) || u.id.startsWith(needle)) && (filter === "all" || (filter === "online" ? u.online : filter === "banned" ? u.banned : !!u.mutedUntil)))
+      .filter(u => (u.name.toLowerCase().includes(needle) || u.id.startsWith(needle)) && (filter === "limited" ? !!u.ownLimits : filter === "all" || (filter === "online" ? u.online : filter === "banned" ? u.banned : !!u.mutedUntil)))
       .sort((a, b) => value(b) - value(a) || Number(b.online) - Number(a.online) || b.lastSeen - a.lastSeen);
   }, [data, search, filter, sort]);
   if (!data) return <p class="empty">{error || "Chargement…"}</p>;
@@ -468,9 +499,9 @@ export function UsersPage() {
     <>
       <input class="search" value={search} placeholder="Chercher un pseudo ou un identifiant" aria-label="Chercher un pseudo" onInput={e => setSearch(e.currentTarget.value)} />
       <div class="filters">
-        {(["all", "online", "banned", "muted"] as const).map(value => (
+        {(["all", "online", "banned", "muted", "limited"] as const).map(value => (
           <button key={value} type="button" class={filter === value ? "is-on" : ""} onClick={() => setFilter(value)}>
-            {value === "all" ? `Tous (${data.length})` : value === "online" ? "En ligne" : value === "banned" ? "Bannis" : "Muets"}
+            {value === "all" ? `Tous (${data.length})` : value === "online" ? "En ligne" : value === "banned" ? "Bannis" : value === "limited" ? "Limités" : "Muets"}
           </button>
         ))}
         <select value={sort} aria-label="Trier les comptes" onChange={e => setSort(e.currentTarget.value as Sort)}>

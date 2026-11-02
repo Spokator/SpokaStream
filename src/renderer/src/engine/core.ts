@@ -1,7 +1,7 @@
 import { DEFAULT_REGIE } from "@shared/ipc.ts";
 import type { ActionId, AudioChoice, ControlTarget, PanelId, RegieLayout, Resolution, Scene, SceneSource, Settings, VideoInfo, WaitScreen, WallMode, WallRect, WallSettings } from "@shared/ipc.ts";
 import { DEFAULT_VIEWER_QUALITY, isHls, videoUrl, youtubeId } from "@shared/protocol.ts";
-import type { AudioKind, CameraLayout, ChatMessage, RemoteCommand, RemoteState, ControlInput, ControlToHost, ControlToViewer, ErrorCode, Poll, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
+import type { AccountLimits, AudioKind, CameraLayout, ChatMessage, RemoteCommand, RemoteState, ControlInput, ControlToHost, ControlToViewer, ErrorCode, IceServer, Poll, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
 import { get, memberOf, patchPublish, patchRoom, patchSub, set, soloOf, toast, TOGETHER, useApp } from "../state/store.ts";
 import type { ActivityItem } from "../state/store.ts";
 import { duration, limitText, mentionsName } from "../ui/format.ts";
@@ -121,6 +121,8 @@ class Core {
   private pauseCard: ReturnType<typeof createPauseCard> | null = null;
   private previewElement: HTMLVideoElement | null = null;
   private previewTrack: MediaStreamTrack | null = null;
+  private wantedTarget: EncodingTarget | null = null;
+  private limitsKnown = false;
   private previewTimer: ReturnType<typeof setInterval> | undefined;
   private recorder: Recorder | null = null;
   private clipBuffer: ClipBuffer | null = null;
@@ -280,6 +282,8 @@ class Core {
         return set({ userId: m.userId, accountId: m.accountId ?? m.userId, admin: !!m.admin, iceServers: m.iceServers, serverName: m.serverName });
       case "account.sync":
         return void this.applyAccountProfile(m.profile);
+      case "account.limits":
+        return this.onLimits(m.limits, m.iceServers);
       case "account.rooms":
         return this.onAccountRooms(m.rooms);
       case "account.linked":
@@ -344,6 +348,11 @@ class Core {
         this.closeSub(m.id);
         patchRoom(r => ({ streams: r.streams.filter(s => s.id !== m.id) }));
         if (get().focused === m.id) set({ focused: null });
+        // Arrêté depuis le serveur : sans ça l'application garderait sa capture et le relancerait en se reconnectant.
+        if (m.id === this.publisher?.sessionId) {
+          toast("Ton stream a été arrêté par un administrateur.", "warning", 8000);
+          void this.stopLive();
+        }
         return;
       case "stream.thumb":
         return patchRoom(r => ({ streams: r.streams.map(s => (s.id === m.id ? { ...s, thumb: m.data } : s)) }));
@@ -1137,10 +1146,38 @@ class Core {
 
   // ---------------------------------------------------------------- diffuser
 
+  /** Ce que la personne a demandé reste en mémoire : quand une limite se lève, le stream y revient. */
+  private limited(target: EncodingTarget): EncodingTarget {
+    const limits = get().accountLimits;
+    if (!limits) return { ...target, accountMaxKbps: 0 };
+    return {
+      ...target,
+      accountMaxKbps: limits.maxKbps,
+      fps: limits.maxFps ? Math.min(target.fps, limits.maxFps) : target.fps,
+      maxHeight: limits.maxHeight ? Math.min(target.maxHeight || limits.maxHeight, limits.maxHeight) : target.maxHeight,
+    };
+  }
+
+  private onLimits(limits: AccountLimits | null, iceServers: IceServer[]) {
+    const before = JSON.stringify(get().accountLimits);
+    set({ accountLimits: limits, iceServers });
+    if (JSON.stringify(limits) === before) return;
+    // Passe aussi à la reconnexion, avant que le salon ne fasse relancer le stream.
+    if (limits?.canStream === false && this.publisher) {
+      toast("Un administrateur a retiré à ce compte le droit de lancer un direct.", "warning", 8000);
+      return void this.stopLive();
+    }
+    // Au démarrage il n'y a rien à annoncer : les limites sont écrites dans la fenêtre du direct.
+    if (this.limitsKnown) toast(limits ? "Un administrateur a changé les limites de ton compte." : "Les limites de ton compte sont levées.", limits ? "warning" : "success", 8000);
+    this.limitsKnown = true;
+    void this.updateEncoding({});
+  }
+
   private buildTarget(config: Pick<GoLiveConfig, "resolution" | "fps" | "kbps" | "priority" | "codec" | "audioKbps">): EncodingTarget {
     return {
       kbps: config.kbps,
       roomMaxKbps: get().room?.settings.maxKbps ?? 0,
+      accountMaxKbps: 0,
       fps: config.fps,
       maxHeight: resolutionHeight(config.resolution),
       priority: config.priority,
@@ -1218,10 +1255,16 @@ class Core {
 
   async goLive(config: GoLiveConfig) {
     if (this.publisher) return;
+    if (get().accountLimits?.canStream === false) {
+      toast("Un administrateur a retiré à ce compte le droit de lancer un direct.", "warning", 8000);
+      return false;
+    }
     const streamId = `${get().userId.slice(0, 8)}-${Date.now().toString(36)}`;
+    this.wantedTarget = this.buildTarget(config);
+    const target = this.limited(this.wantedTarget);
     let opened: OpenedSource;
     try {
-      opened = await openSource(config.source, config.fps, resolutionHeight(config.resolution), this.captureOptions());
+      opened = await openSource(config.source, target.fps, target.maxHeight, this.captureOptions());
       this.reportCapture(opened);
     } catch (e) {
       this.reportError(e);
@@ -1234,7 +1277,6 @@ class Core {
     this.mixer = mixer;
     mixer.setNormalize(get().settings!.stream.normalizeAudio);
     this.opened = opened;
-    const target = this.buildTarget(config);
     this.publisher = new Publisher({
       session: streamId,
       video: opened.track,
@@ -1486,11 +1528,12 @@ class Core {
   async updateEncoding(patch: Partial<EncodingTarget>) {
     const publish = get().publish;
     if (!publish || !this.publisher) return;
-    const target = { ...publish.target, ...patch };
+    this.wantedTarget = { ...(this.wantedTarget ?? publish.target), ...patch };
+    const target = this.limited(this.wantedTarget);
     patchPublish({ target });
     if (patch.priority && this.opened) this.opened.track.contentHint = patch.priority === "detail" ? "detail" : "motion";
-    if (patch.fps) this.updateAnnounce({ fps: patch.fps });
-    if (patch.fps !== undefined || patch.maxHeight !== undefined) this.opened?.configure(target.fps, target.maxHeight);
+    if (target.fps !== publish.target.fps) this.updateAnnounce({ fps: target.fps });
+    if (target.fps !== publish.target.fps || target.maxHeight !== publish.target.maxHeight) this.opened?.configure(target.fps, target.maxHeight);
     await this.publisher.applyTarget(target, publish.bench);
   }
 

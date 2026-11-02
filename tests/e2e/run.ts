@@ -9,6 +9,7 @@ import path from "node:path";
 import { _electron as electron, chromium, devices } from "playwright";
 import type { Browser, ElectronApplication, Page } from "playwright";
 import { startServer } from "../../server/index.ts";
+import { NO_LIMITS } from "../../src/shared/protocol.ts";
 import { MemoryStore } from "../../server/store.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
@@ -401,6 +402,37 @@ try {
     await wait(2000);
     const state = await bob.page.evaluate(() => Object.values<any>((window as any).__store.useApp.getState().subs)[0]?.state);
     assert.equal(state, "connected");
+  });
+
+  await step("un administrateur limite le compte : débit, image et cadence suivent sans couper, puis reviennent", async () => {
+    const accountId = await alice.page.evaluate(() => (window as any).__store.useApp.getState().accountId);
+    const sent = () =>
+      alice.page.evaluate(async () => {
+        const stats = await (window as any).__core.publisher.peers[0].pc.getStats();
+        return [...stats.values()].filter(s => s.type === "outbound-rtp" && s.kind === "video").reduce((total, s) => total + s.bytesSent, 0) as number;
+      });
+    const rate = async () => {
+      const before = await sent();
+      await wait(5000);
+      return Math.round(((await sent()) - before) * 8 / 5000);
+    };
+    const target = () => alice.page.evaluate(() => (window as any).__store.useApp.getState().publish.target);
+    const free = await target();
+    const freeRate = await rate();
+    assert.equal(server.hub.adminSetLimits(accountId, { ...NO_LIMITS, maxKbps: 1000, maxHeight: 480, maxFps: 15 }, "", "e2e"), true);
+    await poll("limites appliquées", target, t => t.accountMaxKbps === 1000 && t.fps === 15 && t.maxHeight === 480);
+    await wait(3000);
+    const maxBitrate = await alice.page.evaluate(() => (window as any).__core.publisher.peers[0].pc.getSenders().find((s: RTCRtpSender) => s.track?.kind === "video").getParameters().encodings[0].maxBitrate);
+    assert.ok(maxBitrate <= 1_000_000, `plafond posé sur l'encodeur : ${maxBitrate}`);
+    const cappedRate = await rate();
+    assert.ok(cappedRate <= 1250, `${cappedRate} kb/s envoyés pour 1000 autorisés`);
+    const height = await bob.page.evaluate(() => document.querySelector<HTMLVideoElement>(".tile-video")!.videoHeight);
+    assert.ok(height > 0 && height <= 480, `hauteur reçue : ${height}`);
+    assert.equal(await bob.page.evaluate(() => Object.values<any>((window as any).__store.useApp.getState().subs)[0]?.state), "connected");
+    await shot(alice, "07-compte-limite");
+    assert.equal(server.hub.adminSetLimits(accountId, null, "", "e2e"), true);
+    await poll("limites levées", target, t => t.accountMaxKbps === 0 && t.fps === free.fps && t.maxHeight === free.maxHeight);
+    return `${freeRate} kb/s libres, ${cappedRate} kb/s limités, ${height}p reçus`;
   });
 
   await step("une coupure du serveur ne coupe pas le stream", async () => {
@@ -1263,6 +1295,31 @@ try {
   await step("arrêter le stream prévient le spectateur", async () => {
     await alice.page.getByRole("button", { name: "Arrêter le stream" }).click();
     await bob.page.locator(".stage-empty").waitFor({ timeout: 8000 });
+  });
+
+  await step("sans le droit de diffuser, le direct s'arrête pour de bon et ne repart pas", async () => {
+    const accountId = await alice.page.evaluate(() => (window as any).__store.useApp.getState().accountId);
+    const relaunch = async () => {
+      await alice.page.getByRole("button", { name: "Diffuser", exact: true }).click();
+      await alice.page.locator(".modal").waitFor();
+      await alice.page.getByRole("tab", { name: "Fenêtres" }).click();
+      await alice.page.locator(".source-card", { hasText: "Mire SpokaStream" }).click();
+      await alice.page.getByRole("button", { name: "Lancer le stream" }).click();
+    };
+    await relaunch();
+    await alice.page.locator(".titlebar-live").waitFor({ timeout: 30_000 });
+    await bob.page.locator(".stage-empty").waitFor({ state: "detached", timeout: 15_000 });
+    server.hub.adminSetLimits(accountId, { ...NO_LIMITS, canStream: false }, "", "e2e");
+    await alice.page.locator(".titlebar-live").waitFor({ state: "detached", timeout: 8000 });
+    await bob.page.locator(".stage-empty").waitFor({ timeout: 8000 });
+    assert.equal(await alice.page.evaluate(() => (window as any).__store.useApp.getState().publish), null);
+    await alice.page.locator(".toast", { hasText: "droit de lancer un direct" }).first().waitFor({ timeout: 5000 });
+    await relaunch();
+    await wait(2500);
+    assert.equal(await alice.page.locator(".titlebar-live").count(), 0, "le direct ne doit pas repartir");
+    await alice.page.keyboard.press("Escape");
+    server.hub.adminSetLimits(accountId, null, "", "e2e");
+    await alice.page.locator(".modal").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   });
 
   await step("paramètres", async () => {

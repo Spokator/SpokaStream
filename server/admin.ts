@@ -18,6 +18,7 @@ import type { Metrics } from "./metrics.ts";
 import type { PushService } from "./push.ts";
 import type { Store } from "./store.ts";
 import type { Usage } from "./usage.ts";
+import { cleanLimits } from "./accounts.ts";
 import { ADMIN_HTML, ADMIN_ICON_192, ADMIN_ICON_512, ADMIN_JS, APP_VERSION } from "./viewer.gen.ts";
 
 const SESSION_MS = 12 * 3600_000;
@@ -84,6 +85,7 @@ const ACTION_RANK: Record<string, number> = {
   renameUser: ROLE_RANK.moderator,
   clearAvatar: ROLE_RANK.moderator,
   mute: ROLE_RANK.moderator,
+  setLimits: ROLE_RANK.admin,
   warn: ROLE_RANK.moderator,
   addNote: ROLE_RANK.moderator,
   removeNote: ROLE_RANK.moderator,
@@ -562,8 +564,10 @@ export class AdminPanel {
     if (patch.slowSeconds !== undefined) next.slowSeconds = whole("slowSeconds", 0, 300);
     if (typeof patch.motd === "string") next.motd = patch.motd.trim().slice(0, 300);
     if (typeof patch.minVersion === "string") next.minVersion = /^\d+(\.\d+){0,2}$/.test(patch.minVersion.trim()) ? patch.minVersion.trim() : "";
+    if (patch.defaultLimits !== undefined) next.defaultLimits = patch.defaultLimits ? cleanLimits(patch.defaultLimits, 0) : null;
     if (Array.isArray(patch.words)) next.words = [...new Set(patch.words.map(word => String(word).trim().slice(0, 40)).filter(Boolean))].slice(0, 200);
     config.update(next);
+    if ("defaultLimits" in next) hub.applyLimits();
     hub.log("warning", "admin", `${session.name} change les réglages : ${Object.keys(next).join(", ")}`);
     return true;
   }
@@ -618,6 +622,12 @@ export class AdminPanel {
         const hours = Math.max(0, Number(body.hours) || 0);
         audit(hours ? `rend muet ${account()} pour ${hours} h` : `rend la parole à ${account()}`);
         return hub.adminMute(id("accountId"), hours ? Date.now() + hours * 3600_000 : 0, text("reason", 200), session.name);
+      }
+      case "setLimits": {
+        const hours = Math.max(0, Number(body.hours) || 0);
+        const limits = body.limits ? cleanLimits(body.limits, hours ? Date.now() + hours * 3600_000 : 0) : null;
+        audit(limits ? `limite ${account()}${hours ? ` pour ${hours} h` : ""}` : `lève les limites de ${account()}`);
+        return hub.adminSetLimits(id("accountId"), limits, text("reason", 200), session.name);
       }
       case "warn":
         if (!text("text", 300)) return false;

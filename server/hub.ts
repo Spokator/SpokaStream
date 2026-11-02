@@ -11,6 +11,7 @@ import {
   youtubeId,
 } from "../src/shared/protocol.ts";
 import type {
+  AccountLimits,
   CameraLayout,
   ChatMessage,
   ClientMessage,
@@ -46,6 +47,9 @@ import type { Usage } from "./usage.ts";
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const GRACE_MS = 20_000;
 const ROOM_MAX_IDLE_MS = 90 * 24 * 3600 * 1000;
+/** Une marge pour le son et les pics, et 30 s de suite pour ne pas couper sur un à-coup. */
+const OVER_LIMIT_MARGIN = 1.25;
+const OVER_LIMIT_REPORTS = 3;
 /** Une vignette toutes les 6 s chez chaque abonné serait du gaspillage : l'accueil n'a pas besoin d'être si frais. */
 const STATUS_THUMB_MS = 30_000;
 
@@ -72,6 +76,10 @@ interface Conn {
   guest: boolean;
   lastChat: number;
   telemetry: { at: number; publish: PublishTelemetry | null; watch: WatchTelemetry[] } | null;
+  /** Les dernières limites envoyées, pour remarquer celles qui expirent. */
+  limits: string;
+  /** Relevés de débit de suite au-dessus de la limite. */
+  overLimit: number;
   buckets: Record<"chat" | "image" | "draw" | "reaction" | "signal" | "room" | "misc", Bucket>;
 }
 
@@ -547,9 +555,17 @@ export class Hub {
 
   adminUsers() {
     const online = new Set([...this.conns].map(c => c.userId));
+    const uploads = new Map<string, number>();
+    for (const conn of this.conns) {
+      if (!conn.accountId || !conn.telemetry?.publish || this.now() - conn.telemetry.at > TELEMETRY_FRESH_MS) continue;
+      uploads.set(conn.accountId, (uploads.get(conn.accountId) ?? 0) + conn.telemetry.publish.viewers.reduce((total, viewer) => total + viewer.kbps, 0));
+    }
     return this.accounts.list().map(account => ({
       ...account,
       admin: this.isAdminAccount(account.id),
+      limits: this.limitsOf(account.id),
+      ownLimits: this.accounts.limitsOf(account.id, this.now()),
+      uploadKbps: uploads.get(account.id) ?? 0,
       online: account.devices.some(d => online.has(d.id)),
       rooms: [...this.rooms.values()].filter(r => r.data.ownerId === account.id).length,
     }));
@@ -729,6 +745,8 @@ export class Hub {
       guest: false,
       lastChat: 0,
       telemetry: null,
+      limits: "null",
+      overLimit: 0,
       buckets: {
         chat: new Bucket(3, 12, now),
         image: new Bucket(0.2, 4, now),
@@ -858,7 +876,7 @@ export class Hub {
       case "telemetry":
         if (!conn.buckets.misc.take(now)) return;
         conn.telemetry = { at: now, publish: cleanPublishTelemetry(msg.publish), watch: cleanWatchTelemetry(msg.watch) };
-        return;
+        return this.watchLimits(conn);
       case "voice.set": {
         const live = this.liveOf(conn);
         if (!live) return;
@@ -1013,15 +1031,69 @@ export class Hub {
       if (fresh) this.usage?.count("newAccounts");
     }
     // Le relais coûte de la bande passante : un inconnu qui n'a pas de compte n'y a pas droit.
-    const iceServers = this.iceServers(deviceId).filter(server => !guest || !server.username);
-    this.send(conn, { t: "welcome", userId: deviceId, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers, serverName: this.serverName });
+    this.send(conn, { t: "welcome", userId: deviceId, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers: this.iceFor(conn), serverName: this.serverName });
     this.send(conn, { t: "account.sync", profile: known.profile });
+    this.sendLimits(conn);
     this.sendRooms(conn);
     // Un PC en direct passe après un PC au repos : c'est lui que le téléphone doit garder sous les yeux.
     for (const sibling of this.siblings(conn).filter(s => s.remote).sort((a, b) => Number(!!b.remote!.idle) - Number(!!a.remote!.idle))) this.send(conn, { t: "remote.state", state: sibling.remote });
     if (this.maintenance) this.send(conn, { t: "announce", text: this.maintenance, level: "warning" });
     else if (motd) this.send(conn, { t: "announce", text: motd, level: "info" });
     this.reply(conn, msg, true);
+  }
+
+  /** Celles du compte passent devant celles du serveur. Un administrateur n'en a aucune. null : rien à appliquer. */
+  limitsOf(accountId: string) {
+    if (this.isAdminAccount(accountId)) return null;
+    return this.accounts.limitsOf(accountId, this.now()) ?? this.config.defaultLimits ?? null;
+  }
+
+  /** Le relais coûte de la bande passante : pas d'identifiants sans compte, ni pour un compte qui en a perdu le droit. */
+  private iceFor(conn: Conn) {
+    const relay = !conn.guest && this.limitsOf(conn.accountId!)?.canUseRelay !== false;
+    return this.iceServers(conn.userId!).filter(server => relay || !server.username);
+  }
+
+  private sendLimits(conn: Conn) {
+    const limits = this.limitsOf(conn.accountId!);
+    conn.limits = JSON.stringify(limits);
+    this.send(conn, { t: "account.limits", limits, iceServers: this.iceFor(conn) });
+  }
+
+  /** Sans accountId : tout le monde, après un changement des limites par défaut. */
+  applyLimits(accountId?: string) {
+    for (const conn of this.conns) {
+      if (!conn.userId || (accountId && conn.accountId !== accountId)) continue;
+      this.sendLimits(conn);
+      if (this.limitsOf(conn.accountId!)?.canStream === false) this.stopOwnStream(conn);
+    }
+  }
+
+  adminSetLimits(accountId: string, limits: AccountLimits | null, reason: string, by: string) {
+    if (this.isAdminAccount(accountId) || !this.accounts.setLimits(accountId, limits)) return false;
+    this.accounts.addSanction(accountId, { at: this.now(), kind: limits ? "limit" : "unlimit", by, reason, until: limits?.until ?? 0 });
+    this.applyLimits(accountId);
+    return true;
+  }
+
+  private stopOwnStream(conn: Conn) {
+    if (conn.room && this.streamOf(conn)) this.stopStreamOf(conn.room, conn.userId!);
+  }
+
+  /** Une limite expirée se rattrape ici, et une application ancienne ou modifiée finit coupée si elle dépasse le débit annoncé. */
+  private watchLimits(conn: Conn) {
+    const limits = this.limitsOf(conn.accountId!);
+    if (JSON.stringify(limits) !== conn.limits) this.sendLimits(conn);
+    const sent = conn.telemetry?.publish?.viewers.reduce((total, viewer) => total + viewer.kbps, 0) ?? 0;
+    if (!limits?.maxKbps || sent <= limits.maxKbps * OVER_LIMIT_MARGIN) {
+      conn.overLimit = 0;
+      return;
+    }
+    if (++conn.overLimit < OVER_LIMIT_REPORTS) return;
+    conn.overLimit = 0;
+    this.stopOwnStream(conn);
+    this.send(conn, { t: "announce", text: `Ton stream a été coupé : il dépassait la limite de ${limits.maxKbps / 1000} Mb/s fixée par un administrateur.`, level: "warning" });
+    this.log("warning", "limites", `Stream de ${conn.profile?.name ?? "?"} coupé : ${Math.round(sent / 1000)} Mb/s pour ${limits.maxKbps / 1000} autorisés`);
   }
 
   private admitsAccount(ip: string) {
@@ -1079,8 +1151,9 @@ export class Hub {
     this.leaveRoom(conn);
     const known = this.accounts.seen(conn.userId!, conn.profile!, conn.device, this.now());
     conn.profile = known.profile;
-    this.send(conn, { t: "welcome", userId: conn.userId!, accountId, admin: this.isAdmin(accountId), iceServers: this.iceServers(conn.userId!), serverName: this.serverName });
+    this.send(conn, { t: "welcome", userId: conn.userId!, accountId, admin: this.isAdmin(accountId), iceServers: this.iceFor(conn), serverName: this.serverName });
     this.send(conn, { t: "account.sync", profile: known.profile });
+    this.sendLimits(conn);
     this.sendRooms(conn);
     for (const sibling of this.siblings(conn)) {
       this.send(sibling, { t: "account.linked", label: conn.device.label || "Un appareil" });
@@ -1124,6 +1197,7 @@ export class Hub {
     if (conn.guest) return ack(false, "closed");
     if (this.maintenance && !this.isAdmin(conn.accountId!)) return ack(false, "maintenance");
     if (this.config.roomCreation === "admins" && !this.isAdmin(conn.accountId!)) return ack(false, "disabled");
+    if (this.limitsOf(conn.accountId!)?.canCreateRooms === false) return ack(false, "disabled");
     const owned = [...this.rooms.values()].filter(r => r.data.ownerId === conn.accountId).length;
     if (owned >= Math.min(this.config.maxRooms, LIMITS.roomsPerUser)) return ack(false, "too_many_rooms");
     const now = this.now();
@@ -1403,7 +1477,7 @@ export class Hub {
     const live = this.liveOf(conn);
     if (!room || !live) return;
     if (!this.canShare(room, conn)) return this.fail(conn, "forbidden");
-    if (!this.config.watchParty) return this.fail(conn, "disabled");
+    if (!this.config.watchParty || this.limitsOf(conn.accountId!)?.canWatchParty === false) return this.fail(conn, "disabled");
     const url = videoUrl(msg.url);
     const videoId = url ? randomBytes(6).toString("hex") : typeof msg.videoId === "string" ? youtubeId(msg.videoId) : null;
     if (!videoId) return this.fail(conn, "bad_request");
@@ -1497,6 +1571,7 @@ export class Hub {
     const room = conn.room;
     const ack = (ok: boolean, error?: ErrorCode, data?: unknown) => rid !== undefined && this.send(conn, { t: "ack", rid, ok, error, data });
     if (!room || !isString(id, 64) || !id) return ack(false, "bad_request");
+    if (this.limitsOf(conn.accountId!)?.canStream === false) return ack(false, "disabled");
     const userId = conn.userId!;
     if (room.data.settings.whoCanStream === "owner" && !this.owns(room, conn)) return ack(false, "forbidden");
     const previous = this.streamOf(conn);
@@ -1582,7 +1657,9 @@ export class Hub {
     if (!room || !stream) return this.reply(conn, msg, false, "stream_not_found");
     const userId = conn.userId!;
     if (stream.ownerId === userId) return this.reply(conn, msg, false, "bad_request");
-    if (msg.on && !stream.viewers.includes(userId) && stream.maxViewers > 0 && stream.viewers.length >= stream.maxViewers) {
+    const allowed = this.limitsOf(this.accounts.accountOf(stream.ownerId))?.maxViewers ?? 0;
+    const full = (stream.maxViewers > 0 && stream.viewers.length >= stream.maxViewers) || (allowed > 0 && stream.viewers.length >= allowed);
+    if (msg.on && !stream.viewers.includes(userId) && full) {
       return this.reply(conn, msg, false, "viewer_limit");
     }
     this.setViewer(room, stream, userId, msg.on === true, cleanQuality(msg.quality ?? DEFAULT_VIEWER_QUALITY), msg.resume === true);

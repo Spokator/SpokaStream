@@ -262,6 +262,18 @@ Le serveur ne voit passer aucune vidéo. Pour savoir comment va un direct, les a
 
 Les alertes (`server/alerts.ts`) ne se déclenchent qu'après avoir tenu le temps prévu. `server/usage.ts` garde 90 jours d'usage et le résumé des 300 dernières diffusions.
 
+### Limites de compte
+
+La vidéo va de PC à PC : le serveur ne peut pas brider un flux qu'il ne voit pas. `AccountLimits` se tient donc à trois endroits. La fiche d'un compte ou les réglages du serveur (`defaultLimits`) les fixent, celles du compte passent devant, et un administrateur n'en a aucune.
+
+- **Le serveur refuse** : lancer un direct, créer un salon, lancer une Watch Party, dépasser le nombre de spectateurs. Sans le relais, il ne donne plus d'identifiants TURN. Ces refus valent contre n'importe quel client.
+- **L'application applique** : `account.limits` arrive en direct, `limited()` borne définition et cadence, et le débit total se partage entre les spectateurs dans `effectiveKbps`. Ce que la personne a demandé reste dans `wantedTarget` : quand une limite se lève, le stream y revient.
+- **Le serveur surveille** : si le total déclaré dans `telemetry` dépasse la limite de 25 % sur 3 relevés de suite, soit 30 s, il coupe le stream. Il rattrape ainsi les anciennes versions, qui ignorent `account.limits`. Une limite expirée se lève au relevé suivant.
+
+Ce que ça ne couvre pas : un client modifié peut sous-déclarer son débit, un identifiant TURN déjà donné reste valable jusqu'à 12 h, une connexion déjà relayée continue, et une nouvelle limite de spectateurs ne renvoie pas ceux déjà là. Rien n'empêche non plus de recréer un compte : c'est le rôle du blocage d'adresse.
+
+**L'arrêt d'un stream par le serveur arrive au diffuseur par `stream.remove`.** Il doit l'y arrêter lui aussi (`stopLive`), sinon il garde sa capture et le relance en se reconnectant.
+
 ### Sauvegardes
 
 `server/backups.ts` copie les fichiers de données dans `data/backups/`. Restaurer ne touche à rien pendant que le serveur tourne : un repère est posé, le serveur s'arrête, et le démarrage suivant remet les fichiers avant que quoi que ce soit ne les lise. Sinon, l'écriture finale de l'arrêt écraserait ce qu'on vient de restaurer. `admin-auth.json` n'en fait pas partie : restaurer une ancienne version ne doit pas ramener un ancien mot de passe. Ces copies sont sur le même disque que l'original : elles protègent d'une erreur, pas de la perte du serveur.

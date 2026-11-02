@@ -200,6 +200,7 @@ export function GoLiveModal() {
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [selected, setSelected] = useState<VideoSource | null>(null);
   const gameCapture = useApp(s => s.settings!.stream.gameCapture);
+  const limits = useApp(s => s.accountLimits);
   const [audio, setAudio] = useState<AudioChoice[]>([]);
   const [audioTouched, setAudioTouched] = useState(false);
   const [title, setTitle] = useState("");
@@ -406,6 +407,10 @@ export function GoLiveModal() {
               }}
             />
           </div>
+
+          {limits && (
+            <p className="muted-text">{limits.canStream ? `Limites de ton compte : ${[limits.maxKbps && `${limits.maxKbps / 1000} Mb/s au total`, limits.maxHeight && `${limits.maxHeight}p`, limits.maxFps && `${limits.maxFps} i/s`, limits.maxViewers && `${limits.maxViewers} spectateurs`].filter(Boolean).join(", ") || "aucune sur l'image"}.` : "Un administrateur a retiré à ce compte le droit de lancer un direct."}</p>
+          )}
 
           <div className="stack">
             <span className="label">Qualité</span>

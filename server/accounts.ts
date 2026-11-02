@@ -3,7 +3,8 @@
 import { randomInt } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { Profile } from "../src/shared/protocol.ts";
+import type { Profile, AccountLimits } from "../src/shared/protocol.ts";
+import { NO_LIMITS } from "../src/shared/protocol.ts";
 
 const LINK_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LINK_LENGTH = 8;
@@ -14,6 +15,25 @@ const IPS_KEPT = 8;
 const SANCTIONS_KEPT = 40;
 const NOTES_KEPT = 40;
 const ROOMS_KEPT = 24;
+
+/** Ce qui vient du panneau passe par ici : un champ inconnu tombe, et chaque valeur est bornée. */
+export function cleanLimits(raw: unknown, until: number): AccountLimits {
+  const value = (raw ?? {}) as Record<string, unknown>;
+  const whole = (key: string, max: number) => Math.max(0, Math.min(max, Math.round(Number(value[key]) || 0)));
+  const allowed = (key: keyof AccountLimits) => value[key] !== false;
+  return {
+    ...NO_LIMITS,
+    maxKbps: whole("maxKbps", 1_000_000),
+    maxHeight: whole("maxHeight", 4320),
+    maxFps: whole("maxFps", 240),
+    maxViewers: whole("maxViewers", 64),
+    canStream: allowed("canStream"),
+    canCreateRooms: allowed("canCreateRooms"),
+    canUseRelay: allowed("canUseRelay"),
+    canWatchParty: allowed("canWatchParty"),
+    until,
+  };
+}
 
 export interface DeviceRecord {
   accountId: string;
@@ -26,7 +46,7 @@ export interface DeviceRecord {
 
 export interface Sanction {
   at: number;
-  kind: "ban" | "unban" | "mute" | "unmute" | "warn" | "kick";
+  kind: "ban" | "unban" | "mute" | "unmute" | "warn" | "kick" | "limit" | "unlimit";
   by: string;
   reason: string;
   /** 0 : sans limite de durée. */
@@ -53,6 +73,7 @@ export interface AccountRecord extends Profile {
   sanctions?: Sanction[];
   notes?: { at: number; by: string; text: string }[];
   stats?: AccountStats;
+  limits?: AccountLimits;
   /** Les dernières adresses : c'est ce qui permet de voir qu'un banni revient sous un autre compte. */
   ips?: { ip: string; at: number }[];
   /** Les salons fréquentés, du plus récent au plus ancien : ils suivent la personne sur chaque appareil. */
@@ -110,6 +131,25 @@ export class Accounts {
     delete account.bannedUntil;
     this.save();
     return false;
+  }
+
+  /** Les limites propres à ce compte. Une limite à durée limitée se lève toute seule. */
+  limitsOf(accountId: string, now = Date.now()) {
+    const account = this.data.accounts[accountId];
+    if (!account?.limits) return null;
+    if (!account.limits.until || account.limits.until > now) return account.limits;
+    delete account.limits;
+    this.save();
+    return null;
+  }
+
+  setLimits(accountId: string, limits: AccountLimits | null) {
+    const account = this.data.accounts[accountId];
+    if (!account) return false;
+    if (limits) account.limits = limits;
+    else delete account.limits;
+    this.save();
+    return true;
   }
 
   isMuted(accountId: string, now = Date.now()) {

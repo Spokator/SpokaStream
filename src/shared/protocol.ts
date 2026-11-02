@@ -30,6 +30,24 @@ export const LIMITS = {
   clipThumb: 96_000,
 } as const;
 
+/** Ce qu'un administrateur autorise à un compte. Le serveur tient ce qu'il peut, l'application applique le reste. */
+export interface AccountLimits {
+  /** Total envoyé à tous les spectateurs, en kb/s. 0 : sans limite. */
+  maxKbps: number;
+  /** 0 : sans limite. */
+  maxHeight: number;
+  maxFps: number;
+  maxViewers: number;
+  canStream: boolean;
+  canCreateRooms: boolean;
+  canUseRelay: boolean;
+  canWatchParty: boolean;
+  /** Fin de la limite. 0 : sans fin. */
+  until: number;
+}
+
+export const NO_LIMITS: AccountLimits = { maxKbps: 0, maxHeight: 0, maxFps: 0, maxViewers: 0, canStream: true, canCreateRooms: true, canUseRelay: true, canWatchParty: true, until: 0 };
+
 export interface Profile {
   name: string;
   color: string;
@@ -370,6 +388,7 @@ export type ServerMessage =
   | { t: "ack"; rid: number; ok: boolean; error?: ErrorCode; data?: unknown }
   | { t: "welcome"; userId: string; accountId?: string; admin?: boolean; iceServers: IceServer[]; serverName: string }
   | { t: "account.sync"; profile: Profile }
+  | { t: "account.limits"; limits: AccountLimits | null; iceServers: IceServer[] }
   | { t: "remote.state"; state: RemoteState | null }
   | { t: "remote.cmd"; cmd: RemoteCommand; arg?: string | number | boolean }
   /** Les salons de la personne : ils la suivent sur tous ses appareils. */
