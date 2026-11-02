@@ -2,7 +2,7 @@
 import { ArrowLeft, Download, Radio, Share, Share2, Trash2, UserRound } from "lucide-preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { LIMITS } from "@shared/protocol.ts";
+import { LIMITS, STORE_URL } from "@shared/protocol.ts";
 import { boot, enter, enterCode, forgetRoom, install, leaveRoom, video } from "./client.ts";
 import { Avatar, Panes, VoiceBar, VoiceButton } from "./Panes.tsx";
 import { Player } from "./Player.tsx";
@@ -11,7 +11,6 @@ import { RemoteCard } from "./Regie.tsx";
 import { Sheets } from "./Sheets.tsx";
 import { get, set, useApp } from "./store.ts";
 
-const DOWNLOAD = "https://github.com/Spokator/SpokaStream/releases/latest";
 const isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 const installed = matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
 
@@ -198,7 +197,7 @@ function Entry() {
       {message}
       <Recents />
       <InstallHint />
-      <a class="entry-link" href={DOWNLOAD} target="_blank" rel="noopener">
+      <a class="entry-link" href={STORE_URL} target="_blank" rel="noopener">
         Installer le logiciel pour diffuser
       </a>
     </main>

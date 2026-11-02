@@ -5,7 +5,7 @@ import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { WebSocketServer, type WebSocket } from "ws";
 import { Bucket, GUARD, Guard } from "./guard.ts";
-import { LIMITS } from "../src/shared/protocol.ts";
+import { LIMITS, STORE_URL } from "../src/shared/protocol.ts";
 import type { IceServer } from "../src/shared/protocol.ts";
 import { AdminPanel } from "./admin.ts";
 import type { AdminAuth } from "./adminAuth.ts";
@@ -280,7 +280,7 @@ send({ type: "ready" });
 </script></body></html>`;
 
 export function startServer(options: ServerOptions): Promise<RunningServer> {
-  const downloadUrl = options.downloadUrl ?? "https://github.com/Spokator/SpokaStream/releases/latest";
+  const downloadUrl = options.downloadUrl ?? STORE_URL;
   const data = (file: string) => options.dataDir && path.join(options.dataDir, file);
   const config = new ConfigStore(data("config.json"));
   const usage = new Usage(data("usage.json"));

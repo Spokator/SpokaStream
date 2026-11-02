@@ -231,7 +231,7 @@ export function OverviewPage({ open }: { open: (page: string) => void }) {
           <dl>
             <dt>Dernière version publiée</dt>
             <dd>{data.release ? `${data.release.tag}, ${new Date(data.release.publishedAt).toLocaleDateString("fr-FR")}` : "Inconnue"}</dd>
-            <dt>Téléchargements de l'installeur</dt>
+            <dt>Téléchargements sur GitHub</dt>
             <dd>{data.release?.downloads ?? "Inconnu"}</dd>
             <dt>Téléphones abonnés</dt>
             <dd>{data.pushSubscriptions}</dd>

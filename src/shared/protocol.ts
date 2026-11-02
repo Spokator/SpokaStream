@@ -4,6 +4,8 @@
 // Version 2 : la bulle caméra ajoute un second flux vidéo, qu'une application 1.0 prendrait pour l'image du stream.
 // La 1.2 reste en version 2 : ses clips et sa prise en main sont des ajouts qu'une 1.1 ignore sans rien casser.
 export const PROTOCOL_VERSION = 2;
+/** Signée par Microsoft : contrairement à l'installeur GitHub, elle ne déclenche pas l'alerte de Windows. */
+export const STORE_URL = "https://apps.microsoft.com/detail/9PKH6GKMMQDN";
 
 export const LIMITS = {
   name: 32,
