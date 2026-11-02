@@ -1,6 +1,6 @@
 # La version Microsoft Store : npm run dist:store
 # identityName et publisher viennent de la réservation du nom dans Partner Center (Gestion des produits, Identité du produit).
-# Tant qu'ils ne sont pas remplacés, ce paquet ne sert qu'aux essais avec le mode développeur.
+# Avec ces valeurs, le paquet ne s'installe que par le Store : pour un essai local, remettre un éditeur fictif et un profil vide (voir docs/STORE.md).
 extends: electron-builder.yml
 
 directories:
@@ -16,7 +16,7 @@ publish: null
 
 appx:
   identityName: Spokator.SpokaStream
-  publisher: CN=Spokator
+  publisher: CN=1FBF4454-E4DA-41D2-BBA3-8C9433B84CE4
   publisherDisplayName: Spokator
   applicationId: SpokaStream
   displayName: SpokaStream

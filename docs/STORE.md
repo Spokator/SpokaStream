@@ -74,6 +74,10 @@ Microsoft relit la soumission, en général en quelques jours. S'il y a un refus
 
 **Contact d'assistance** : `https://github.com/Spokator/SpokaStream/issues`, ou une adresse à toi si tu préfères.
 
+## Si Partner Center demande pourquoi `runFullTrust`
+
+> SpokaStream needs full trust for its native engine: per-application audio capture with process loopback, window and screen capture with Windows.Graphics.Capture, and global hotkeys. These desktop features are not available to a sandboxed app.
+
 ## Notes de certification
 
 > SpokaStream is a screen and audio sharing app for private groups of friends. No test account is needed: enter any display name on first launch. To test, create a room, press "Diffuser", choose a window and press "Lancer le stream". Open the room link in a browser to watch.
@@ -88,8 +92,8 @@ Microsoft relit la soumission, en général en quelques jours. S'il y a un refus
 
 On retire `SpokaHook.dll` de la version Store et l'option disparaît. Tout le reste ne dépend pas d'elle, et la version GitHub la garde.
 
-## Pour Claude, quand les valeurs arrivent
+## Pour une nouvelle version
 
-1. Remplacer `identityName`, `publisher` et `publisherDisplayName` dans `electron-builder.store.yml`.
-2. `npm run dist:store`, avec `SPOKA_WINSDK` si le PC n'a pas de kit Windows.
-3. Le fichier sort dans `dist-store/`. Avec le vrai éditeur, il ne s'installe pas ici sans la signature du Store : le test se fait avec les valeurs d'essai, sur un profil vide.
+1. Publier la version GitHub, puis `npm run dist:store` sur son tag, avec `SPOKA_WINSDK` si le PC n'a pas de kit Windows.
+2. Le fichier sort dans `dist-store/`, avec l'identité de `electron-builder.store.yml`. Il n'est pas signé : c'est le Store qui le signe. Pour un essai local, remettre un éditeur fictif et lancer l'application avec un profil vide.
+3. Dans Partner Center : **Mettre à jour** la soumission, remplacer le paquet, envoyer.
