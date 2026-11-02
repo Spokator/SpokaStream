@@ -262,6 +262,14 @@ Le serveur ne voit passer aucune vidéo. Pour savoir comment va un direct, les a
 
 Les alertes (`server/alerts.ts`) ne se déclenchent qu'après avoir tenu le temps prévu. `server/usage.ts` garde 90 jours d'usage et le résumé des 300 dernières diffusions.
 
+### Bande passante par compte
+
+`server/bandwidth.ts` garde un point toutes les 5 minutes pendant 48 h et un total par jour pendant 90 jours, en mémoire puis dans `bandwidth.json`. Ces durées sont dans la politique de confidentialité : `prune` les fait tenir pour tous les comptes, et un compte supprimé part avec son historique. Le fichier n'est pas sauvegardé : perdre ces chiffres ne coûte rien.
+
+Tout vient des relevés `telemetry`, déclarés par les applications. On multiplie par le temps écoulé depuis le relevé précédent, borné à 30 s : répéter ses relevés ne gonfle rien, et aucune nouvelle version d'application n'est nécessaire. Un flux relayé est vu par ses deux bouts. Sur un compte il compte pour les deux, parce que l'un ou l'autre peut en être la cause. Dans les totaux, seul le côté du diffuseur compte.
+
+La page Bande passante met le relais déclaré à côté de `netTx`, la sortie mesurée par `metrics.ts`, qui comprend aussi PinoyBot : un écart durable dit que les chiffres déclarés ne suffisent plus. Les règles `relay` et `relayAccount` s'appuient sur le déclaré, `network` sur la mesure. Les seuils de départ (100, 50 et 300 Mb/s pendant 5 minutes) sont une estimation : le VPS n'expose pas la vitesse de sa ligne. Ils se changent dans la page Alertes.
+
 ### Limites de compte
 
 La vidéo va de PC à PC : le serveur ne peut pas brider un flux qu'il ne voit pas. `AccountLimits` se tient donc à trois endroits. La fiche d'un compte ou les réglages du serveur (`defaultLimits`) les fixent, celles du compte passent devant, et un administrateur n'en a aucune.

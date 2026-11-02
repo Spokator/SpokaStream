@@ -42,6 +42,9 @@ export function span(seconds: number) {
   return days ? `${days} j ${hours} h` : hours ? `${hours} h ${minutes} min` : `${minutes} min`;
 }
 
+/** Le compte à ouvrir en arrivant sur la page Comptes depuis une autre page. */
+export const askedUser = { id: "", name: "" };
+
 export function usePolled<T>(path: string, every = REFRESH_MS) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState("");

@@ -1,16 +1,17 @@
 /** @jsxImportSource preact */
-import { Activity, BarChart3, Bell, DatabaseBackup, Download, Gauge as GaugeIcon, Inbox, KeyRound, LayoutDashboard, LogOut, Menu, MessagesSquare, Radio, RefreshCw, ScrollText, ServerCog, Share, ShieldAlert, ShieldCheck, SlidersHorizontal, UserCog, Users, WifiOff, X } from "lucide-preact";
+import { Activity, ArrowDownUp, BarChart3, Bell, DatabaseBackup, Download, Gauge as GaugeIcon, Inbox, KeyRound, LayoutDashboard, LogOut, Menu, MessagesSquare, Radio, RefreshCw, ScrollText, ServerCog, Share, ShieldAlert, ShieldCheck, SlidersHorizontal, UserCog, Users, WifiOff, X } from "lucide-preact";
 import { render } from "preact";
 import type { FunctionComponent } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { AdminsPage, SecurityPage } from "./access.tsx";
+import { BandwidthPage } from "./bandwidth.tsx";
 import { api, can, Field, ROLE_NAMES, setMyRole, usePolled } from "./lib.tsx";
 import type { Role } from "./lib.tsx";
 import { LogsPage, ModerationPage, ReportsPage, RoomsPage, UsersPage } from "./manage.tsx";
 import { AlertsPage, OverviewPage, StreamsPage, SystemPage, UsagePage } from "./monitor.tsx";
 import { BackupsPage, SettingsPage } from "./settings.tsx";
 
-type Page = "overview" | "alerts" | "streams" | "rooms" | "users" | "moderation" | "system" | "usage" | "logs" | "reports" | "settings" | "backups" | "admins" | "security";
+type Page = "overview" | "alerts" | "bandwidth" | "streams" | "rooms" | "users" | "moderation" | "system" | "usage" | "logs" | "reports" | "settings" | "backups" | "admins" | "security";
 
 const GROUPS: { label: string; pages: { id: Page; label: string; icon: typeof Activity; need?: Role }[] }[] = [
   {
@@ -20,6 +21,7 @@ const GROUPS: { label: string; pages: { id: Page; label: string; icon: typeof Ac
       { id: "alerts", label: "Alertes", icon: Bell },
       { id: "system", label: "Système", icon: GaugeIcon },
       { id: "usage", label: "Statistiques", icon: BarChart3 },
+      { id: "bandwidth", label: "Bande passante", icon: ArrowDownUp },
     ],
   },
   {
@@ -140,7 +142,7 @@ function Panel() {
   const logout = () => void api("logout", {}).finally(() => location.reload());
   const alertCount = alerts?.active.length ?? 0;
   const groups = GROUPS.map(group => ({ ...group, pages: group.pages.filter(allowed) })).filter(group => group.pages.length);
-  const Current = { overview: OverviewPage, alerts: AlertsPage, streams: StreamsPage, rooms: RoomsPage, users: UsersPage, moderation: ModerationPage, system: SystemPage, usage: UsagePage, logs: LogsPage, reports: ReportsPage, settings: SettingsPage, backups: BackupsPage, admins: AdminsPage, security: SecurityPage }[shown] as FunctionComponent<{ open: (next: string) => void }>;
+  const Current = { overview: OverviewPage, alerts: AlertsPage, streams: StreamsPage, rooms: RoomsPage, users: UsersPage, moderation: ModerationPage, system: SystemPage, usage: UsagePage, bandwidth: BandwidthPage, logs: LogsPage, reports: ReportsPage, settings: SettingsPage, backups: BackupsPage, admins: AdminsPage, security: SecurityPage }[shown] as FunctionComponent<{ open: (next: string) => void }>;
   return (
     <div class="panel">
       <nav class="side" aria-label="Administration">

@@ -1,6 +1,6 @@
 /**
  * La politique de confidentialité, servie sur /confidentialite. Le Microsoft Store en exige une (règle 10.5.1).
- * Chaque chiffre vient du code : si IPS_KEPT, LIMITS.history, ROOM_MAX_IDLE_MS, KEPT ou AUTO_KEPT change, cette page change aussi.
+ * Chaque chiffre vient du code : si IPS_KEPT, LIMITS.history, ROOM_MAX_IDLE_MS, KEPT, AUTO_KEPT, POINTS_KEPT_HOURS ou DAYS_KEPT change, cette page change aussi.
  */
 export const PRIVACY_UPDATED = "2 novembre 2026";
 
@@ -18,6 +18,7 @@ const SECTIONS: [string, string][] = [
 <li><b>Les salons</b> : leur nom, leur code, leurs membres et les 200 derniers messages du chat, avec les dernières images collées.</li>
 <li><b>Des totaux d'utilisation</b> : nombre de streams, minutes diffusées et regardées, nombre de messages.</li>
 <li><b>Des mesures techniques pendant un stream</b> : débit, images par seconde, définition, codec, encodeur, délai réseau. Elles servent à repérer les pannes.</li>
+<li><b>Ta bande passante</b> : ce que ton compte envoie et reçoit, et la part qui passe par le relais du serveur. Ce sont les débits déclarés par ton application, jamais le contenu de ton stream. Ils servent à voir ce qui charge le serveur et à faire respecter les limites.</li>
 <li><b>Les rapports d'erreur</b> : le message d'erreur et la version de l'application. Tu peux les couper dans Paramètres, À propos.</li>
 <li><b>Ce que tu nous envoies</b> : si tu utilises « Signaler un problème », ton message part avec un diagnostic de l'appareil (système, processeur, mémoire, carte graphique, état de la connexion).</li>
 <li><b>La modération</b> : les sanctions et les notes éventuelles sur un compte.</li>
@@ -51,6 +52,7 @@ const SECTIONS: [string, string][] = [
     `<ul>
 <li>Un salon sans activité est supprimé après 90 jours, avec son chat.</li>
 <li>Seules les 8 dernières adresses IP d'un compte sont gardées.</li>
+<li>Le détail de ta bande passante est gardé 48 heures, et ses totaux par jour 90 jours.</li>
 <li>Le journal du service garde ses 2 000 dernières lignes.</li>
 <li>Les sauvegardes automatiques sont quotidiennes et les 7 dernières sont gardées.</li>
 <li>Un compte est gardé jusqu'à ce que tu le supprimes.</li>

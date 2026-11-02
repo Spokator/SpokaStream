@@ -430,6 +430,8 @@ try {
     assert.ok(height > 0 && height <= 480, `hauteur reçue : ${height}`);
     assert.equal(await bob.page.evaluate(() => Object.values<any>((window as any).__store.useApp.getState().subs)[0]?.state), "connected");
     await shot(alice, "07-compte-limite");
+    const measured = server.hub.adminBandwidth(1).find(row => row.id === accountId);
+    assert.ok(measured && measured.up > 0 && measured.live!.up > 0, `la bande passante du compte doit être suivie : ${JSON.stringify(measured)}`);
     assert.equal(server.hub.adminSetLimits(accountId, null, "", "e2e"), true);
     await poll("limites levées", target, t => t.accountMaxKbps === 0 && t.fps === free.fps && t.maxHeight === free.maxHeight);
     return `${freeRate} kb/s libres, ${cappedRate} kb/s limités, ${height}p reçus`;

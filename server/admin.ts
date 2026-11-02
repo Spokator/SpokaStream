@@ -17,6 +17,7 @@ import { logsCsv } from "./journal.ts";
 import type { Metrics } from "./metrics.ts";
 import type { PushService } from "./push.ts";
 import type { Store } from "./store.ts";
+import type { Bandwidth } from "./bandwidth.ts";
 import type { Usage } from "./usage.ts";
 import { cleanLimits } from "./accounts.ts";
 import { ADMIN_HTML, ADMIN_ICON_192, ADMIN_ICON_512, ADMIN_JS, APP_VERSION } from "./viewer.gen.ts";
@@ -134,6 +135,7 @@ export interface AdminOptions {
   store: Store;
   metrics: Metrics;
   usage: Usage;
+  bandwidth?: Bandwidth;
   config: ConfigStore;
   push?: PushService;
   /** Dossier des données : c'est son disque qu'on surveille. */
@@ -222,13 +224,15 @@ export class AdminPanel {
     this.options.metrics.save(true);
     this.options.metrics.close();
     this.options.usage.flush();
+    this.options.bandwidth?.flush();
   }
 
   private flushAll() {
-    const { hub, store, usage } = this.options;
+    const { hub, store, usage, bandwidth } = this.options;
     hub.accounts.flush();
     store.flush();
     usage.flush();
+    bandwidth?.flush();
   }
 
   private async tick() {
@@ -288,6 +292,7 @@ export class AdminPanel {
       errors5min: hub.logs.filter(l => l.level === "error" && l.at >= since).length,
       memMaxPct: limits.memMaxMb && memMb ? Math.round((memMb / limits.memMaxMb) * 100) : null,
       throttledPct: limits.throttledPct,
+      ...hub.relayLoad(),
     });
   }
 
@@ -836,6 +841,13 @@ export class AdminPanel {
       if (name === "overview") return json(res, 200, await this.overview(host));
       if (name === "metrics") return json(res, 200, { ...metrics.range(url.searchParams.get("range") ?? "1h"), services: metrics.services(), messages: metrics.topMessages(), traffic: metrics.traffic, os: { cpus: os.cpus().length, memTotalMb: Math.round(os.totalmem() / 1_048_576), node: process.version }, dataFiles: this.dataFiles(), disk: this.disk() });
       if (name === "health") return json(res, 200, { streams: hub.adminHealth(), sessions: usage.sessions().slice(0, 100), summary: hub.telemetrySummary() });
+      if (name === "bandwidth") {
+        const { bandwidth } = this.options;
+        const account = url.searchParams.get("id");
+        if (account) return json(res, 200, { timeline: bandwidth?.timeline(account), daily: bandwidth?.daily(30, account) });
+        const days = Number(url.searchParams.get("days"));
+        return json(res, 200, { accounts: hub.adminBandwidth([7, 30].includes(days) ? days : 1), timeline: bandwidth?.timeline(), daily: bandwidth?.daily(30), now: hub.telemetrySummary() });
+      }
       if (name === "usage") return json(res, 200, { days: usage.days(90), sessions: usage.sessions().length, topStreamers: hub.accounts.list().filter(a => a.stats?.streamMinutes).sort((a, b) => b.stats!.streamMinutes - a.stats!.streamMinutes).slice(0, 10).map(a => ({ id: a.id, name: a.name, ...a.stats! })), topViewers: hub.accounts.list().filter(a => a.stats?.watchMinutes).sort((a, b) => b.stats!.watchMinutes - a.stats!.watchMinutes).slice(0, 10).map(a => ({ id: a.id, name: a.name, ...a.stats! })), topRooms: hub.adminRooms().filter(r => r.liveMinutes).sort((a, b) => b.liveMinutes - a.liveMinutes).slice(0, 10).map(r => ({ id: r.id, name: r.name, liveMinutes: r.liveMinutes, messages: r.messages })) });
       if (name === "alerts") return json(res, 200, { active: this.alerts.active, history: this.alerts.history, rules: RULES.map(({ id, label, unit, limit, minutes, below }) => ({ id, label, unit, minutes, below: !!below, limit: config.value.rules[id]?.limit ?? limit, on: config.value.rules[id]?.on !== false })), discord: !!config.value.discord });
       if (name === "room") {

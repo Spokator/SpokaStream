@@ -38,7 +38,7 @@ for (const [index, viewer] of viewers.entries()) {
   viewer.send({ t: "chat.send", text: `Message ${index}, avec une adresse https://exemple.fr/une/adresse/tres/longue/qui/ne/se/coupe/pas/toute/seule` });
   viewer.send({ t: "telemetry", watch: [{ streamId: "s1", fps: 59, kbps: 7800 - index * 900, height: 1080, lostPct: index * 3, jitterMs: 4, freezes: index, relay: index === 1, protocol: "udp", rttMs: 40 + index * 150 }] });
 }
-streamer.send({ t: "telemetry", publish: { streamId: "s1", fps: 60, kbps: 8200, height: 1080, codec: "AV1", encoder: "NVIDIA", hardware: true, encMs: 4, limit: "bandwidth", viewers: [] } });
+streamer.send({ t: "telemetry", publish: { streamId: "s1", fps: 60, kbps: 8200, height: 1080, codec: "AV1", encoder: "NVIDIA", hardware: true, encMs: 4, limit: "bandwidth", viewers: [{ id: "léa", kbps: 7800, relay: true, protocol: "udp", rttMs: 20 }] } });
 streamer.send({ t: "report", kind: "feedback", text: "Le son coupe parfois", details: "diagnostic ".repeat(40) });
 hub.log("error", "serveur", "Une erreur assez longue pour voir comment une ligne de journal se comporte sur un petit écran");
 hub.adminMute(viewers[0]!.conn.accountId!, Date.now() + 3600_000, "Langage", "spoka");
@@ -54,7 +54,7 @@ const SCREENS = [
   { name: "320", width: 320, height: 568 },
   { name: "paysage", width: 844, height: 390 },
 ];
-const PAGES = ["Vue d'ensemble", "Alertes", "Système", "Statistiques", "Diffusions", "Salons", "Comptes", "Modération", "Retours", "Journal", "Réglages", "Sauvegardes", "Administrateurs", "Sécurité"];
+const PAGES = ["Vue d'ensemble", "Alertes", "Système", "Statistiques", "Bande passante", "Diffusions", "Salons", "Comptes", "Modération", "Retours", "Journal", "Réglages", "Sauvegardes", "Administrateurs", "Sécurité"];
 
 /** Ce qui est trop petit pour un doigt, ou qui sort de l'écran, avec de quoi le retrouver. */
 const inspect = (page: Page) =>
@@ -170,6 +170,21 @@ try {
   for (let i = 0; i < 40 && hub.config.defaultLimits; i++) await page.waitForTimeout(100);
   assert.equal(hub.limitsOf(limited), null);
   console.log("✔ limites d'un compte et limites du serveur posées depuis le téléphone, puis levées");
+
+  await open("Bande passante");
+  const consumer = page.locator("article", { hasText: "Un pseudo vraiment" });
+  await consumer.waitFor();
+  await consumer.getByRole("button", { name: "Détails" }).click();
+  await consumer.locator(".chart", { hasText: "par jour" }).first().waitFor();
+  assert.deepEqual((await inspect(page)).small, [], "les détails se touchent au doigt");
+  assert.equal((await inspect(page)).overflow <= 1, true, "les courbes tiennent dans la largeur");
+  await page.screenshot({ path: path.join(captures, "94-admin-bande-passante.png"), fullPage: true });
+  await consumer.getByRole("button", { name: "Gérer ce compte" }).click();
+  await page.getByRole("heading", { name: "Comptes", level: 1 }).waitFor();
+  await page.locator("summary", { hasText: "Bande passante" }).click();
+  await page.locator(".card .chart", { hasText: "par jour" }).first().waitFor();
+  assert.equal(await page.locator(".user").count(), 1, "seul le compte demandé reste affiché");
+  console.log("✔ bande passante : classement, détail d'un compte, passage à sa fiche");
 
   await open("Vue d'ensemble");
   await page.locator(".gauges").waitFor();

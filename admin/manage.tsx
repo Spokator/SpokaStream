@@ -2,7 +2,8 @@
 import { Ban, Download, Lock, MessageSquareOff, ShieldBan, Square, Trash2, Unlock, UserMinus, Volume2, VolumeX } from "lucide-preact";
 import { useMemo, useState } from "preact/hooks";
 import type { AccountLimits } from "@shared/protocol.ts";
-import { act, ArmedButton, can, count, date, DURATIONS, Note, number, time, useAction, usePolled } from "./lib.tsx";
+import { AccountBandwidth } from "./bandwidth.tsx";
+import { act, ArmedButton, askedUser, can, count, date, DURATIONS, Note, number, time, useAction, usePolled } from "./lib.tsx";
 import { LimitsForm, limitsSummary } from "./limits.tsx";
 
 interface RoomRow {
@@ -283,6 +284,7 @@ function UserTools({ user, refresh }: { user: UserRow; refresh: () => void }) {
   const [muteHours, setMuteHours] = useState(1);
   const [withRooms, setWithRooms] = useState(false);
   const [limitHours, setLimitHours] = useState(0);
+  const [showBandwidth, setShowBandwidth] = useState(false);
   const [feedback, setFeedback] = useState("");
   const muted = !!user.mutedUntil && user.mutedUntil > Date.now();
   const run = (action: string, fields: Record<string, unknown>, done: string) =>
@@ -398,6 +400,10 @@ function UserTools({ user, refresh }: { user: UserRow; refresh: () => void }) {
           </div>
         </>
       )}
+      <details onToggle={e => setShowBandwidth(e.currentTarget.open)}>
+        <summary>Bande passante</summary>
+        {showBandwidth && <AccountBandwidth id={user.id} name={user.name} />}
+      </details>
       {can("admin") && !user.admin && (
         <details>
           <summary>Limites de ce compte</summary>
@@ -483,10 +489,11 @@ type Sort = "recent" | "stream" | "watch" | "messages";
 
 export function UsersPage() {
   const { data, error, refresh } = usePolled<UserRow[]>("users");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(askedUser.name);
   const [filter, setFilter] = useState<"all" | "online" | "banned" | "muted" | "limited">("all");
   const [sort, setSort] = useState<Sort>("recent");
-  const [open, setOpen] = useState("");
+  const [open, setOpen] = useState(askedUser.id);
+  askedUser.id = askedUser.name = "";
   const shown = useMemo(() => {
     const needle = search.toLowerCase();
     const value = (user: UserRow) => (sort === "stream" ? (user.stats?.streamMinutes ?? 0) : sort === "watch" ? (user.stats?.watchMinutes ?? 0) : sort === "messages" ? (user.stats?.messages ?? 0) : 0);

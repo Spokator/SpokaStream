@@ -17,6 +17,7 @@ import { Metrics } from "./metrics.ts";
 import type { PushService } from "./push.ts";
 import { privacyPage } from "./privacy.ts";
 import type { Store } from "./store.ts";
+import { Bandwidth } from "./bandwidth.ts";
 import { Usage } from "./usage.ts";
 import { HLS_JS, ICON_192, ICON_512, VIEWER_HTML, VIEWER_JS } from "./viewer.gen.ts";
 
@@ -283,6 +284,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   const data = (file: string) => options.dataDir && path.join(options.dataDir, file);
   const config = new ConfigStore(data("config.json"));
   const usage = new Usage(data("usage.json"));
+  const bandwidth = new Bandwidth(data("bandwidth.json"));
   const metrics = new Metrics({
     file: data("metrics.json"),
     stunHost: options.turnHost,
@@ -290,8 +292,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     source: () => ({ ...hub.stats, ...hub.telemetrySummary() }),
   });
   const guard = new Guard();
-  const hub = new Hub({ guard, store: options.store, serverName: options.serverName, push: options.push, accounts: options.accounts, admins: options.admins, config, metrics, usage, journal: new Journal(options.dataDir), iceServers: userId => iceServersFor(userId, options) });
-  const admin = new AdminPanel({ hub, store: options.store, metrics, usage, config, push: options.push, dataDir: options.dataDir, canRestart: options.canRestart, auth: options.adminAuth });
+  const hub = new Hub({ guard, store: options.store, serverName: options.serverName, push: options.push, accounts: options.accounts, admins: options.admins, config, bandwidth, metrics, usage, journal: new Journal(options.dataDir), iceServers: userId => iceServersFor(userId, options) });
+  const admin = new AdminPanel({ hub, store: options.store, metrics, usage, bandwidth, config, push: options.push, dataDir: options.dataDir, canRestart: options.canRestart, auth: options.adminAuth });
 
   const server = http.createServer((req, res) => {
     const started = performance.now();

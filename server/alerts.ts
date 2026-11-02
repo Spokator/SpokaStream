@@ -14,6 +14,9 @@ export interface AlertContext {
   errors5min: number;
   memMaxPct: number | null;
   throttledPct: number;
+  relayMbps?: number;
+  relayTopMbps?: number;
+  relayTopName?: string;
 }
 
 export interface RuleDefinition {
@@ -27,6 +30,8 @@ export interface RuleDefinition {
   read: (c: AlertContext) => number | null;
   /** Par défaut, on alerte au-dessus de la limite. */
   below?: boolean;
+  /** Ce qu'il faut savoir en plus pour agir, comme le nom d'un compte. */
+  detail?: (c: AlertContext) => string | undefined;
 }
 
 const up = (name: string) => (c: AlertContext) => (c.services[name] && c.services[name]!.state !== "inconnu" ? (c.services[name]!.state === "active" ? 0 : 1) : null);
@@ -45,6 +50,10 @@ export const RULES: RuleDefinition[] = [
   { id: "loop", label: "Le serveur répond lentement", unit: "ms", limit: 200, minutes: 2, read: c => c.point.loopP99 ?? null },
   { id: "loss", label: "Pertes élevées sur les streams", unit: "%", limit: 5, minutes: 3, read: c => c.point.lossPct ?? null },
   { id: "errors", label: "Erreurs en série dans le journal", unit: "", limit: 10, minutes: 0, read: c => c.errors5min },
+  { id: "relay", label: "Beaucoup de débit sur le relais", unit: "Mb/s", limit: 100, minutes: 5, read: c => c.relayMbps ?? null },
+  { id: "relayAccount", label: "Un compte charge le relais", unit: "Mb/s", limit: 50, minutes: 5, read: c => c.relayTopMbps ?? null, detail: c => c.relayTopName },
+  // Mesuré sur la machine : cette règle ne dépend pas de ce que déclarent les applications.
+  { id: "network", label: "La machine envoie beaucoup de données", unit: "Mb/s", limit: 300, minutes: 5, read: c => c.point.netTx ?? null },
   { id: "certificate", label: "Le certificat HTTPS expire bientôt", unit: "jours", limit: 14, minutes: 0, read: c => c.certificateDays, below: true },
 ];
 
@@ -123,11 +132,13 @@ export class Alerts {
         if (!this.breachedSince.has(rule.id)) this.breachedSince.set(rule.id, now);
         if (open) open.value = value;
         else if (now - this.breachedSince.get(rule.id)! >= rule.minutes * 60_000) {
-          const event: AlertEvent = { id: `${rule.id}-${now}`, rule: rule.id, label: rule.label, value, limit, unit: rule.unit, startedAt: now, endedAt: null };
+          const detail = rule.detail?.(context);
+          const label = detail ? `${rule.label} (${detail})` : rule.label;
+          const event: AlertEvent = { id: `${rule.id}-${now}`, rule: rule.id, label, value, limit, unit: rule.unit, startedAt: now, endedAt: null };
           this.events.unshift(event);
           this.events.length = Math.min(this.events.length, HISTORY);
           changed = true;
-          this.options.notify(`🔴 ${rule.label}${rule.unit ? ` : ${value} ${rule.unit} (limite ${limit})` : ""}`);
+          this.options.notify(`🔴 ${label}${rule.unit ? ` : ${value} ${rule.unit} (limite ${limit})` : ""}`);
         }
         continue;
       }

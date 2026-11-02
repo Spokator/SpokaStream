@@ -42,6 +42,7 @@ import type { Journal } from "./journal.ts";
 import type { Metrics } from "./metrics.ts";
 import type { PushService } from "./push.ts";
 import type { Store, StoredRoom } from "./store.ts";
+import type { Bandwidth } from "./bandwidth.ts";
 import type { Usage } from "./usage.ts";
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -113,6 +114,7 @@ export interface HubOptions {
   config?: ConfigStore;
   metrics?: Metrics;
   usage?: Usage;
+  bandwidth?: Bandwidth;
   journal?: Journal;
   iceServers: (userId: string) => IceServer[];
   /** Les plafonds par adresse. Sans elle, aucun : les essais du hub s'en passent. */
@@ -127,6 +129,8 @@ const isString = (v: unknown, max: number): v is string => typeof v === "string"
 const PUSH_QUIET_AFTER_BOOT_MS = 60_000;
 const REMOTE_STATE_BYTES = 16_000;
 const TELEMETRY_FRESH_MS = 30_000;
+const TELEMETRY_EVERY_MS = 10_000;
+const BANDWIDTH_MAX_GAP_S = 30;
 const MAX_LOGS = 2000;
 const MAX_REPORTS = 300;
 const MAX_REPORT_DETAILS = 20_000;
@@ -264,6 +268,7 @@ export class Hub {
   private readonly configStore: ConfigStore | null;
   private readonly metrics?: Metrics;
   private readonly usage?: Usage;
+  private readonly bandwidth?: Bandwidth;
   private readonly journal?: Journal;
   /** Pendant un direct : de quoi écrire son résumé quand il s'arrête. */
   private readonly lives = new Map<string, { peakViewers: number; kbpsSum: number; kbpsCount: number; relaySeen: number; viewersSeen: number; lossSum: number; lossCount: number }>();
@@ -275,6 +280,7 @@ export class Hub {
     this.configStore = options.config ?? null;
     this.metrics = options.metrics;
     this.usage = options.usage;
+    this.bandwidth = options.bandwidth;
     this.journal = options.journal;
     this.logs.push(...(options.journal?.load() ?? []));
     this.reports.push(...(options.journal?.loadReports() ?? []));
@@ -374,6 +380,44 @@ export class Hub {
         };
       }),
     );
+  }
+
+  /** Ce que chaque compte envoie et reçoit à l'instant, d'après les derniers relevés de ses appareils. */
+  private liveBandwidth() {
+    const now = this.now();
+    const live = new Map<string, { up: number; down: number; relay: number }>();
+    for (const conn of this.conns) {
+      if (!conn.accountId || !conn.telemetry || now - conn.telemetry.at > TELEMETRY_FRESH_MS) continue;
+      const row = live.get(conn.accountId) ?? { up: 0, down: 0, relay: 0 };
+      for (const viewer of conn.telemetry.publish?.viewers ?? []) {
+        row.up += viewer.kbps;
+        if (viewer.relay) row.relay += viewer.kbps;
+      }
+      for (const watch of conn.telemetry.watch) {
+        row.down += watch.kbps;
+        if (watch.relay) row.relay += watch.kbps;
+      }
+      live.set(conn.accountId, row);
+    }
+    return live;
+  }
+
+  /** Du plus gros consommateur du relais au plus petit. */
+  adminBandwidth(days: number) {
+    const live = this.liveBandwidth();
+    const accounts = new Map(this.accounts.list().map(account => [account.id, account]));
+    const rows = (this.bandwidth?.totals(days) ?? []).flatMap(row => {
+      const account = accounts.get(row.id);
+      return account ? [{ ...row, name: account.name, color: account.color, limited: !!this.accounts.limitsOf(row.id, this.now()), live: live.get(row.id) ?? null }] : [];
+    });
+    return rows.sort((a, b) => b.relayUp + b.relayDown - (a.relayUp + a.relayDown) || b.up + b.down - (a.up + a.down));
+  }
+
+  /** Pour les alertes : la charge du relais, et le compte qui y pèse le plus. */
+  relayLoad() {
+    let top = { id: "", kbps: 0 };
+    for (const [id, row] of this.liveBandwidth()) if (row.relay > top.kbps) top = { id, kbps: row.relay };
+    return { relayMbps: +(this.telemetrySummary().relayKbps / 1000).toFixed(1), relayTopMbps: +(top.kbps / 1000).toFixed(1), relayTopName: top.id ? (this.accounts.detail(top.id)?.name ?? "") : "" };
   }
 
   /** Le résumé de l'instant : ce que les courbes du panneau gardent. Tous ces chiffres sont déclarés par les appareils. */
@@ -555,17 +599,13 @@ export class Hub {
 
   adminUsers() {
     const online = new Set([...this.conns].map(c => c.userId));
-    const uploads = new Map<string, number>();
-    for (const conn of this.conns) {
-      if (!conn.accountId || !conn.telemetry?.publish || this.now() - conn.telemetry.at > TELEMETRY_FRESH_MS) continue;
-      uploads.set(conn.accountId, (uploads.get(conn.accountId) ?? 0) + conn.telemetry.publish.viewers.reduce((total, viewer) => total + viewer.kbps, 0));
-    }
+    const live = this.liveBandwidth();
     return this.accounts.list().map(account => ({
       ...account,
       admin: this.isAdminAccount(account.id),
       limits: this.limitsOf(account.id),
       ownLimits: this.accounts.limitsOf(account.id, this.now()),
-      uploadKbps: uploads.get(account.id) ?? 0,
+      uploadKbps: live.get(account.id)?.up ?? 0,
       online: account.devices.some(d => online.has(d.id)),
       rooms: [...this.rooms.values()].filter(r => r.data.ownerId === account.id).length,
     }));
@@ -683,6 +723,7 @@ export class Hub {
     if (this.isAdminAccount(accountId)) return false;
     this.adminDisconnect(accountId);
     if (withRooms) for (const room of [...this.rooms.values()]) if (room.data.ownerId === accountId) this.adminDeleteRoom(room.data.id);
+    this.bandwidth?.forget(accountId);
     return this.accounts.remove(accountId);
   }
 
@@ -875,8 +916,7 @@ export class Hub {
         return;
       case "telemetry":
         if (!conn.buckets.misc.take(now)) return;
-        conn.telemetry = { at: now, publish: cleanPublishTelemetry(msg.publish), watch: cleanWatchTelemetry(msg.watch) };
-        return this.watchLimits(conn);
+        return this.onTelemetry(conn, msg, now);
       case "voice.set": {
         const live = this.liveOf(conn);
         if (!live) return;
@@ -1080,6 +1120,25 @@ export class Hub {
     if (conn.room && this.streamOf(conn)) this.stopStreamOf(conn.room, conn.userId!);
   }
 
+  private onTelemetry(conn: Conn, msg: Extract<ClientMessage, { t: "telemetry" }>, now: number) {
+    // Le temps écoulé, pas le nombre de relevés : répéter ses relevés ne gonfle rien, et une absence ne compte pas comme du débit.
+    const seconds = Math.min(BANDWIDTH_MAX_GAP_S, (now - (conn.telemetry?.at ?? now - TELEMETRY_EVERY_MS)) / 1000);
+    conn.telemetry = { at: now, publish: cleanPublishTelemetry(msg.publish), watch: cleanWatchTelemetry(msg.watch) };
+    if (this.bandwidth) {
+      const flow = { up: 0, down: 0, relayUp: 0, relayDown: 0 };
+      for (const viewer of conn.telemetry.publish?.viewers ?? []) {
+        flow.up += viewer.kbps * seconds;
+        if (viewer.relay) flow.relayUp += viewer.kbps * seconds;
+      }
+      for (const watch of conn.telemetry.watch) {
+        flow.down += watch.kbps * seconds;
+        if (watch.relay) flow.relayDown += watch.kbps * seconds;
+      }
+      this.bandwidth.add(conn.accountId!, flow);
+    }
+    this.watchLimits(conn);
+  }
+
   /** Une limite expirée se rattrape ici, et une application ancienne ou modifiée finit coupée si elle dépasse le débit annoncé. */
   private watchLimits(conn: Conn) {
     const limits = this.limitsOf(conn.accountId!);
@@ -1143,6 +1202,7 @@ export class Hub {
     if (accountId === "same") return this.reply(conn, msg, true, undefined, { already: true });
     if (!accountId) return this.reply(conn, msg, false, bucket.take(this.now()) ? "bad_request" : "rate_limited");
     // Ce qui appartenait à l'appareil seul suit la personne.
+    this.bandwidth?.merge(before, accountId);
     for (const room of this.rooms.values()) if (room.data.ownerId === before) room.data.ownerId = accountId;
     this.persist();
     conn.accountId = accountId;
