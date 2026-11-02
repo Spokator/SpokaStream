@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.6.10
+
+- **Supprime ton compte toi-même**, dans Paramètres, Compte, ou sur le site dans ton profil. Ton profil, tes appareils, tes messages et les salons que tu as créés sont effacés du serveur.
+- **Le serveur se protège des abus** avant l'arrivée du Store. Une même adresse ne peut plus ouvrir des centaines de connexions, de comptes ou de salons. Une soirée entre amis ne verra pas la différence.
+
 ## 1.6.9
 
 - **Une politique de confidentialité**, dans Paramètres, À propos, et sur `stream.chretieno.fr/confidentialite`. Elle dit ce que le serveur garde, ce qui passe directement entre vous et ce qui reste sur ton PC. Le texte de l'application était incomplet : il ne parlait ni des adresses IP ni des statistiques.

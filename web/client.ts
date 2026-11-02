@@ -368,6 +368,13 @@ function remember(room: RoomState) {
   void checkPush().catch(() => {});
 }
 
+/** Efface le compte sur le serveur, et le jeton de ce navigateur avec : la page repart de zéro. */
+export async function deleteAccount() {
+  await signal.request({ t: "account.delete" });
+  for (const key of ["spoka-token", "spoka-rooms"]) localStorage.removeItem(key);
+  location.href = "/";
+}
+
 export function forgetRoom(id: string) {
   const recents = get().recents.filter(r => r.id !== id);
   store("spoka-rooms", JSON.stringify(recents));

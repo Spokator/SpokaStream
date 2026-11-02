@@ -53,12 +53,13 @@ const SECTIONS: [string, string][] = [
 <li>Seules les 8 dernières adresses IP d'un compte sont gardées.</li>
 <li>Le journal du service garde ses 2 000 dernières lignes.</li>
 <li>Les sauvegardes automatiques sont quotidiennes et les 7 dernières sont gardées.</li>
-<li>Un compte est gardé jusqu'à ce que tu demandes sa suppression.</li>
+<li>Un compte est gardé jusqu'à ce que tu le supprimes.</li>
 </ul>`,
   ],
   [
     "Tes droits",
-    `<p>Tu peux demander à consulter, corriger ou supprimer tes données, ou t'opposer à leur traitement. Écris-nous depuis l'application, dans Paramètres, À propos, « Signaler un problème », ou sur <a href="https://github.com/Spokator/SpokaStream/issues">la page du projet</a>, sans y mettre d'information personnelle. Si tu estimes que tes droits ne sont pas respectés, tu peux saisir la <a href="https://www.cnil.fr">CNIL</a>.</p>
+    `<p><b>Tu peux supprimer ton compte toi-même</b> : dans l'application, Paramètres, Compte, ou sur le site, dans ton profil. Ton profil, tes appareils, tes messages et les salons que tu as créés sont effacés tout de suite, et disparaissent des sauvegardes sous 7 jours.</p>
+<p>Tu peux aussi demander à consulter ou corriger tes données, ou t'opposer à leur traitement. Écris-nous depuis l'application, dans Paramètres, À propos, « Signaler un problème », ou sur <a href="https://github.com/Spokator/SpokaStream/issues">la page du projet</a>, sans y mettre d'information personnelle. Si tu estimes que tes droits ne sont pas respectés, tu peux saisir la <a href="https://www.cnil.fr">CNIL</a>.</p>
 <p>Si tu as moins de 15 ans, demande l'accord d'un parent avant d'utiliser SpokaStream.</p>`,
   ],
   [

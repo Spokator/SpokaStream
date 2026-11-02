@@ -341,6 +341,7 @@ export type ClientMessage =
   | { t: "report"; kind: "error" | "feedback"; text: string; details?: string }
   | { t: "telemetry"; publish?: PublishTelemetry | null; watch?: WatchTelemetry[] }
   | { t: "account.forget"; id: string }
+  | ({ t: "account.delete" } & Rid)
   | { t: "push.subscribe"; endpoint: string; p256dh: string; auth: string; rooms: string[] }
   | { t: "push.unsubscribe"; endpoint: string }
   | { t: "reaction"; streamId: string | null; emoji: string }

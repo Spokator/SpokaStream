@@ -4,7 +4,7 @@ import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { LIMITS } from "@shared/protocol.ts";
 import type { ChatMessage } from "@shared/protocol.ts";
-import { claimLink, deleteChat, inviteLink, pollClose, pollCreate, pollDismiss, QUALITIES, reactChat, saveProfile, setLatency, setPushToTalk, setQuality, shareInvite, togetherAdd } from "./client.ts";
+import { claimLink, deleteAccount, deleteChat, inviteLink, pollClose, pollCreate, pollDismiss, QUALITIES, reactChat, saveProfile, setLatency, setPushToTalk, setQuality, shareInvite, togetherAdd } from "./client.ts";
 import { set, useApp } from "./store.ts";
 
 const QUICK = ["👍", "❤️", "😂", "🔥", "😮", "😭", "🎉", "💀"];
@@ -154,6 +154,15 @@ function ProfileSheet() {
           <small>Le micro ne s'ouvre que pendant que tu appuies</small>
         </span>
       </label>
+      <button
+        type="button"
+        class="wide"
+        onClick={() => {
+          if (confirm("Supprimer ton compte ? Ton profil, tes messages et les salons que tu as créés seront effacés du serveur.")) void deleteAccount().catch(() => alert("Suppression impossible pour l'instant, réessaie."));
+        }}
+      >
+        <Trash2 size={16} /> Supprimer mon compte
+      </button>
     </Sheet>
   );
 }

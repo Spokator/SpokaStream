@@ -230,6 +230,7 @@ function AccountSection({ s }: { s: Settings }) {
   const admin = useApp(s => s.admin);
   const connection = useApp(s => s.connection);
   const [devices, setDevices] = useState<AccountDevice[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [code, setCode] = useState("");
   const refresh = () => void core.listDevices().then(setDevices, () => {});
   useEffect(() => {
@@ -283,6 +284,26 @@ function AccountSection({ s }: { s: Settings }) {
           Copier
         </Button>
       </Field>
+      {!admin && (
+        <>
+          <h2>Supprimer mon compte</h2>
+          <p className="muted-text">Efface du serveur ton profil, tes appareils, tes messages et les salons que tu as créés, pour tout le monde. Les sauvegardes du serveur s'en vident sous 7 jours. Tes clips et enregistrements restent sur ce PC.</p>
+          {confirmDelete ? (
+            <div className="row-gap">
+              <Button variant="danger" onClick={() => void core.deleteAccount().catch(() => (setConfirmDelete(false), toast("Suppression impossible pour l'instant, réessaie.", "warning")))}>
+                Oui, tout supprimer
+              </Button>
+              <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
+                Annuler
+              </Button>
+            </div>
+          ) : (
+            <Button variant="danger" icon={<Trash2 size={15} />} onClick={() => setConfirmDelete(true)}>
+              Supprimer mon compte
+            </Button>
+          )}
+        </>
+      )}
       {admin && (
         <>
           <h2>Administration</h2>

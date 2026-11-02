@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { WebSocketServer, type WebSocket } from "ws";
+import { Bucket, GUARD, Guard } from "./guard.ts";
 import { LIMITS } from "../src/shared/protocol.ts";
 import type { IceServer } from "../src/shared/protocol.ts";
 import { AdminPanel } from "./admin.ts";
@@ -288,7 +289,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     self: options.serviceName,
     source: () => ({ ...hub.stats, ...hub.telemetrySummary() }),
   });
-  const hub = new Hub({ store: options.store, serverName: options.serverName, push: options.push, accounts: options.accounts, admins: options.admins, config, metrics, usage, journal: new Journal(options.dataDir), iceServers: userId => iceServersFor(userId, options) });
+  const guard = new Guard();
+  const hub = new Hub({ guard, store: options.store, serverName: options.serverName, push: options.push, accounts: options.accounts, admins: options.admins, config, metrics, usage, journal: new Journal(options.dataDir), iceServers: userId => iceServersFor(userId, options) });
   const admin = new AdminPanel({ hub, store: options.store, metrics, usage, config, push: options.push, dataDir: options.dataDir, canRestart: options.canRestart, auth: options.adminAuth });
 
   const server = http.createServer((req, res) => {
@@ -366,21 +368,42 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   const wss = new WebSocketServer({ noServer: true, maxPayload: LIMITS.wsPayload });
   server.on("upgrade", (req, socket, head) => {
     if ((req.url ?? "").split("?")[0] !== "/ws") return socket.destroy();
+    const ip = clientIp(req, options);
+    if (!guard.admit(ip)) {
+      if (guard.shouldWarn("connexions")) hub.log("warning", "abus", `Connexion refusée : trop de connexions, dernier essai depuis ${ip}`);
+      socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+      return socket.destroy();
+    }
     wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws, req));
   });
 
   wss.on("connection", (ws: WebSocket & { alive?: boolean }, req) => {
+    const ip = clientIp(req, options);
     const conn = hub.connect({
-      ip: clientIp(req, options),
+      ip,
       send: data => {
         if (ws.readyState === ws.OPEN) ws.send(data);
       },
       close: (code, reason) => ws.close(code, reason),
     });
     ws.alive = true;
+    const now = Date.now();
+    const bytes = new Bucket(GUARD.bytesPerSecond, GUARD.bytesBurst, now);
+    const messages = new Bucket(GUARD.messagesPerSecond, GUARD.messagesBurst, now);
+    const silent = setTimeout(() => !conn.userId && ws.terminate(), GUARD.helloMs);
+    silent.unref();
     ws.on("pong", () => (ws.alive = true));
-    ws.on("message", raw => hub.handle(conn, raw.toString()));
-    ws.on("close", () => hub.disconnect(conn));
+    ws.on("message", (raw: Buffer) => {
+      const at = Date.now();
+      if (bytes.take(at, raw.length) && messages.take(at)) return hub.handle(conn, raw.toString());
+      if (guard.shouldWarn("débit")) hub.log("warning", "abus", `Connexion coupée : trop de messages depuis ${ip}`);
+      ws.terminate();
+    });
+    ws.on("close", () => {
+      clearTimeout(silent);
+      guard.release(ip);
+      hub.disconnect(conn);
+    });
     ws.on("error", () => ws.terminate());
   });
 

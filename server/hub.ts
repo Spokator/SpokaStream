@@ -1,4 +1,6 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
+import { Bucket, GUARD } from "./guard.ts";
+import type { Guard } from "./guard.ts";
 import {
   DEFAULT_CAMERA_LAYOUT,
   DEFAULT_ROOM_SETTINGS,
@@ -53,27 +55,6 @@ export interface Transport {
   ip: string;
 }
 
-/** Seau à jetons : rafales courtes permises, débit moyen plafonné. */
-class Bucket {
-  private tokens: number;
-  private last: number;
-  private readonly rate: number;
-  private readonly burst: number;
-  constructor(rate: number, burst: number, now: number) {
-    this.rate = rate;
-    this.burst = burst;
-    this.tokens = burst;
-    this.last = now;
-  }
-  take(now: number) {
-    this.tokens = Math.min(this.burst, this.tokens + ((now - this.last) / 1000) * this.rate);
-    this.last = now;
-    if (this.tokens < 1) return false;
-    this.tokens -= 1;
-    return true;
-  }
-}
-
 interface Conn {
   transport: Transport;
   /** L'appareil : c'est lui qui est dans un salon et que WebRTC adresse. */
@@ -126,6 +107,8 @@ export interface HubOptions {
   usage?: Usage;
   journal?: Journal;
   iceServers: (userId: string) => IceServer[];
+  /** Les plafonds par adresse. Sans elle, aucun : les essais du hub s'en passent. */
+  guard?: Guard;
   serverName?: string;
   graceMs?: number;
   now?: () => number;
@@ -254,6 +237,7 @@ export class Hub {
   private readonly joinFailures = new Map<string, Bucket>();
   private readonly store: Store;
   private readonly iceServers: (userId: string) => IceServer[];
+  private readonly guard?: Guard;
   private readonly serverName: string;
   private readonly graceMs: number;
   private readonly now: () => number;
@@ -288,6 +272,7 @@ export class Hub {
     this.reports.push(...(options.journal?.loadReports() ?? []));
     this.admins = new Set(options.admins ?? []);
     this.iceServers = options.iceServers;
+    this.guard = options.guard;
     this.serverName = options.serverName ?? "SpokaStream";
     this.graceMs = options.graceMs ?? GRACE_MS;
     this.now = options.now ?? Date.now;
@@ -849,6 +834,9 @@ export class Hub {
         return this.reply(conn, msg, true, undefined, this.accounts.devicesOf(conn.accountId!).map(({ id, label, client, version, addedAt, lastSeen }) => ({ id, label, client, version, addedAt, lastSeen, online: [...this.conns].some(c => c.userId === id), self: id === conn.userId, primary: id === conn.accountId })));
       case "account.revoke":
         return this.onAccountRevoke(conn, msg);
+      case "account.delete":
+        if (!conn.buckets.room.take(now)) return this.reply(conn, msg, false, "rate_limited");
+        return this.onAccountDelete(conn, msg);
       case "account.forget":
         if (isString(msg.id, 32)) this.accounts.forgetRoom(conn.accountId!, msg.id);
         return;
@@ -1007,7 +995,8 @@ export class Hub {
     if (!web && minVersion && device.version && olderThan(device.version, minVersion)) return this.reply(conn, msg, false, "version");
     const fresh = this.accounts.isNew(deviceId);
     // Serveur fermé, ou site réservé aux comptes connus : un inconnu n'est pas enregistré. Il peut seulement présenter un code de liaison, qui en fera un appareil connu.
-    const guest = fresh && (closed || (web && !webViewers));
+    // Trop de nouveaux comptes d'un coup : on le traite comme un inconnu sur un serveur fermé, rien n'est écrit sur le disque.
+    const guest = fresh && (closed || (web && !webViewers) || !this.admitsAccount(conn.transport.ip));
     const known = guest ? { accountId: deviceId, profile: cleanProfile(msg.profile) } : this.accounts.seen(deviceId, cleanProfile(msg.profile), device, this.now());
     if (this.accounts.isBanned(known.accountId, this.now())) return this.reply(conn, msg, false, "banned");
     conn.userId = deviceId;
@@ -1023,7 +1012,9 @@ export class Hub {
       this.usage?.count(web ? "webConnections" : "appConnections");
       if (fresh) this.usage?.count("newAccounts");
     }
-    this.send(conn, { t: "welcome", userId: deviceId, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers: this.iceServers(deviceId), serverName: this.serverName });
+    // Le relais coûte de la bande passante : un inconnu qui n'a pas de compte n'y a pas droit.
+    const iceServers = this.iceServers(deviceId).filter(server => !guest || !server.username);
+    this.send(conn, { t: "welcome", userId: deviceId, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers, serverName: this.serverName });
     this.send(conn, { t: "account.sync", profile: known.profile });
     this.sendRooms(conn);
     // Un PC en direct passe après un PC au repos : c'est lui que le téléphone doit garder sous les yeux.
@@ -1031,6 +1022,12 @@ export class Hub {
     if (this.maintenance) this.send(conn, { t: "announce", text: this.maintenance, level: "warning" });
     else if (motd) this.send(conn, { t: "announce", text: motd, level: "info" });
     this.reply(conn, msg, true);
+  }
+
+  private admitsAccount(ip: string) {
+    if (!this.guard || this.guard.allowAccount(ip, this.now())) return true;
+    if (this.guard.shouldWarn("comptes", this.now())) this.log("warning", "abus", `Trop de nouveaux comptes, dernier essai depuis ${ip}`);
+    return false;
   }
 
   /** Les salons appartiennent à la personne, pas à l'appareil : ceux dont elle est propriétaire, puis ceux qu'elle fréquente. */
@@ -1099,6 +1096,22 @@ export class Hub {
     this.reply(conn, msg, true);
   }
 
+  /** Le droit à l'effacement, sans passer par nous. Un compte administrateur se retire d'abord du panneau. */
+  private onAccountDelete(conn: Conn, msg: Extract<ClientMessage, { t: "account.delete" }>) {
+    const accountId = conn.accountId!;
+    if (conn.guest || this.isAdminAccount(accountId)) return this.reply(conn, msg, false, "forbidden");
+    const authors = new Set([accountId, conn.userId!, ...this.accounts.devicesOf(accountId).map(device => device.id)]);
+    for (const room of this.rooms.values()) {
+      if (room.data.ownerId === accountId) continue;
+      for (const message of room.data.history.filter(m => authors.has(m.authorId))) this.broadcast(room, { t: "chat.deleted", id: message.id });
+      room.data.history = room.data.history.filter(m => !authors.has(m.authorId));
+    }
+    this.persist();
+    this.reply(conn, msg, true);
+    this.adminDeleteAccount(accountId, true);
+    this.log("info", "compte", "Un compte a été supprimé par son propriétaire");
+  }
+
   private onRemoteState(conn: Conn, state: RemoteState | null) {
     conn.remote = state && JSON.stringify(state).length <= REMOTE_STATE_BYTES ? state : null;
     for (const sibling of this.siblings(conn)) this.send(sibling, { t: "remote.state", state: conn.remote });
@@ -1114,6 +1127,13 @@ export class Hub {
     const owned = [...this.rooms.values()].filter(r => r.data.ownerId === conn.accountId).length;
     if (owned >= Math.min(this.config.maxRooms, LIMITS.roomsPerUser)) return ack(false, "too_many_rooms");
     const now = this.now();
+    if (this.guard) {
+      if (this.rooms.size >= GUARD.rooms) return ack(false, "too_many_rooms");
+      if (!this.guard.allowRoom(conn.transport.ip, now)) {
+        if (this.guard.shouldWarn("salons", now)) this.log("warning", "abus", `Trop de salons créés depuis ${conn.transport.ip}`);
+        return ack(false, "rate_limited");
+      }
+    }
     const data: StoredRoom = {
       id: randomBytes(9).toString("base64url"),
       code: this.newCode(),

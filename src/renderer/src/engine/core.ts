@@ -744,6 +744,16 @@ class Core {
     this.applyVolumes(next);
   }
 
+  /** Efface le compte sur le serveur, puis repart comme une installation neuve. Un compte ne se recrée pas avec l'ancien jeton. */
+  async deleteAccount() {
+    await this.signal.request({ t: "account.delete" });
+    this.signal.stop();
+    this.leaveRoom();
+    set({ view: "home" });
+    const token = [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, "0")).join("");
+    await this.updateSettings({ token, onboarded: false, recentRooms: [], profile: { ...get().settings!.profile, name: "", avatar: null } });
+  }
+
   /** Montre l'overlay quelques secondes, sans avoir à lancer un stream. */
   async testOverlay() {
     if (get().publish) return toast("L'overlay est déjà affiché pendant ton stream.", "info");
