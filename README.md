@@ -52,9 +52,11 @@ Un navigateur sait capter un onglet ou tout le PC, jamais une application. Parta
 
 ## Installation
 
-Télécharge **`SpokaStream-Setup-x.y.z.exe`** depuis les [releases](https://github.com/Spokator/SpokaStream/releases/latest). Aucun droit administrateur ni .NET n'est nécessaire.
+Le plus simple : installe SpokaStream depuis le [Microsoft Store](https://apps.microsoft.com/detail/9PKH6GKMMQDN). Les mises à jour y arrivent un peu plus tard, le temps que Microsoft les relise.
 
-> Windows peut afficher « Windows a protégé votre ordinateur », car le logiciel n'est pas signé : *Informations complémentaires* → *Exécuter quand même*.
+Sinon, télécharge **`SpokaStream-Setup-x.y.z.exe`** depuis les [releases](https://github.com/Spokator/SpokaStream/releases/latest). Aucun droit administrateur ni .NET n'est nécessaire.
+
+> Avec cet installeur, Windows peut afficher « Windows a protégé votre ordinateur », car le logiciel n'est pas signé : *Informations complémentaires* → *Exécuter quand même*.
 
 ## Comment ça marche
 

@@ -1,6 +1,8 @@
 # Publier SpokaStream sur le Microsoft Store
 
-Tout ce qui ne demande pas ton identité est prêt. Le Store garde la version GitHub telle quelle : les deux peuvent exister côte à côte.
+SpokaStream est [en ligne sur le Store](https://apps.microsoft.com/detail/9PKH6GKMMQDN) depuis le 2 novembre 2026, avec la capture de jeu acceptée telle quelle. Pour publier une version, va directement à [Pour une nouvelle version](#pour-une-nouvelle-version). La suite garde les étapes de la première publication.
+
+Le Store garde la version GitHub telle quelle : les deux peuvent exister côte à côte.
 
 ## Ce que tu dois faire
 
