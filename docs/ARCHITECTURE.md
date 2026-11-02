@@ -104,6 +104,8 @@ Mesure réelle à la première diffusion, 2 s par codec :
 | H264 | NVIDIA H.264 (matériel) | ~5 ms |
 | VP9 | libvpx (processeur) | ~11 ms |
 
+**AV1 n'est plus choisi en automatique.** Sur la RTX 5070 de développement (pilote 610.88), des parcours e2e en AV1 matériel ont provoqué un évènement `nvlddmkm 153`, réinitialisation du pilote, environ 100 s après le départ, autour des étapes qui changent la taille d'affichage. L'application se bloque alors en attendant un autre processus (`AppHangXProcB1`) et le processus GPU ne redémarre pas seul. Sur 12 parcours en AV1 arrivés à cette étape les 1er et 2 novembre : 5 resets, dont 3 sur 3 pour les derniers, plus un 6e le 31 octobre. En H264 et H265, aucun sur les parcours suivants. Le déclencheur exact n'est pas prouvé, et ce pilote avait déjà eu 2 resets en juin, avant SpokaStream. **Regarder `nvlddmkm` dans le journal Système avant de classer un test bloqué en aléa.**
+
 Sans le drapeau `WebRtcAV1HWEncode`, AV1 tourne sur le processeur (`libaom`), pendant le jeu de la personne. Les noms de drapeaux viennent d'une recherche dans le binaire d'Electron : plusieurs noms connus sur internet n'existent plus.
 
 Le classement met d'abord ce qui tient la cadence, puis le matériel, puis l'efficacité. **On juge le coût par image, pas la cadence atteinte** : les encodeurs NVIDIA avaient été recalés à 50 i/s alors que c'était la scène de test qui plafonnait. Pour la même raison, le choix n'est plus « le plus rapide » comme dans la party : à débit égal, AV1 et H265 donnent une bien meilleure image que H264.

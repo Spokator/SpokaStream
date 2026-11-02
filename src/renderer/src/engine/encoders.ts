@@ -20,8 +20,11 @@ const CACHE_MS = 14 * 24 * 3600 * 1000;
 const BENCH_MS = 2400;
 const VIDEO_MIME = /^video\/(H264|H265|VP8|VP9|AV1)$/;
 
-/** À débit égal, de la meilleure image à la moins bonne. */
-const EFFICIENCY: Record<string, number> = { "video/AV1": 0, "video/H265": 1, "video/H264": 2, "video/VP9": 3, "video/VP8": 4 };
+/**
+ * À débit égal, de la meilleure image à la moins bonne. AV1 passerait devant, mais son encodage matériel a réinitialisé
+ * le pilote NVIDIA en plein direct (voir ARCHITECTURE) : en automatique il passe après, et il reste au choix de la personne.
+ */
+const EFFICIENCY: Record<string, number> = { "video/H265": 0, "video/H264": 1, "video/AV1": 2, "video/VP9": 3, "video/VP8": 4 };
 
 const cacheKey = (height: number, fps: number) => `bench:${CACHE_VERSION}:${height}p${fps}`;
 

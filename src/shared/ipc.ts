@@ -335,6 +335,8 @@ export interface SpokaApi {
   isPackaged: boolean;
   /** Installée depuis le Microsoft Store : c'est lui qui met à jour, et le lancement avec Windows n'existe pas sous cette forme. */
   store: boolean;
+  /** Un processus vient de tomber, la page a été rechargée : à remonter une fois. */
+  processCrash: string | null;
   selfPid: number;
   testMode: boolean;
   forceRelay: boolean;

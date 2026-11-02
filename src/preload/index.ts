@@ -8,7 +8,7 @@ function subscribe<A extends unknown[]>(channel: string, cb: (...args: A) => voi
   return () => void ipcRenderer.removeListener(channel, listener);
 }
 
-const info = ipcRenderer.sendSync("sync:info") as Pick<SpokaApi, "version" | "isPackaged" | "store" | "selfPid" | "testMode" | "noNative" | "forceRelay">;
+const info = ipcRenderer.sendSync("sync:info") as Pick<SpokaApi, "version" | "isPackaged" | "store" | "processCrash" | "selfPid" | "testMode" | "noNative" | "forceRelay">;
 
 // Un MessagePort ne passe pas par contextBridge : il rejoint la page par postMessage, seule voie prévue par Electron.
 ipcRenderer.on("audio:port", (event, message: { captureId: number }) => {

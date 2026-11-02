@@ -2,7 +2,7 @@
 //   npm run test:e2e
 import assert from "node:assert/strict";
 import { execFile, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -41,6 +41,11 @@ interface Peer {
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 async function launch(name: string, extraArgs: string[] = []): Promise<Peer> {
+  // E2E_SETTINGS : un réglage imposé à l'avance, par exemple un autre codec que celui choisi par le banc d'essai.
+  if (process.env.E2E_SETTINGS) {
+    mkdirSync(path.join(temp, name), { recursive: true });
+    writeFileSync(path.join(temp, name, "settings.json"), process.env.E2E_SETTINGS);
+  }
   const app = await electron.launch({
     executablePath: packaged ? packagedExe : electronPath,
     args: [...(packaged ? [] : [root]), ...extraArgs],
@@ -643,7 +648,8 @@ try {
     );
     await page.mouse.up();
     assert.ok(painted);
-    await page.getByRole("button", { name: /Pointeur laser/ }).click();
+    // Les commandes se cachent pendant que le doigt dessine : on sort par la barre du laser, comme une vraie personne.
+    await page.locator(".laser-bar").getByRole("button", { name: "Terminer" }).click();
 
     // Répondre à un message, et le salon côté personnes.
     await bob.page.getByRole("textbox", { name: "Message", exact: true }).fill("Tu me réponds ?");
@@ -1296,6 +1302,8 @@ try {
     // Toujours borné : une page qui ne répond plus ne doit pas laisser le test tourner sans fin.
     const report = await Promise.race([peer.page.evaluate(() => (window as any).__core.diagnostics()).catch(() => "indisponible"), wait(15_000).then(() => "pas de réponse")]);
     console.log(`Diagnostic ${peer.name} :\n${report}`);
+    const log = path.join(temp, peer.name, "spokastream.log");
+    if (existsSync(log)) console.log(`Journal ${peer.name} :\n${readFileSync(log, "utf8").slice(-1500)}`);
     if (peer.errors.length) console.log(`Erreurs ${peer.name} :\n  ${peer.errors.slice(0, 15).join("\n  ")}`);
   }
 } finally {

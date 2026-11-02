@@ -3,6 +3,8 @@
 ## 1.6.10
 
 - **Supprime ton compte toi-même**, dans Paramètres, Compte, ou sur le site dans ton profil. Ton profil, tes appareils, tes messages et les salons que tu as créés sont effacés du serveur.
+- **Moins de risque de gel en direct sur les cartes récentes.** L'encodage AV1 matériel provoquait une réinitialisation du pilote graphique sur une RTX 5070 : quelques secondes d'écran figé, et l'application pouvait rester bloquée. En automatique, SpokaStream choisit maintenant H265 ou H264. AV1 reste disponible dans les réglages.
+- **Les plantages sont mieux suivis** : si un processus de l'application tombe, sa cause remonte dans les rapports d'erreur, sauf si tu les as coupés.
 - **Le serveur se protège des abus** avant l'arrivée du Store. Une même adresse ne peut plus ouvrir des centaines de connexions, de comptes ou de salons. Une soirée entre amis ne verra pas la différence.
 
 ## 1.6.9

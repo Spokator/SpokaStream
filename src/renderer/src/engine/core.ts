@@ -208,6 +208,8 @@ class Core {
     this.signal.onReady = () => {
       this.lastRemote = "";
       this.onConnected();
+      if (this.pendingCrash) this.sendError(this.pendingCrash, "");
+      this.pendingCrash = null;
     };
     setInterval(() => this.pushRemote(), REMOTE_PUSH_MS);
     this.watchErrors();
@@ -545,6 +547,7 @@ class Core {
   }
 
   private sendError: (text: string, details: string) => void = () => {};
+  private pendingCrash: string | null = null;
 
   reportCrash(error: Error, stack: string) {
     this.sendError(error.message, `${error.stack ?? ""}\n${stack}`);
@@ -558,6 +561,7 @@ class Core {
       this.signal.send({ t: "report", kind: "error", text: `${api.version} : ${text}`.slice(0, 1000), details: details.slice(0, 8000) });
     };
     this.sendError = send;
+    if (api.processCrash) this.pendingCrash = api.processCrash;
     window.addEventListener("error", e => send(e.message, String((e.error as Error | undefined)?.stack ?? `${e.filename}:${e.lineno}`)));
     window.addEventListener("unhandledrejection", e => send(String((e.reason as Error | undefined)?.message ?? e.reason), String((e.reason as Error | undefined)?.stack ?? "")));
   }

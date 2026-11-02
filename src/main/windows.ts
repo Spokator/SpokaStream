@@ -13,6 +13,18 @@ const rendererUrl = process.env.ELECTRON_RENDERER_URL;
  */
 export const APP_ID = app.isPackaged && !process.env.SPOKASTREAM_USER_DATA ? "com.spokator.spokastream" : "com.spokator.spokastream.dev";
 
+/** Ce qui vient de tomber : la page rechargée le remonte dans les rapports, seule trace d'un plantage chez quelqu'un d'autre. */
+let processCrash: string | null = null;
+export const noteProcessCrash = (text: string) => {
+  console.error(text);
+  processCrash = text;
+};
+export function takeProcessCrash() {
+  const text = processCrash;
+  processCrash = null;
+  return text;
+}
+
 export function appIcon() {
   const file = app.isPackaged ? path.join(process.resourcesPath, "icon.png") : path.join(app.getAppPath(), "build", "icon.png");
   return nativeImage.createFromPath(file);
@@ -92,8 +104,9 @@ export function createMainWindow(startHidden: boolean, onCloseRequest: (e: Elect
 
   // Le processus de la page peut tomber, sur un pilote fragile par exemple : sans ça, il ne reste qu'une fenêtre vide.
   win.webContents.on("render-process-gone", (_event, details) => {
-    console.error(`page tombée : ${details.reason}`);
-    if (details.reason !== "clean-exit" && !win.isDestroyed()) load(win);
+    if (details.reason === "clean-exit" || win.isDestroyed()) return;
+    noteProcessCrash(`page tombée : ${details.reason}, code ${details.exitCode}`);
+    load(win);
   });
 
   load(win);

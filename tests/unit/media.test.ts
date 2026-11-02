@@ -48,7 +48,7 @@ const r = (mime: string, ok: boolean, hardware: boolean): BenchResult => ({ mime
 
 test("auto prend le codec le plus efficace qui tient la cadence, pas le plus rapide", () => {
   const order = preferredOrder([r("video/H264", true, true), r("video/H265", true, true), r("video/AV1", true, true)], "auto");
-  assert.equal(order[0], "video/AV1");
+  assert.equal(order[0], "video/H265", "AV1 matériel reste au choix de la personne : il a réinitialisé le pilote en plein direct");
 });
 
 test("un codec qui décroche passe derrière, comme AV1 en 4K60", () => {

@@ -13,7 +13,7 @@ import { AppTray } from "./tray.ts";
 import { Updater } from "./updater.ts";
 import { videoInfo, WebSource } from "./webSource.ts";
 import { WhipServer } from "./whip.ts";
-import { APP_ID, appIcon, createMainWindow, Overlay } from "./windows.ts";
+import { APP_ID, appIcon, createMainWindow, noteProcessCrash, Overlay, takeProcessCrash } from "./windows.ts";
 
 // Mesuré sur Electron 45 avec une RTX 5070 : sans WebRtcAV1HWEncode, AV1 reste sur le processeur (libaom) ; avec, il passe sur NVENC.
 // Ne pas ajouter ZeroCopyDesktopCapture seul : plus aucune image ne sort de la capture.
@@ -33,6 +33,10 @@ const testDataDir = process.env.SPOKASTREAM_USER_DATA;
 if (testDataDir) app.setPath("userData", testDataDir);
 // Dans le Store, l'identité vient du paquet.
 if (!process.windowsStore) app.setAppUserModelId(APP_ID);
+
+app.on("child-process-gone", (_event, details) => {
+  if (details.reason !== "clean-exit") noteProcessCrash(`processus ${details.type} tombé : ${details.reason}, code ${details.exitCode}`);
+});
 
 if (!testDataDir && !app.requestSingleInstanceLock()) {
   app.exit(0);
@@ -206,7 +210,7 @@ function diagnostics() {
 
 function wireIpc() {
   ipcMain.on("sync:info", e => {
-    e.returnValue = { version: app.getVersion(), isPackaged: app.isPackaged, store: !!process.windowsStore, selfPid: process.pid, testMode: !!testDataDir, noNative: !!testDataDir && process.env.SPOKASTREAM_NO_NATIVE === "1", forceRelay: !!testDataDir && process.env.SPOKASTREAM_FORCE_RELAY === "1" };
+    e.returnValue = { version: app.getVersion(), isPackaged: app.isPackaged, store: !!process.windowsStore, processCrash: takeProcessCrash(), selfPid: process.pid, testMode: !!testDataDir, noNative: !!testDataDir && process.env.SPOKASTREAM_NO_NATIVE === "1", forceRelay: !!testDataDir && process.env.SPOKASTREAM_FORCE_RELAY === "1" };
   });
   ipcMain.handle("settings:get", () => settings.current);
   ipcMain.handle("settings:set", (_e, patch: Partial<Settings>) => {
