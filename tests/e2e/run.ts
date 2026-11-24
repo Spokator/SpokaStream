@@ -556,6 +556,8 @@ try {
   });
 
   let phone: Page | undefined;
+  // Serveur sur invitation : le téléphone est un inconnu, et le lien du salon doit suffire à lui créer un compte.
+  server.hub.config.inviteOnly = true;
   await step("lecteur web : le lien d'invitation s'ouvre sur un téléphone, sans rien installer", async () => {
     edge = await chromium.launch({ channel: "msedge", headless: true, args: ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] });
     const context = await edge.newContext({ ...devices["Pixel 7"], permissions: ["microphone"] });
@@ -571,6 +573,7 @@ try {
     await alice.page.locator(".member", { hasText: "Téléphone" }).getByLabel("Dans un navigateur").waitFor();
     await alice.page.getByRole("tab", { name: /Chat/ }).click();
     assert.ok(seen <= 720, `un téléphone reçoit 720p au plus par défaut : ${seen}`);
+    assert.ok(server.hub.adminUsers().some(u => u.name === "Téléphone"), "sur invitation, le lien du salon a créé le compte du téléphone");
     await poll("son sur le téléphone", () => phone!.evaluate(() => (document.getElementById("video") as HTMLVideoElement).srcObject && !(document.getElementById("video") as HTMLVideoElement).paused), Boolean, 10_000);
     assert.equal(await phone.evaluate(() => (document.getElementById("video") as HTMLVideoElement).muted), false, "le son doit rester actif après le clic sur Regarder");
     assert.equal(await phone.locator(".tap-button").isVisible(), false);
@@ -596,6 +599,8 @@ try {
     assert.deepEqual(webErrors, []);
     return `image ${seen}p dans Edge en téléphone, chat, réaction et clip reçus`;
   });
+
+  server.hub.config.inviteOnly = false;
 
   await step("interface mobile : tous les formats, volets, qualité, laser, retour à l'accueil", async () => {
     const page = phone!;

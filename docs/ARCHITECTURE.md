@@ -236,6 +236,10 @@ Un PC allumé envoie aussi `remote.state` avec `idle` quand il ne diffuse pas : 
 
 La régie du téléphone (`web/deck.ts`, `web/Deck.tsx`) tient en quinze touches par page, comme un Stream Deck : 5×3 en paysage et 3×5 en portrait, donc tourner le téléphone ne change ni l'ordre ni le nombre de touches. `keyView` calcule ce que montre une touche à partir de l'état du PC, sans rien afficher : c'est ce qui se teste. Une touche qui attend le PC compare son apparence avant et après : si rien ne change dans les délais, elle le signale. La disposition reste sur le téléphone. La régie couvre le salon sans le démonter, pour que la vidéo et le vocal continuent dessous.
 
+**Sur invitation** (`inviteOnly`, réglable dans le panneau) : un nouvel appareil arrive en invité (`guest`, `invitable`), sans rien d'écrit sur le disque. Rejoindre un salon avec un code existant vaut invitation : `promote` crée le compte et renvoie un `welcome` sans reconnexion. Un ami arrive toujours par un lien ou un code, il ne voit donc aucune différence. Un inconnu venu du Store ne peut ni créer de salon ni diffuser. Les applications déjà installées reçoivent le code `closed`, qu'elles connaissent, et une annonce qui explique quoi faire. Ça ne protège pas d'un code de salon publié : son propriétaire peut toujours exclure ou bannir.
+
+Les rapports d'erreur passent par `scrubPaths` à l'arrivée : la pile d'une application installée contient `C:\Users\<session>`, souvent un vrai prénom.
+
 ## Panneau d'administration
 
 `server/admin.ts`, `server/adminAuth.ts` et `admin/` : une page servie par le serveur, sous `/admin`. On y entre avec un identifiant et un mot de passe, indépendants de tout compte d'appareil : le panneau doit rester accessible sans l'application, c'est même là qu'il sert le plus. Le mot de passe est gardé en empreinte scrypt dans `admin-auth.json`, le code à 6 chiffres suit la RFC 6238, et un code déjà utilisé ne ressert pas. Après 5 échecs, une adresse est bloquée 15 minutes.

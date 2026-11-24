@@ -561,6 +561,7 @@ export class AdminPanel {
     const whole = (key: string, min: number, max: number) => Math.max(min, Math.min(max, Math.round(Number(patch[key])) || 0));
     const next: Partial<typeof config.value> = {};
     if (typeof patch.closed === "boolean") next.closed = patch.closed;
+    if (typeof patch.inviteOnly === "boolean") next.inviteOnly = patch.inviteOnly;
     if (typeof patch.webViewers === "boolean") next.webViewers = patch.webViewers;
     if (typeof patch.watchParty === "boolean") next.watchParty = patch.watchParty;
     if (patch.roomCreation === "everyone" || patch.roomCreation === "admins") next.roomCreation = patch.roomCreation;

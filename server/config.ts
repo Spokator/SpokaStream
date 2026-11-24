@@ -20,6 +20,8 @@ export interface AlertRule {
 export interface ServerConfig {
   /** Serveur fermé : seuls les appareils déjà connus entrent dans un salon. */
   closed: boolean;
+  /** Sur invitation : un nouvel appareil devient un compte en rejoignant un salon avec son code. Sans code, il ne peut rien faire. */
+  inviteOnly: boolean;
   roomCreation: "everyone" | "admins";
   webViewers: boolean;
   watchParty: boolean;
@@ -43,7 +45,7 @@ export interface ServerConfig {
   publicHost: string;
 }
 
-export const DEFAULT_CONFIG: ServerConfig = { defaultLimits: null, closed: false, roomCreation: "everyone", webViewers: true, watchParty: true, maxMembers: 32, maxRooms: 50, motd: "", minVersion: "", slowSeconds: 0, words: [], blockedIps: [], discord: "", rules: {}, plan: null, publicHost: "" };
+export const DEFAULT_CONFIG: ServerConfig = { defaultLimits: null, closed: false, inviteOnly: false, roomCreation: "everyone", webViewers: true, watchParty: true, maxMembers: 32, maxRooms: 50, motd: "", minVersion: "", slowSeconds: 0, words: [], blockedIps: [], discord: "", rules: {}, plan: null, publicHost: "" };
 
 export class ConfigStore {
   value: ServerConfig = { ...DEFAULT_CONFIG };

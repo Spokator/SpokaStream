@@ -7,6 +7,7 @@ import {
   DEFAULT_VIEWER_QUALITY,
   LIMITS,
   PROTOCOL_VERSION,
+  scrubPaths,
   videoUrl,
   youtubeId,
 } from "../src/shared/protocol.ts";
@@ -75,6 +76,8 @@ interface Conn {
   subscriptions: Set<string>;
   /** Serveur fermé : cet appareil inconnu peut se rattacher à un compte, mais pas entrer dans un salon. */
   guest: boolean;
+  /** Invité d'un serveur sur invitation : le code d'un salon en fera un compte. */
+  invitable: boolean;
   lastChat: number;
   telemetry: { at: number; publish: PublishTelemetry | null; watch: WatchTelemetry[] } | null;
   /** Les dernières limites envoyées, pour remarquer celles qui expirent. */
@@ -283,7 +286,8 @@ export class Hub {
     this.bandwidth = options.bandwidth;
     this.journal = options.journal;
     this.logs.push(...(options.journal?.load() ?? []));
-    this.reports.push(...(options.journal?.loadReports() ?? []));
+    // Les rapports reçus avant le nettoyage des chemins le sont au démarrage.
+    this.reports.push(...(options.journal?.loadReports() ?? []).map(report => ({ ...report, text: scrubPaths(report.text), details: scrubPaths(report.details) })));
     this.admins = new Set(options.admins ?? []);
     this.iceServers = options.iceServers;
     this.guard = options.guard;
@@ -784,6 +788,7 @@ export class Hub {
       room: null,
       subscriptions: new Set(),
       guest: false,
+      invitable: false,
       lastChat: 0,
       telemetry: null,
       limits: "null",
@@ -910,7 +915,7 @@ export class Hub {
         return;
       case "report":
         if (!conn.buckets.room.take(now) || !isString(msg.text, 4000)) return;
-        this.reports.unshift({ id: randomBytes(6).toString("hex"), at: now, kind: msg.kind === "feedback" ? "feedback" : "error", name: conn.profile?.name ?? "?", accountId: conn.accountId!, client: conn.web ? "web" : "app", text: msg.text, details: isString(msg.details, MAX_REPORT_DETAILS) ? msg.details : "" });
+        this.reports.unshift({ id: randomBytes(6).toString("hex"), at: now, kind: msg.kind === "feedback" ? "feedback" : "error", name: conn.profile?.name ?? "?", accountId: conn.accountId!, client: conn.web ? "web" : "app", text: scrubPaths(msg.text), details: isString(msg.details, MAX_REPORT_DETAILS) ? scrubPaths(msg.details) : "" });
         this.reports.length = Math.min(this.reports.length, MAX_REPORTS);
         this.journal?.saveReports(this.reports);
         return;
@@ -1054,7 +1059,9 @@ export class Hub {
     const fresh = this.accounts.isNew(deviceId);
     // Serveur fermé, ou site réservé aux comptes connus : un inconnu n'est pas enregistré. Il peut seulement présenter un code de liaison, qui en fera un appareil connu.
     // Trop de nouveaux comptes d'un coup : on le traite comme un inconnu sur un serveur fermé, rien n'est écrit sur le disque.
-    const guest = fresh && (closed || (web && !webViewers) || !this.admitsAccount(conn.transport.ip));
+    // Sur invitation, rien n'est écrit avant qu'il rejoigne un salon : le code d'un ami vaut invitation.
+    const invitable = fresh && !closed && !(web && !webViewers) && this.config.inviteOnly;
+    const guest = fresh && (closed || (web && !webViewers) || invitable || !this.admitsAccount(conn.transport.ip));
     const known = guest ? { accountId: deviceId, profile: cleanProfile(msg.profile) } : this.accounts.seen(deviceId, cleanProfile(msg.profile), device, this.now());
     if (this.accounts.isBanned(known.accountId, this.now())) return this.reply(conn, msg, false, "banned");
     conn.userId = deviceId;
@@ -1063,13 +1070,8 @@ export class Hub {
     conn.profile = known.profile;
     conn.web = web;
     conn.guest = guest;
-    if (!guest) {
-      this.accounts.noteIp(known.accountId, conn.transport.ip, this.now());
-      this.usage?.seen(known.accountId);
-      this.usage?.connections(this.conns.size);
-      this.usage?.count(web ? "webConnections" : "appConnections");
-      if (fresh) this.usage?.count("newAccounts");
-    }
+    conn.invitable = invitable;
+    if (!guest) this.arrived(conn, fresh);
     // Le relais coûte de la bande passante : un inconnu qui n'a pas de compte n'y a pas droit.
     this.send(conn, { t: "welcome", userId: deviceId, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers: this.iceFor(conn), serverName: this.serverName });
     this.send(conn, { t: "account.sync", profile: known.profile });
@@ -1079,7 +1081,32 @@ export class Hub {
     for (const sibling of this.siblings(conn).filter(s => s.remote).sort((a, b) => Number(!!b.remote!.idle) - Number(!!a.remote!.idle))) this.send(conn, { t: "remote.state", state: sibling.remote });
     if (this.maintenance) this.send(conn, { t: "announce", text: this.maintenance, level: "warning" });
     else if (motd) this.send(conn, { t: "announce", text: motd, level: "info" });
+    // Les applications déjà installées savent afficher une annonce : c'est elle qui explique quoi faire.
+    if (invitable && !web) this.send(conn, { t: "announce", text: "Ce serveur est sur invitation : rejoins le salon d'un ami avec son code ou son lien, et ton compte sera créé.", level: "info" });
     this.reply(conn, msg, true);
+  }
+
+  private arrived(conn: Conn, fresh: boolean) {
+    this.accounts.noteIp(conn.accountId!, conn.transport.ip, this.now());
+    this.usage?.seen(conn.accountId!);
+    this.usage?.connections(this.conns.size);
+    this.usage?.count(conn.web ? "webConnections" : "appConnections");
+    if (fresh) this.usage?.count("newAccounts");
+  }
+
+  /** L'invité devient un compte, sans se reconnecter : un nouveau welcome lui donne son identité et le relais. */
+  private promote(conn: Conn) {
+    if (!this.admitsAccount(conn.transport.ip)) return false;
+    const known = this.accounts.seen(conn.userId!, conn.profile!, conn.device, this.now());
+    conn.accountId = known.accountId;
+    conn.profile = known.profile;
+    conn.guest = false;
+    conn.invitable = false;
+    this.arrived(conn, true);
+    this.send(conn, { t: "welcome", userId: conn.userId!, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers: this.iceFor(conn), serverName: this.serverName });
+    this.send(conn, { t: "account.sync", profile: known.profile });
+    this.sendLimits(conn);
+    return true;
   }
 
   /** Celles du compte passent devant celles du serveur. Un administrateur n'en a aucune. null : rien à appliquer. */
@@ -1207,6 +1234,7 @@ export class Hub {
     this.persist();
     conn.accountId = accountId;
     conn.guest = false;
+    conn.invitable = false;
     this.log("info", "compte", `Appareil rattaché à ${conn.profile?.name ?? "?"}`);
     this.leaveRoom(conn);
     const known = this.accounts.seen(conn.userId!, conn.profile!, conn.device, this.now());
@@ -1293,13 +1321,14 @@ export class Hub {
     const code = clean(msg.code, 16).toUpperCase().replace(/[^A-Z0-9]/g, "");
     const id = isString(msg.id, 32) ? msg.id : "";
     const room = this.rooms.get(id || this.byCode.get(code) || "");
-    if (conn.guest) return this.reply(conn, msg, false, "closed");
+    if (conn.guest && !conn.invitable) return this.reply(conn, msg, false, "closed");
     if (!room) {
       // Un code fait 8 caractères : on empêche surtout d'en essayer à la chaîne depuis une même adresse.
       const bucket = this.joinFailures.get(conn.transport.ip) ?? new Bucket(0.2, 12, this.now());
       this.joinFailures.set(conn.transport.ip, bucket);
       return this.reply(conn, msg, false, bucket.take(this.now()) ? "room_not_found" : "rate_limited");
     }
+    if (conn.guest && !this.promote(conn)) return this.reply(conn, msg, false, "rate_limited");
     const userId = conn.userId!;
     if (room.data.bans.includes(conn.accountId!)) return this.reply(conn, msg, false, "banned");
     const already = room.members.has(userId);

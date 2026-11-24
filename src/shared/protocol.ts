@@ -4,6 +4,8 @@
 // Version 2 : la bulle caméra ajoute un second flux vidéo, qu'une application 1.0 prendrait pour l'image du stream.
 // La 1.2 reste en version 2 : ses clips et sa prise en main sont des ajouts qu'une 1.1 ignore sans rien casser.
 export const PROTOCOL_VERSION = 2;
+/** Un chemin Windows porte le nom de la session, souvent un vrai prénom : il ne doit pas finir dans un rapport d'erreur. */
+export const scrubPaths = (text: string) => text.replace(/([A-Za-z]:[\\/]+Users[\\/]+)[^\\/\s"'|:<>]+/gi, "$1…");
 /** Signée par Microsoft : contrairement à l'installeur GitHub, elle ne déclenche pas l'alerte de Windows. */
 export const STORE_URL = "https://apps.microsoft.com/detail/9PKH6GKMMQDN";
 

@@ -9,6 +9,7 @@ import type { Overview } from "./monitor.tsx";
 interface ConfigData {
   defaultLimits: AccountLimits | null;
   closed: boolean;
+  inviteOnly: boolean;
   roomCreation: "everyone" | "admins";
   webViewers: boolean;
   watchParty: boolean;
@@ -76,6 +77,7 @@ export function SettingsPage() {
           <DoorClosed size={16} /> Accès
         </h2>
         <Switch label="Serveur fermé" hint="Les appareils déjà connus entrent normalement. Un inconnu ne peut que se lier à un compte existant avec un code." checked={data.closed} onChange={closed => save({ closed })} />
+        <Switch label="Sur invitation" hint="Un nouvel appareil devient un compte en rejoignant un salon avec le code d'un ami. Sans code, il ne peut ni créer de salon ni diffuser. Les comptes existants ne voient aucune différence." checked={data.inviteOnly} onChange={inviteOnly => save({ inviteOnly })} />
         <Switch label="Spectateurs sur le site" hint="Décoché : un nouvel appareil ne peut plus entrer depuis un navigateur sans être lié." checked={data.webViewers} onChange={webViewers => save({ webViewers })} />
         <Switch label="Watch Party" hint="Décoché : plus personne ne peut en lancer. Celles en cours continuent." checked={data.watchParty} onChange={watchParty => save({ watchParty })} />
         <div class="tool-row">
