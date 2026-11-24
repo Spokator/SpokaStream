@@ -7,6 +7,7 @@ import { LimitsForm } from "./limits.tsx";
 import type { Overview } from "./monitor.tsx";
 
 interface ConfigData {
+  liveAnnounce: boolean;
   defaultLimits: AccountLimits | null;
   closed: boolean;
   inviteOnly: boolean;
@@ -99,6 +100,7 @@ export function SettingsPage() {
         </div>
         <Saved label="Message affiché à chaque connexion" value={data.motd} placeholder="Aucun" onSave={motd => save({ motd })} />
       </section>
+      <LiveWebhook on={data.liveAnnounce} refresh={refresh} />
       <section class="card">
         <h2>
           <SlidersHorizontal size={16} /> Limites de tous les comptes
@@ -254,5 +256,38 @@ export function BackupsPage() {
         </article>
       ))}
     </div>
+  );
+}
+
+/** Le salon Discord où les directs sont annoncés : c'est là que les amis apprennent qu'un direct commence, appli fermée ou pas. */
+function LiveWebhook({ on, refresh }: { on: boolean; refresh: () => void }) {
+  const { note, problem, run } = useAction(refresh);
+  const [url, setUrl] = useState("");
+  return (
+    <section class="card">
+      <h2>
+        <Megaphone size={16} /> Annoncer les directs sur Discord
+      </h2>
+      <p class="muted">
+        {on ? "Branché : chaque direct qui dure plus de 30 secondes y est annoncé avec le lien pour regarder, et le message devient « a diffusé » à la fin." : "Colle l'adresse d'un webhook du salon Discord de tes amis : Modifier le salon, Intégrations, Webhooks."} Un salon verrouillé n'est jamais annoncé, et chacun peut décocher l'annonce en lançant son direct.
+      </p>
+      <Note note={note} problem={problem} />
+      <div class="tool-row">
+        <input value={url} placeholder="https://discord.com/api/webhooks/…" aria-label="Adresse du webhook des annonces" onInput={e => setUrl(e.currentTarget.value)} />
+        <button type="button" disabled={!url.trim()} onClick={() => (run("setLiveWebhook", { url: url.trim() }, "Annonces branchées."), setUrl(""))}>
+          Enregistrer
+        </button>
+        {on && (
+          <>
+            <button type="button" onClick={() => run("testLiveWebhook", {}, "Essai envoyé.")}>
+              Envoyer un essai
+            </button>
+            <button type="button" onClick={() => run("setLiveWebhook", { url: "" }, "Annonces débranchées.")}>
+              Débrancher
+            </button>
+          </>
+        )}
+      </div>
+    </section>
   );
 }

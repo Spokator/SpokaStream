@@ -2,7 +2,7 @@
  * La politique de confidentialité, servie sur /confidentialite. Le Microsoft Store en exige une (règle 10.5.1).
  * Chaque chiffre vient du code : si IPS_KEPT, LIMITS.history, ROOM_MAX_IDLE_MS, KEPT, AUTO_KEPT, POINTS_KEPT_HOURS ou DAYS_KEPT change, cette page change aussi.
  */
-export const PRIVACY_UPDATED = "2 novembre 2026";
+export const PRIVACY_UPDATED = "24 novembre 2026";
 
 const SECTIONS: [string, string][] = [
   [
@@ -43,6 +43,7 @@ const SECTIONS: [string, string][] = [
     `<ul>
 <li><b>YouTube</b>, si tu lances une vidéo YouTube dans une Watch Party : c'est le lecteur de YouTube qui la diffuse, selon les règles de Google.</li>
 <li><b>Les sites que tu diffuses ou regardes</b> dans une page web ou une Watch Party.</li>
+<li><b>Discord</b>, si l'administrateur du serveur y a relié un salon : le début de ton direct y est annoncé avec ton pseudo, le nom du salon, le titre et le lien pour regarder. Tu peux décocher « Prévenir sur Discord » en lançant ton direct, et un salon verrouillé n'est jamais annoncé.</li>
 <li><b>Le service de notifications de ton navigateur</b>, si tu actives les notifications.</li>
 <li><b>GitHub</b>, qui héberge les mises à jour de la version téléchargée, ou le <b>Microsoft Store</b> si tu l'as installée depuis le Store.</li>
 </ul>`,

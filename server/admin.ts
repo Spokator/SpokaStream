@@ -114,6 +114,8 @@ const ACTION_RANK: Record<string, number> = {
   restartIdle: ROLE_RANK.owner,
   setDiscord: ROLE_RANK.owner,
   testDiscord: ROLE_RANK.owner,
+  setLiveWebhook: ROLE_RANK.admin,
+  testLiveWebhook: ROLE_RANK.admin,
   backupCreate: ROLE_RANK.owner,
   backupRestore: ROLE_RANK.owner,
   backupDelete: ROLE_RANK.owner,
@@ -710,6 +712,19 @@ export class AdminPanel {
         audit(url ? "branche les alertes sur Discord" : "débranche les alertes de Discord");
         return true;
       }
+      case "setLiveWebhook": {
+        const url = text("url", 300);
+        if (url && !validWebhook(url)) return false;
+        config.update({ liveWebhook: url });
+        audit(url ? "branche les annonces de direct sur Discord" : "débranche les annonces de direct");
+        return true;
+      }
+      case "testLiveWebhook": {
+        const url = config.value.liveWebhook;
+        if (!validWebhook(url)) return false;
+        const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "SpokaStream", content: "SpokaStream : les directs seront annoncés ici.", allowed_mentions: { parse: [] } }), signal: AbortSignal.timeout(10_000) }).catch(() => null);
+        return !!response?.ok;
+      }
       case "testDiscord":
         return this.notify(`SpokaStream : essai envoyé par ${session.name} depuis le panneau.`);
       case "restartIdle":
@@ -869,8 +884,8 @@ export class AdminPanel {
       if (name === "moderation") return json(res, 200, { sanctions: hub.adminSanctions(), blockedIps: config.value.blockedIps.filter(row => !row.until || row.until > Date.now()), words: config.value.words, slowSeconds: config.value.slowSeconds, connections: hub.adminConnections() });
       if (name === "config") {
         if (rank < ROLE_RANK.admin) return json(res, 403, { error: "Ton rôle ne permet pas de voir ça." });
-        const { discord: _discord, blockedIps: _blocked, rules: _rules, words: _words, ...visible } = config.value;
-        return json(res, 200, { ...visible, maintenance: hub.maintenance });
+        const { discord: _discord, liveWebhook, blockedIps: _blocked, rules: _rules, words: _words, ...visible } = config.value;
+        return json(res, 200, { ...visible, liveAnnounce: validWebhook(liveWebhook), maintenance: hub.maintenance });
       }
       if (name === "rooms") return json(res, 200, hub.adminRooms());
       if (name === "users") return json(res, 200, hub.adminUsers());

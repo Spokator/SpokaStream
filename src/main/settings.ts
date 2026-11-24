@@ -47,6 +47,7 @@ function defaults(): Settings {
       allowControl: true,
       autoRecord: false,
       gameCapture: false,
+      announce: true,
       screens: DEFAULT_SCREENS,
     },
     hotkeys: DEFAULT_HOTKEYS,

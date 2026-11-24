@@ -201,6 +201,9 @@ export function GoLiveModal() {
   const [selected, setSelected] = useState<VideoSource | null>(null);
   const gameCapture = useApp(s => s.settings!.stream.gameCapture);
   const limits = useApp(s => s.accountLimits);
+  const liveAnnounce = useApp(s => s.liveAnnounce);
+  const announce = useApp(s => s.settings!.stream.announce !== false);
+  const locked = useApp(s => !!s.room?.settings.locked);
   const [audio, setAudio] = useState<AudioChoice[]>([]);
   const [audioTouched, setAudioTouched] = useState(false);
   const [title, setTitle] = useState("");
@@ -394,6 +397,11 @@ export function GoLiveModal() {
               <span className="label">Titre (facultatif)</span>
               <input className="input" value={title} maxLength={80} placeholder="Ce que tu vas montrer" onChange={e => setTitle(e.target.value)} />
             </label>
+          )}
+          {!switching && liveAnnounce && !locked && (
+            <Field label="Prévenir sur Discord" hint="Ton direct est annoncé dans le salon Discord du serveur, avec le lien pour regarder. Le message devient « a diffusé » à la fin.">
+              <Toggle label="Prévenir sur Discord" checked={announce} onChange={value => void core.updateSettings({ stream: { ...get().settings!.stream, announce: value } })} />
+            </Field>
           )}
 
           <div className="stack">

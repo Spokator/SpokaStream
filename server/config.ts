@@ -38,6 +38,8 @@ export interface ServerConfig {
   words: string[];
   blockedIps: BlockedIp[];
   discord: string;
+  /** Webhook du salon Discord où les directs sont annoncés. Distinct de celui des alertes, qui sont réservées aux administrateurs. */
+  liveWebhook: string;
   rules: Record<string, AlertRule>;
   /** Maintenance prévue : prévenue à l'avance, puis appliquée toute seule. */
   plan: { at: number; text: string; restart: boolean } | null;
@@ -45,7 +47,7 @@ export interface ServerConfig {
   publicHost: string;
 }
 
-export const DEFAULT_CONFIG: ServerConfig = { defaultLimits: null, closed: false, inviteOnly: false, roomCreation: "everyone", webViewers: true, watchParty: true, maxMembers: 32, maxRooms: 50, motd: "", minVersion: "", slowSeconds: 0, words: [], blockedIps: [], discord: "", rules: {}, plan: null, publicHost: "" };
+export const DEFAULT_CONFIG: ServerConfig = { liveWebhook: "", defaultLimits: null, closed: false, inviteOnly: false, roomCreation: "everyone", webViewers: true, watchParty: true, maxMembers: 32, maxRooms: 50, motd: "", minVersion: "", slowSeconds: 0, words: [], blockedIps: [], discord: "", rules: {}, plan: null, publicHost: "" };
 
 export class ConfigStore {
   value: ServerConfig = { ...DEFAULT_CONFIG };

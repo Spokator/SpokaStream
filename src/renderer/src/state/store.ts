@@ -113,6 +113,7 @@ interface AppState {
   iceServers: IceServer[];
   accountLimits: AccountLimits | null;
   serverName: string;
+  liveAnnounce: boolean;
   view: View;
   panelTab: PanelTab;
   room: RoomState | null;
@@ -170,6 +171,7 @@ export const useApp = create<AppState>(() => ({
   iceServers: [],
   accountLimits: null,
   serverName: "",
+  liveAnnounce: false,
   view: "home",
   panelTab: "chat",
   room: null,

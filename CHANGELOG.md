@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.6.12
+
+- **Tes amis savent quand tu es en direct.** Si l'administrateur a relié un salon Discord, ton direct y est annoncé avec le lien pour regarder dans le navigateur, sans rien installer. À la fin, le message devient « a diffusé ». Tu peux décocher « Prévenir sur Discord » en lançant ton direct, et un salon verrouillé n'est jamais annoncé.
+- **Les rapports d'erreur ne contiennent plus ton nom de session Windows**, souvent ton prénom, qui apparaissait dans le chemin de l'application.
+
 ## 1.6.11
 
 - **Le panneau d'administration peut limiter un compte** : débit total envoyé, définition, cadence et nombre de spectateurs, ainsi que le droit de diffuser, de créer des salons, de passer par le relais et de lancer une Watch Party. La limite peut durer quelques heures ou rester sans fin. Elle s'applique en direct, sans couper le stream.

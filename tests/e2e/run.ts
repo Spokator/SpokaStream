@@ -27,6 +27,17 @@ const STEP_LIMIT_MS = 240_000;
 
 const store = new MemoryStore();
 let server = await startServer({ port: 0, host: "127.0.0.1", store });
+// Les annonces Discord partent vraiment du serveur, qui tourne dans ce processus : on les intercepte ici, rien ne sort.
+const discordCalls: { method: string; url: string; body: string }[] = [];
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const url = String(input instanceof Request ? input.url : input);
+  if (!url.startsWith("https://discord.com/api/webhooks/")) return realFetch(input, init);
+  discordCalls.push({ method: init?.method ?? "GET", url, body: String(init?.body ?? "") });
+  return new Response(JSON.stringify({ id: "e2e" }), { status: 200 });
+}) as typeof fetch;
+server.hub.config.liveWebhook = "https://discord.com/api/webhooks/1/e2e";
+server.hub.config.publicHost = "stream.e2e";
 const serverPort = server.port;
 const serverUrl = `ws://127.0.0.1:${serverPort}/ws`;
 
@@ -174,6 +185,8 @@ try {
     const card = alice.page.locator(".source-card", { hasText: "Mire SpokaStream" });
     await card.waitFor({ timeout: 15_000 });
     await card.click();
+    await alice.page.getByRole("switch", { name: "Prévenir sur Discord" }).waitFor();
+    await alice.page.locator(".modal").getByText("Prévenir sur Discord", { exact: true }).waitFor();
     await alice.page.locator(".audio-chip").first().waitFor();
     const chip = (await alice.page.locator(".audio-chip").first().textContent())!.trim();
     assert.ok(!/Tout le PC/.test(chip), `son attendu sur l'application, reçu : ${chip}`);
@@ -397,6 +410,8 @@ try {
   });
 
   await step("le débit change en direct, sans couper", async () => {
+    await poll("annonce sur Discord", () => Promise.resolve(discordCalls.filter(call => call.method === "POST").length), n => n === 1, 40_000);
+    assert.ok(discordCalls[0]!.body.includes(`stream.e2e/j/${code}`), `l'annonce porte le lien du salon : ${discordCalls[0]!.body}`);
     await openPanel(alice, "quality");
     await alice.page.getByLabel("Débit", { exact: true }).selectOption({ label: "30 Mb/s" });
     await wait(2000);

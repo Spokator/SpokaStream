@@ -43,6 +43,7 @@ import type { Journal } from "./journal.ts";
 import type { Metrics } from "./metrics.ts";
 import type { PushService } from "./push.ts";
 import type { Store, StoredRoom } from "./store.ts";
+import type { LiveAnnouncer } from "./announce.ts";
 import type { Bandwidth } from "./bandwidth.ts";
 import type { Usage } from "./usage.ts";
 
@@ -118,6 +119,7 @@ export interface HubOptions {
   metrics?: Metrics;
   usage?: Usage;
   bandwidth?: Bandwidth;
+  announcer?: LiveAnnouncer;
   journal?: Journal;
   iceServers: (userId: string) => IceServer[];
   /** Les plafonds par adresse. Sans elle, aucun : les essais du hub s'en passent. */
@@ -272,6 +274,7 @@ export class Hub {
   private readonly metrics?: Metrics;
   private readonly usage?: Usage;
   private readonly bandwidth?: Bandwidth;
+  private readonly announcer?: LiveAnnouncer;
   private readonly journal?: Journal;
   /** Pendant un direct : de quoi écrire son résumé quand il s'arrête. */
   private readonly lives = new Map<string, { peakViewers: number; kbpsSum: number; kbpsCount: number; relaySeen: number; viewersSeen: number; lossSum: number; lossCount: number }>();
@@ -284,6 +287,7 @@ export class Hub {
     this.metrics = options.metrics;
     this.usage = options.usage;
     this.bandwidth = options.bandwidth;
+    this.announcer = options.announcer;
     this.journal = options.journal;
     this.logs.push(...(options.journal?.load() ?? []));
     // Les rapports reçus avant le nettoyage des chemins le sont au démarrage, et le fichier est réécrit : sinon les noms y resteraient.
@@ -998,7 +1002,7 @@ export class Hub {
         return this.broadcast(room, { t: "draw.clear", streamId: stream.id });
       }
       case "stream.start":
-        return this.onStreamStart(conn, msg.id, msg.stream, msg.rid);
+        return this.onStreamStart(conn, msg.id, msg.stream, msg.rid, msg.discord === true);
       case "stream.update":
         return this.onStreamUpdate(conn, msg.patch);
       case "stream.stop":
@@ -1075,7 +1079,7 @@ export class Hub {
     conn.invitable = invitable;
     if (!guest) this.arrived(conn, fresh);
     // Le relais coûte de la bande passante : un inconnu qui n'a pas de compte n'y a pas droit.
-    this.send(conn, { t: "welcome", userId: deviceId, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers: this.iceFor(conn), serverName: this.serverName });
+    this.send(conn, { t: "welcome", userId: deviceId, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers: this.iceFor(conn), serverName: this.serverName, liveAnnounce: this.announcer?.enabled() ?? false });
     this.send(conn, { t: "account.sync", profile: known.profile });
     this.sendLimits(conn);
     this.sendRooms(conn);
@@ -1105,7 +1109,7 @@ export class Hub {
     conn.guest = false;
     conn.invitable = false;
     this.arrived(conn, true);
-    this.send(conn, { t: "welcome", userId: conn.userId!, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers: this.iceFor(conn), serverName: this.serverName });
+    this.send(conn, { t: "welcome", userId: conn.userId!, accountId: known.accountId, admin: this.isAdmin(known.accountId), iceServers: this.iceFor(conn), serverName: this.serverName, liveAnnounce: this.announcer?.enabled() ?? false });
     this.send(conn, { t: "account.sync", profile: known.profile });
     this.sendLimits(conn);
     return true;
@@ -1241,7 +1245,7 @@ export class Hub {
     this.leaveRoom(conn);
     const known = this.accounts.seen(conn.userId!, conn.profile!, conn.device, this.now());
     conn.profile = known.profile;
-    this.send(conn, { t: "welcome", userId: conn.userId!, accountId, admin: this.isAdmin(accountId), iceServers: this.iceFor(conn), serverName: this.serverName });
+    this.send(conn, { t: "welcome", userId: conn.userId!, accountId, admin: this.isAdmin(accountId), iceServers: this.iceFor(conn), serverName: this.serverName, liveAnnounce: this.announcer?.enabled() ?? false });
     this.send(conn, { t: "account.sync", profile: known.profile });
     this.sendLimits(conn);
     this.sendRooms(conn);
@@ -1658,7 +1662,7 @@ export class Hub {
     this.persist();
   }
 
-  private onStreamStart(conn: Conn, id: string, announce: StreamAnnounce, rid?: number) {
+  private onStreamStart(conn: Conn, id: string, announce: StreamAnnounce, rid?: number, discord = false) {
     const room = conn.room;
     const ack = (ok: boolean, error?: ErrorCode, data?: unknown) => rid !== undefined && this.send(conn, { t: "ack", rid, ok, error, data });
     if (!room || !isString(id, 64) || !id) return ack(false, "bad_request");
@@ -1687,6 +1691,11 @@ export class Hub {
     ack(true, undefined, { viewers: [], startedAt: stream.startedAt });
     this.log("info", "stream", `${conn.profile!.name} lance un stream dans « ${room.data.name} »`);
     this.notifyPhones(room, `live:${conn.accountId!}`, userId, `${conn.profile!.name} est en direct`, stream.title ? `${stream.title} · ${room.data.name}` : room.data.name);
+    // Seule l'appli qui lance un direct demande l'annonce : un stream renvoyé après une coupure du serveur ne la demande pas. Un salon verrouillé reste privé.
+    const { publicHost } = this.config;
+    if (discord && !room.data.settings.locked && publicHost) {
+      this.announcer?.start(id, `${conn.accountId}:${room.data.id}`, { name: conn.profile!.name, room: room.data.name, title: stream.title, link: `https://${publicHost}/j/${room.data.code}` });
+    }
   }
 
   private notifyPhones(room: Room, event: string, author: string, title: string, body: string) {
@@ -1712,6 +1721,7 @@ export class Hub {
       if (stream.ownerId !== userId) continue;
       room.streams.delete(stream.id);
       room.qualities.delete(stream.id);
+      this.announcer?.end(stream.id);
       this.writeSession(room, stream);
       this.broadcast(room, { t: "stream.remove", id: stream.id });
       this.touchStatus(room);

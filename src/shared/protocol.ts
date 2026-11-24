@@ -369,7 +369,7 @@ export type ClientMessage =
   | { t: "reaction"; streamId: string | null; emoji: string }
   | { t: "draw"; streamId: string; stroke: Stroke }
   | { t: "draw.clear"; streamId: string }
-  | ({ t: "stream.start"; id: string; stream: StreamAnnounce } & Rid)
+  | ({ t: "stream.start"; id: string; stream: StreamAnnounce; /** Annoncer ce direct dans le salon Discord du serveur. Absent quand l'appli renvoie un stream après une coupure. */ discord?: boolean } & Rid)
   | { t: "stream.update"; patch: StreamPatch }
   | { t: "stream.stop" }
   | { t: "stream.thumb"; data: string }
@@ -390,7 +390,7 @@ export interface ViewerQuality {
 
 export type ServerMessage =
   | { t: "ack"; rid: number; ok: boolean; error?: ErrorCode; data?: unknown }
-  | { t: "welcome"; userId: string; accountId?: string; admin?: boolean; iceServers: IceServer[]; serverName: string }
+  | { t: "welcome"; userId: string; accountId?: string; admin?: boolean; iceServers: IceServer[]; serverName: string; /** Le serveur annonce les directs dans Discord. */ liveAnnounce?: boolean }
   | { t: "account.sync"; profile: Profile }
   | { t: "account.limits"; limits: AccountLimits | null; iceServers: IceServer[] }
   | { t: "remote.state"; state: RemoteState | null }

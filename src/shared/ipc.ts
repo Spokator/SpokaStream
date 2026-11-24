@@ -25,6 +25,8 @@ export interface StreamDefaults {
   autoRecord: boolean;
   /** La capture entre dans le jeu, comme Discord et OBS. Sur demande seulement, et le moteur refuse s'il voit un anti-triche. */
   gameCapture: boolean;
+  /** Prévenir le salon Discord du serveur au lancement d'un direct, s'il en a un. */
+  announce: boolean;
   screens: WaitScreen[];
 }
 

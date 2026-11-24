@@ -1,6 +1,6 @@
 import { DEFAULT_REGIE } from "@shared/ipc.ts";
 import type { ActionId, AudioChoice, ControlTarget, PanelId, RegieLayout, Resolution, Scene, SceneSource, Settings, VideoInfo, WaitScreen, WallMode, WallRect, WallSettings } from "@shared/ipc.ts";
-import { DEFAULT_VIEWER_QUALITY, isHls, videoUrl, youtubeId } from "@shared/protocol.ts";
+import { DEFAULT_VIEWER_QUALITY, isHls, scrubPaths, videoUrl, youtubeId } from "@shared/protocol.ts";
 import type { AccountLimits, AudioKind, CameraLayout, ChatMessage, RemoteCommand, RemoteState, ControlInput, ControlToHost, ControlToViewer, ErrorCode, IceServer, Poll, Profile, RoomSettings, RoomState, RoomStatus, ServerMessage, Stroke, StreamAnnounce, StreamInfo, Together, ViewerQuality } from "@shared/protocol.ts";
 import { get, memberOf, patchPublish, patchRoom, patchSub, set, soloOf, toast, TOGETHER, useApp } from "../state/store.ts";
 import type { ActivityItem } from "../state/store.ts";
@@ -279,7 +279,7 @@ class Core {
   private onServer(m: ServerMessage) {
     switch (m.t) {
       case "welcome":
-        return set({ userId: m.userId, accountId: m.accountId ?? m.userId, admin: !!m.admin, iceServers: m.iceServers, serverName: m.serverName });
+        return set({ userId: m.userId, accountId: m.accountId ?? m.userId, admin: !!m.admin, iceServers: m.iceServers, serverName: m.serverName, liveAnnounce: !!m.liveAnnounce });
       case "account.sync":
         return void this.applyAccountProfile(m.profile);
       case "account.limits":
@@ -567,7 +567,7 @@ class Core {
     const send = (text: string, details: string) => {
       if (!get().settings?.sendErrors || seen.has(text) || seen.size >= MAX_ERROR_REPORTS) return;
       seen.add(text);
-      this.signal.send({ t: "report", kind: "error", text: `${api.version} : ${text}`.slice(0, 1000), details: details.slice(0, 8000) });
+      this.signal.send({ t: "report", kind: "error", text: scrubPaths(`${api.version} : ${text}`).slice(0, 1000), details: scrubPaths(details).slice(0, 8000) });
     };
     this.sendError = send;
     if (api.processCrash) this.pendingCrash = api.processCrash;
@@ -576,7 +576,7 @@ class Core {
   }
 
   async sendFeedback(text: string) {
-    this.signal.send({ t: "report", kind: "feedback", text: text.slice(0, 3000), details: (await this.diagnostics()).slice(0, 18_000) });
+    this.signal.send({ t: "report", kind: "feedback", text: text.slice(0, 3000), details: scrubPaths(await this.diagnostics()).slice(0, 18_000) });
   }
 
   /** Ce que voient les autres appareils du compte. Rien ne part tant que rien n'a changé. */
@@ -1357,7 +1357,7 @@ class Core {
       controller: null,
     };
     try {
-      await this.signal.request({ t: "stream.start", id: streamId, stream: this.announce });
+      await this.signal.request({ t: "stream.start", id: streamId, stream: this.announce, discord: get().settings!.stream.announce !== false });
     } catch (e) {
       this.reportError(e);
       await this.stopLive();

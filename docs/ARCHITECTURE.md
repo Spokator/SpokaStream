@@ -240,6 +240,8 @@ La régie du téléphone (`web/deck.ts`, `web/Deck.tsx`) tient en quinze touches
 
 Les rapports d'erreur passent par `scrubPaths` à l'arrivée : la pile d'une application installée contient `C:\Users\<session>`, souvent un vrai prénom.
 
+**Annonces Discord** (`server/announce.ts`) : un direct qui dure 30 s est annoncé dans le salon Discord relié par `liveWebhook`, avec le lien `/j/CODE` qui ouvre le lecteur du navigateur. À la fin, le message est modifié en « a diffusé N min » (`?wait=true` donne son identifiant), pour ne laisser aucun faux « en direct ». Une relance dans les 10 minutes reprend le même message. Seule l'appli qui lance un direct envoie `discord: true` : un stream renvoyé après une coupure du serveur ne l'envoie pas, et n'est donc pas réannoncé. Les versions avant la 1.6.12 ne l'envoient jamais. Pas d'annonce non plus pour un salon verrouillé. Les mentions sont coupées (`allowed_mentions`). C'est la seule voie qui prévient un ami dont l'appli est fermée et qui n'a pas abonné son téléphone, soit presque tout le monde.
+
 ## Panneau d'administration
 
 `server/admin.ts`, `server/adminAuth.ts` et `admin/` : une page servie par le serveur, sous `/admin`. On y entre avec un identifiant et un mot de passe, indépendants de tout compte d'appareil : le panneau doit rester accessible sans l'application, c'est même là qu'il sert le plus. Le mot de passe est gardé en empreinte scrypt dans `admin-auth.json`, le code à 6 chiffres suit la RFC 6238, et un code déjà utilisé ne ressert pas. Après 5 échecs, une adresse est bloquée 15 minutes.
