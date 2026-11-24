@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { ConfigStore } from "../../server/config.ts";
 import { Hub } from "../../server/hub.ts";
+import { Journal } from "../../server/journal.ts";
 import { MemoryStore } from "../../server/store.ts";
 import type { ServerMessage } from "../../src/shared/protocol.ts";
 import { PROTOCOL_VERSION, scrubPaths } from "../../src/shared/protocol.ts";
@@ -86,4 +90,16 @@ test("le nom de session Windows ne finit pas dans un rapport d'erreur", () => {
   const pc = device(hub, "9", "Rapport");
   hub.handle(pc.conn, JSON.stringify({ t: "report", kind: "error", text: "1.6.3 : C:\\Users\\arthu\\x", details: stack }));
   assert.ok(!JSON.stringify(hub.reports[0]).includes("arthu"));
+});
+
+test("les rapports déjà gardés sont nettoyés sur le disque au démarrage", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "spokastream-reports-"));
+  try {
+    const file = path.join(folder, "reports.json");
+    writeFileSync(file, JSON.stringify([{ id: "r1", at: 1, kind: "error", name: "x", accountId: "a", client: "app", text: "1.6.3 : boom", details: "at file:///C:/Users/arthu/x.js" }]));
+    new Hub({ store: new MemoryStore(), iceServers: () => [], journal: new Journal(folder) });
+    assert.ok(!readFileSync(file, "utf8").includes("arthu"));
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
 });

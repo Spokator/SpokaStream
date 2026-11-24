@@ -286,8 +286,10 @@ export class Hub {
     this.bandwidth = options.bandwidth;
     this.journal = options.journal;
     this.logs.push(...(options.journal?.load() ?? []));
-    // Les rapports reçus avant le nettoyage des chemins le sont au démarrage.
-    this.reports.push(...(options.journal?.loadReports() ?? []).map(report => ({ ...report, text: scrubPaths(report.text), details: scrubPaths(report.details) })));
+    // Les rapports reçus avant le nettoyage des chemins le sont au démarrage, et le fichier est réécrit : sinon les noms y resteraient.
+    const stored = options.journal?.loadReports() ?? [];
+    this.reports.push(...stored.map(report => ({ ...report, text: scrubPaths(report.text), details: scrubPaths(report.details) })));
+    if (JSON.stringify(stored) !== JSON.stringify(this.reports)) options.journal?.saveReports(this.reports);
     this.admins = new Set(options.admins ?? []);
     this.iceServers = options.iceServers;
     this.guard = options.guard;
