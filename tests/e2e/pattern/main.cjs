@@ -4,6 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+// Recouverte par une fenêtre agrandie, Chromium cesserait de la dessiner : la capture recevrait une image figée, et le test mesurerait 17 kb/s.
+app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 app.setPath("userData", path.join(process.env.SPOKASTREAM_PATTERN_DATA, "pattern"));
 app.whenReady().then(() => {
   const win = new BrowserWindow({ width: 960, height: 540, x: 40, y: 40, title: "Mire SpokaStream", backgroundColor: "#000", webPreferences: { backgroundThrottling: false } });
